@@ -1,0 +1,29 @@
+{
+  "id": "example-library",
+  "name": "Example Library",
+  "version": "1.0.0",
+  "contract": 1,
+  "capabilities": ["catalogue", "metadata", "streams"],
+  "entry": "provider.py",
+  "kinds": ["movie"],
+  "filters": [],
+  "author": "Cinematica",
+  "description": "A worked example of the Python provider contract: a handful of films listed in a JSON file, served from a web server you run. Copy it and replace the library.",
+  "instructions": "Base URL is the address this server can fetch your video files from -- everything in the library file hangs off it. Library file is the path to your own JSON list; leave it blank to use the three example rows shipped inside the package, which are there to show the shape, not to play.",
+  "config": [
+    {
+      "key": "base_url",
+      "type": "url",
+      "label": "Base URL",
+      "help": "Where the files live, e.g. http://mediabox.lan:8080/films. Each title's \"path\" is appended to it.",
+      "required": true
+    },
+    {
+      "key": "library_file",
+      "type": "text",
+      "label": "Library file",
+      "help": "Absolute path to a JSON file shaped like the library.example.json in this package. Blank uses that example file.",
+      "required": false
+    }
+  ]
+}

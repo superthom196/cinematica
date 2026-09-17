@@ -25,8 +25,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
-          # versionCode is the repo's commit count, so the whole history has to
-          # be here; a shallow checkout would silently produce versionCode 1.
+          # The version NAME falls back to a scheme counted over the whole
+          # history, and the "-dirty" check reads the working tree's status; a
+          # shallow checkout would answer both wrongly. (versionCode comes from
+          # tv/version.properties and needs no history at all.)
           fetch-depth: 0
 
       - name: Work out the release version
@@ -104,6 +106,30 @@ jobs:
       - name: Rename the APK to its release name
         working-directory: tv
         run: cp app/build/outputs/apk/release/app-release.apk "$APK"
+
+      - name: Verify the APK's versionCode is above every published build
+        working-directory: tv
+        # Android compares versionCode, not versionName, and refuses to install
+        # a build below the one already there. 141 went out on the 1.0.0
+        # release and is installed on real TVs, so anything published from here
+        # has to be above it -- a release built with a stale or unread
+        # version.properties (the commit-count scheme answered 1) would install
+        # nowhere.
+        env:
+          PUBLISHED_FLOOR: '141'
+        run: |
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          apk_code=$("$aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+          declared=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*//p' version.properties | tr -d '[:space:]')
+          if [ "$apk_code" != "$declared" ]; then
+            echo "::error::APK versionCode '$apk_code' is not the '$declared' in tv/version.properties."
+            exit 1
+          fi
+          if [ -z "$apk_code" ] || [ "$apk_code" -le "$PUBLISHED_FLOOR" ]; then
+            echo "::error::versionCode '$apk_code' is not above the published $PUBLISHED_FLOOR; bump tv/version.properties."
+            exit 1
+          fi
+          echo "versionCode $apk_code (published floor $PUBLISHED_FLOOR)."
 
       - name: Verify the APK's versionName matches the tag
         working-directory: tv

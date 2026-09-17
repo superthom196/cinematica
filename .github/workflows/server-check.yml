@@ -27,3 +27,19 @@ jobs:
             echo "bash -n $f"
             bash -n "$f"
           done
+
+      - name: Shellcheck the shipped scripts
+        # The same three files, with the same command, as server-release.yml's
+        # Shellcheck step -- deliberately, and that is the whole point of the
+        # step being here. It used to run only at release time, so the first
+        # thing that ever ran it on v1.0.0's tree was the release itself, which
+        # then failed on an SC2015 in install.sh with the tag already pushed.
+        #
+        # Note whose shellcheck decides: this runner's. A newer one installed
+        # locally (0.11 dropped the SC2015 case that stopped that release)
+        # reports less, so "clean on my machine" is not the check -- this is.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck --version | sed -n '2p'
+          shellcheck -x server/install.sh server/deploy/package.sh server/deploy/install-sendspin.sh

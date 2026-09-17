@@ -102,6 +102,14 @@ for f in PROVIDERS.md; do
     cp "$SERVER_DIR/docs/$f" "$ROOT/docs/$f"
 done
 
+# The worked example PROVIDERS.md sends a package author to: manifest, entry
+# file and its sample library, three small text files with nothing private in
+# them. Shipped because the alternative is what the doc used to do -- send the
+# reader into providers/*.py to work the contract out from the implementation.
+need "$SERVER_DIR/docs/example-provider"
+rsync -a --exclude '__pycache__/' --exclude '*.pyc' \
+    "$SERVER_DIR/docs/example-provider" "$ROOT/docs/"
+
 # fixtures/ is gone from the release too: captured sample responses from
 # services this application no longer talks to, useful only when developing the
 # optional provider packages, where they now live.

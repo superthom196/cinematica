@@ -19,8 +19,8 @@ jobs:
         with:
           # versionName is "0.<features>.<bugfixes>", derived by scanning every commit subject in
           # the repository's whole history (a fix-like subject counts as a bugfix, everything else
-          # a feature), and versionCode is the total commit count (see tv/app/build.gradle.kts) --
-          # both need the full history, so the default shallow clone would build 0.0.0 (1).
+          # a feature), so the default shallow clone would build 0.0.0. versionCode is read from
+          # tv/version.properties and needs no history (see tv/app/build.gradle.kts).
           fetch-depth: 0
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
