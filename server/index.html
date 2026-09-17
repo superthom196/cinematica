@@ -109,7 +109,7 @@ button:disabled{opacity:.45;cursor:default}
 .bar button{flex:none;padding:.35rem .5rem;font-size:.72rem}
 /* transient toast: the bar stays silent by design, but errors / action-needed
    messages still have to reach the user somehow */
-.toasts{position:fixed;left:.6rem;right:.6rem;z-index:55;display:flex;flex-direction:column;gap:.4rem;
+.toasts{position:fixed;left:.6rem;right:.6rem;z-index:100;display:flex;flex-direction:column;gap:.4rem;
   bottom:calc(3.4rem + env(safe-area-inset-bottom));pointer-events:none}
 .toast{pointer-events:auto;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--dim);
   border-radius:10px;padding:.55rem .7rem;font-size:.78rem;line-height:1.35;color:var(--text);
@@ -123,8 +123,6 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 .prog > i{display:block;height:100%;width:0;background:var(--accent);border-radius:999px;
   transition:width .35s ease}
 .bar .pwrap{flex:1;display:flex;align-items:center;min-width:0}
-.card .prog{margin-top:.35rem}
-#mprog{margin:.5rem 0 .2rem}
 /* genre dropdown */
 .gwrap{position:relative}
 #gbtn{display:flex;align-items:center;gap:.4rem}
@@ -228,8 +226,6 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 .eprow .en{font-weight:700;color:var(--dim);min-width:1.5rem}
 .eprow .et{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .eprow .er{color:var(--dim);font-size:.72rem;white-space:nowrap;flex:none}
-.mauto{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--dim);margin:.1rem 0 .8rem}
-.mauto input{accent-color:var(--accent);margin:0}
 .mact{display:flex;gap:.5rem}
 .mact button{padding:.6rem .9rem;font-size:.85rem}
 #mclose{position:absolute;top:.6rem;right:.6rem;z-index:2;background:#000a;color:#fff;border:none;
@@ -263,6 +259,33 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 .pbadge.test_failed{color:var(--bad);border-color:var(--bad)}
 .secretrow{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
 .secretrow input{flex:1;min-width:8rem}
+/* ---- player overlay ---- */
+#pov{position:fixed;inset:0;background:#000;display:none;
+  align-items:center;justify-content:center;z-index:80}
+#pov.open{display:flex}
+#pov .pwrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#pv{max-width:100%;max-height:100%;width:auto;height:auto;background:#000}
+#pstate{position:absolute;left:0;right:0;bottom:0;padding:1.2rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  background:linear-gradient(to top,#000c,transparent);text-align:center;pointer-events:none}
+#ptext{color:#fff;font-size:.85rem;margin-bottom:.5rem;text-shadow:0 1px 3px #000}
+#pstate .prog{width:min(60%,20rem);margin:0 auto;background:#fff3}
+#ptap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--accent);color:#fff;border:none;border-radius:999px;
+  padding:1rem 1.9rem;font-size:1rem;font-weight:700;box-shadow:0 10px 30px #0009}
+#perr{position:absolute;inset:0;background:color-mix(in srgb,var(--bg) 94%,transparent);
+  flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.5rem;text-align:center}
+#perr:not([hidden]){display:flex}
+#perrtext{color:var(--bad);font-size:.9rem;max-width:26rem;margin:0}
+#pnext{position:absolute;inset:0;background:color-mix(in srgb,var(--bg) 94%,transparent);
+  flex-direction:column;align-items:center;justify-content:center;gap:.9rem;padding:1.5rem;text-align:center}
+#pnext:not([hidden]){display:flex}
+#pnexttext{font-size:1rem;max-width:26rem;margin:0}
+.pnextrow{display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center}
+#pnextgo{background:var(--accent);color:#fff;border-color:transparent}
+#pclose{position:absolute;top:calc(.6rem + env(safe-area-inset-top));right:calc(.6rem + env(safe-area-inset-right));
+  z-index:2;background:#000a;color:#fff;border:none;border-radius:999px;width:2.2rem;height:2.2rem;font-size:1.15rem;line-height:1}
+@media(prefers-reduced-motion:reduce){#pstate .prog>i{transition:none}}
 </style></head><body>
 <header><div class="hwrap">
   <div class="brand">
@@ -322,17 +345,28 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <div class="mover" id="mover"></div>
     <div class="mrow" id="mseasons" hidden></div>
     <div id="mepisodes" hidden></div>
-    <label class="mauto" id="mautowrap" hidden><input type="checkbox" id="mautoplay">Autoplay next episode</label>
     <div class="mstream" id="mstream"></div>
-    <div class="prog" id="mprog"><i></i></div>
-    <div class="mact"><button class="play" id="mplay">Send to TV</button></div>
+    <div class="mact"><button class="play" id="mplay">Play</button></div>
   </div></div></div>
+<div id="pov"><div class="pwrap">
+  <!-- playsinline + webkit-playsinline are mandatory: without them iPhone Safari
+       hijacks playback into its own fullscreen player the moment it starts. -->
+  <video id="pv" controls playsinline webkit-playsinline preload="metadata"></video>
+  <div id="pstate"><div id="ptext"></div><div class="prog" id="pprog"><i></i></div></div>
+  <button id="ptap">Tap to play</button>
+  <div id="perr" hidden><p id="perrtext"></p>
+    <button id="pretry">Try another source</button>
+    <button id="pback">Back to browsing</button></div>
+  <div id="pnext" hidden><p id="pnexttext"></p>
+    <div class="pnextrow">
+      <button id="pnextgo">Play now</button>
+      <button id="pnextstop">Cancel</button></div></div>
+  <button id="pclose" title="Close">&times;</button>
+</div></div>
 <div class="toasts" id="toasts"></div>
 <div class="bar"><div class="bwrap"><div class="pwrap">
     <div class="np" id="np"><span class="npdot" id="npdot"></span><span id="nptext">Idle</span></div>
-    <div class="msg" id="msg">Tap a poster to see details.</div>
-    <div class="prog" id="bprog"><i></i></div></div>
-  <button id="reconnect">Reconnect</button>
+    <div class="msg" id="msg">Tap a poster to see details.</div></div>
   <button id="stop">Stop</button></div></div>
 <script>
 const grid=document.getElementById('grid'), msg=document.getElementById('msg');
@@ -362,8 +396,7 @@ function render(list, append){
         <span class="badge" id="b${m.id}" hidden></span>${tv}${rate}</div>
       <div class="meta"><div class="t">${esc(m.title)}</div>
         <div class="y">${esc(m.year||'')}</div>
-        <div class="s" id="s${m.id}"></div>
-        <div class="prog" id="pr${m.id}"><i></i></div></div>`;
+        <div class="s" id="s${m.id}"></div></div>`;
     c.onclick=()=>openModal(m);
     grid.appendChild(c);
     paint(m);
@@ -393,7 +426,6 @@ let picked=new Set(), banned=new Set();
 loadGenreSel();
 let offset=0, loading=false, exhausted=false;
 const ROWS_AHEAD=3;   // how many rows to keep buffered beyond what is on screen
-let reconnecting=false;
 
 const gbtn=document.getElementById('gbtn'), gmenu=document.getElementById('gmenu'),
       gcount=document.getElementById('gcount');
@@ -705,7 +737,7 @@ function searchCard(m){
       <div class="y">${esc(m.year||'')}</div>
       <div class="s${p&&p.thin?' thin':''}">${p&&p.thin?'low bitrate':''}</div></div>`;
   c.onclick=()=>{
-    if(m.stream) streamCache[m.id]=m.stream;   // so Send to TV is live immediately
+    if(m.stream) streamCache[m.id]=m.stream;   // so Play is live immediately
     closeSearch(); openModal(m);
   };
   return c;
@@ -774,23 +806,18 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&sov.classList.cont
 
 /* ---------- info modal ---------- */
 const ov=document.getElementById('ov');
-const mseasons=document.getElementById('mseasons'), mepisodes=document.getElementById('mepisodes'),
-      mautowrap=document.getElementById('mautowrap'), mautoplay=document.getElementById('mautoplay');
+const mseasons=document.getElementById('mseasons'), mepisodes=document.getElementById('mepisodes');
 let modalMovie=null, modalTv=null, modalSeason=null, modalEp=null;
-const AKEY='cinematica.autoplay';
-mautoplay.checked = (()=>{ try{ const v=localStorage.getItem(AKEY); return v===null ? true : v==='1'; }catch(e){ return true; } })();
-mautoplay.onchange=()=>{ try{ localStorage.setItem(AKEY, mautoplay.checked?'1':'0'); }catch(e){} };
 
 let playGen=0;
 function closeModal(){
   ov.classList.remove('open');
-  // Closing the popup abandons anything it started: stop polling, clear the
-  // bars, and tell the server to stand the job down rather than leaving it to
-  // buffer on and eventually take over the TV.
+  // Closing the popup abandons anything it started: stop polling and tell the
+  // server to stand the job down rather than leaving it to buffer on and
+  // eventually take over the TV.
   if(playWatching){
     playGen++;
     playWatching=false;
-    setProg(['bprog','mprog'].concat(modalMovie?['pr'+modalMovie.id]:[]), 0, false);
     msg.textContent='Cancelled.';
     fetch('/api/cancel',{method:'POST'}).catch(()=>{});
   }
@@ -798,7 +825,7 @@ function closeModal(){
 let playWatching=false;
 document.getElementById('mclose').onclick=closeModal;
 ov.onclick=e=>{ if(e.target===ov) closeModal(); };
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !pov.classList.contains('open')) closeModal(); });
 
 async function openModal(m){
   modalMovie=m; modalTv=null; modalSeason=null; modalEp=null;
@@ -812,7 +839,6 @@ async function openModal(m){
     .map(t=>`<span class="chip">${esc(t)}</span>`).join('');
   mseasons.hidden=true; mseasons.innerHTML='';
   mepisodes.hidden=true; mepisodes.innerHTML='';
-  mautowrap.hidden = m.kind!=='tv';
   const sd=document.getElementById('mstream');
   const mp=document.getElementById('mplay');
 
@@ -840,7 +866,7 @@ async function openModal(m){
   const cached=streamCache[m.id];
   sd.innerHTML = cached ? streamHtml(cached) : '';
   mp.disabled = !(cached && cached.pick);
-  mp.onclick=()=>{ play('/api/play/'+m.id, String(m.id), m.title, mp); };
+  mp.onclick=()=>{ playHere('movie', m.id, null, null, m.title); };
 
   try{
     const d=await (await fetch('/api/movie/'+m.id)).json();
@@ -919,10 +945,9 @@ async function selectEpisode(ep){
     sd.innerHTML=streamHtml(d);
     mp.disabled=!d.pick;
     mp.onclick=()=>{
-      const autoplay = mautoplay.checked ? '1' : '0';
       const sN=String(ep.season).padStart(2,'0'), eN=String(ep.episode).padStart(2,'0');
       const title = modalTv.title+' · S'+sN+'E'+eN+' · '+(ep.name||'');
-      play('/api/play/tv/'+tvId+'/'+ep.season+'/'+ep.episode+'?autoplay='+autoplay, key, title, mp);
+      playHere('tv', tvId, ep.season, ep.episode, title);
     };
   }catch(e){ sd.innerHTML='<b>Could not check this one.</b>'; }
 }
@@ -936,8 +961,7 @@ function streamHtml(d){
 // One status line. The bottom bar shows what the TV is doing when nothing is
 // playing, and what is playing when something is -- rather than a separate
 // "TV connected" up top permanently duplicating half of it.
-let tvState={ok:null, text:'checking\u2026'}, lastNp=null;
-function setStatus(ok,text){ tvState={ok,text}; paintStatus(); }
+let lastNp=null;
 // mm:ss, or h:mm:ss once it needs the hour — only the TV app reports a position
 function hms(s){
   s=Math.max(0,Math.floor(s));
@@ -967,9 +991,8 @@ function paintStatus(){
     }
     return;
   }
-  // nothing playing: this line carries the TV connection state instead
-  if(tvState.ok===false) npdot.classList.add('bad');
-  nptext.textContent = tvState.ok===true ? 'Idle \u00b7 '+tvState.text : tvState.text;
+  // nothing playing: pollNowPlaying (6s) is now the only thing driving this line.
+  nptext.textContent = 'Idle';
 }
 
 /* the bar's status text is deliberately invisible, so anything the user actually
@@ -987,47 +1010,6 @@ function notify(text, isError, urgent){
   toastTimer=setTimeout(()=>t.remove(), urgent?10000:5000);   // action-needed messages linger longer
 }
 
-async function reconnect(reason){
-  if(reconnecting) return false;
-  reconnecting=true;
-  setStatus(false,'reconnecting to TV…');
-  if(reason) msg.textContent=reason+' — reconnecting…';
-  try{
-    const d=await (await fetch('/api/reconnect',{method:'POST'})).json();
-    setStatus(d.ok, d.ok?'TV connected':'TV offline — '+d.msg);
-    if(reason) notify(d.ok ? 'TV reconnected.' : 'Could not reach the TV: '+d.msg, !d.ok);
-    return d.ok;
-  }catch(e){ setStatus(false,'TV offline'); return false; }
-  finally{ reconnecting=false; }
-}
-
-let lastTvState=null;   // so the USB-debugging toast doesn't re-fire on every 15s poll
-async function pollHealth(){
-  try{
-    const h=await (await fetch('/api/health')).json();
-    // the tagline element was removed; nothing to update here any more
-    const adbOn = !!(h.adb && h.adb.enabled);
-    if(h.tv && h.app){ setStatus(true,'TV app connected'); }
-    else if(h.tv){ setStatus(true,'TV connected'); }
-    else if(!adbOn){
-      // no app, and no phone remote to fall back on. Nothing to reconnect TO:
-      // the app dials the server, not the other way round.
-      setStatus(false,'no TV app connected');
-    }
-    else if(h.tv_state==='unauthorized'){
-      // do NOT cycle adb here — that just re-issues the prompt
-      setStatus(false,'accept the prompt on the TV');
-      if(lastTvState!=='unauthorized')   // don't re-toast every 15s poll while it's still pending
-        notify('The TV is showing a USB-debugging prompt — accept it (tick “Always allow”).', true, true);
-    } else {
-      setStatus(false,'TV offline — reconnecting…');
-      await reconnect(null);                 // genuinely dropped: bring it back
-    }
-    lastTvState = h.tv ? null : h.tv_state;
-  }catch(e){}
-}
-
-
 /* ---------- playback ---------- */
 function setProg(ids,pct,on){
   ids.forEach(id=>{
@@ -1037,69 +1019,367 @@ function setProg(ids,pct,on){
   });
 }
 
-async function play(playPath,jobId,title,btn){
-  btn = btn || document.getElementById('mplay');
-  btn.disabled=true; const old=btn.textContent; btn.textContent='Buffering…';
-  const pg=++playGen; playWatching=true;
-  const bars=['bprog','pr'+jobId,'mprog'];
-  setProg(bars,0,true);
-  msg.textContent='Starting '+title+'…';
+/* ---------- player: capability probing ---------- */
+// The server owns the probe list -- it builds the identical mime strings when
+// picking a source -- so the client never hardcodes it. Union, not
+// intersection: MSE and the <video> element genuinely differ in support.
+let caps=null;
+// Enough to cover the whole supported matrix: CODEC_PROBES carries 18 video
+// strings and 12 audio ones, and even a browser that confirms every last one
+// of them stays under this. The cap is a runaway guard, not a budget -- set
+// low it silently stops pairing after the first video codec or two, which
+// leaves exactly the families most likely to need the veto (av01, vp09)
+// unprobed. isTypeSupported() is cheap; the only real cost is the caps
+// object's size in the play POST, and a full matrix is ~11KB of it.
+const PAIR_CAP=256;
+async function probeCaps(){
+  const result={mse:false,nativeHls:false,types:{}};
   try{
-    let r=await fetch(playPath,{method:'POST'}), d=await r.json();
-    if(d.job) jobId=d.job;
-    if(!d.ok && /not reachable|adb|device|offline|closed|prompt/i.test(d.msg||'')){
-      if(await reconnect('TV not responding')){
-        btn.textContent='Retrying…';
-        r=await fetch(playPath,{method:'POST'}); d=await r.json();
-        if(d.job) jobId=d.job;
+    const v=document.createElement('video');
+    result.mse=!!window.MediaSource;
+    result.nativeHls=v.canPlayType('application/vnd.apple.mpegurl')!=='';
+    const ok=t=>{
+      try{ return (window.MediaSource && MediaSource.isTypeSupported(t))
+                || ['probably','maybe'].includes(v.canPlayType(t)); }
+      catch(e){ return false; }
+    };
+    const d=await (await fetch('/api/bx/probes', withTimeout(8000))).json();
+    const probes=d.probes||[];
+    // EVERY probe is published as video/mp4 -- that is the container the
+    // browser will really be handed, audio codecs included -- so the mime
+    // type cannot say which strings are audio. Splitting on /^video\// put
+    // all of them in the video list, left the audio list empty, and so built
+    // zero pairs below: the pairing veto in decide() had nothing to read.
+    // The server sends the split alongside the list for exactly that reason.
+    const audio=new Set(d.audio||[]);
+    const vids=[], auds=[];
+    probes.forEach(t=>{
+      const isOk=ok(t);
+      result.types[t]=isOk;
+      if(!isOk) return;
+      const m=t.match(/codecs="([^"]*)"/);
+      if(!m) return;
+      if(audio.has(t)) auds.push(m[1]);
+      else vids.push(m[1]);
+    });
+    // video x audio pairs -- the server builds this exact string shape when
+    // it picks a source, so the shape has to match exactly.
+    let pairs=0;
+    for(let i=0;i<vids.length && pairs<PAIR_CAP;i++){
+      for(let j=0;j<auds.length && pairs<PAIR_CAP;j++){
+        const combo=`video/mp4; codecs="${vids[i]},${auds[j]}"`;
+        result.types[combo]=ok(combo);
+        pairs++;
       }
     }
-    if(!d.ok){
-      notify('Failed: '+d.msg, true); setProg(bars,0,false);
-      btn.textContent=old; btn.disabled=false; return;
-    }
-    // poll the server's probe/buffer job until the player actually starts.
-    // Bounded by both wall-clock time and consecutive bad polls, so a server restart
-    // partway through — progress then comes back empty — or a flaky network can't spin this forever.
-    const deadline = Date.now() + 5*60*1000;   // 4K buffering is slow; still not infinite
-    let misses = 0;
-    for(;;){
-      if(pg!==playGen) return;                  // popup closed: abandon quietly
-      if(Date.now() > deadline || misses >= 10){
-        notify('Lost track of playback progress — the server may have restarted.', true);
-        setProg(bars,0,false);
-        break;
-      }
-      await new Promise(res=>setTimeout(res,700));
-      let j;
-      try{ j=await (await fetch('/api/progress/'+jobId)).json(); }catch(e){ misses++; continue; }
-      if(!j || !j.stage){ misses++; continue; }   // job unknown to the server — count it as a miss too
-      misses=0;
-      setProg(bars, j.pct||0, true);
-      msg.textContent = j.msg || 'Buffering…';
-      // The audio conversion burst is part of the wait before playback, so it
-      // drives the same bar rather than looking like nothing is happening.
-      btn.textContent = j.stage==='buffering' ? `Buffering ${j.pct||0}%`
-          : j.stage==='encoding'  ? `Converting ${j.pct||0}%`
-          : j.stage==='launching' ? 'Starting…'
-          : btn.textContent;
-      if(j.stage==='playing'){
-        playWatching=false;              // finished, not cancelled
-        msg.textContent=`▶ ${title}`;
-        setStatus(true,'TV connected');
-        setProg(bars,100,true); setTimeout(()=>setProg(bars,0,false),1500);
-        closeModal();
-        break;
-      }
-      if(j.stage==='error'){
-        playWatching=false;
-        notify('Failed: '+(j.msg||'unknown'), true); setProg(bars,0,false); break;
-      }
-    }
-  }catch(e){ notify('Failed: '+e, true); setProg(bars,0,false); }
-  playWatching=false;
-  btn.textContent=old; btn.disabled=false;
+  }catch(e){ /* a browser that throws still yields a usable, all-false result */ }
+  return result;
 }
+// Kicked off once, here, as the script runs -- caps is ready long before the
+// user can reach a Play button.
+probeCaps().then(c=>{ caps=c; }).catch(()=>{ caps={mse:false,nativeHls:false,types:{}}; });
+
+/* ---------- player: overlay ---------- */
+const pov=document.getElementById('pov'), pv=document.getElementById('pv'),
+      pstate=document.getElementById('pstate'), ptext=document.getElementById('ptext'),
+      ptap=document.getElementById('ptap'),
+      perr=document.getElementById('perr'), perrtext=document.getElementById('perrtext'),
+      pretry=document.getElementById('pretry'), pback=document.getElementById('pback'),
+      pnext=document.getElementById('pnext'), pnexttext=document.getElementById('pnexttext'),
+      pnextgo=document.getElementById('pnextgo'), pnextstop=document.getElementById('pnextstop'),
+      pclose=document.getElementById('pclose');
+let pgen=0;                          // guards the poll loop against a stale/abandoned play
+let beatTimer=null, waitTimer=null;
+let playToken=null, playTokenGen=null;
+let lastPlayArgs=null, triedKeys=[]; // candidate keys from the last progress poll's tried_keys --
+                                      // authoritative; #pretry sends this back as "skip"
+let hls=null;                        // the live hls.js instance, if any -- destroyed on close/replace
+// The episode the server suggested while this one was being prepared (see
+// bx_next_episode), and the countdown offering it. null for a film, for the
+// last episode of a show, and whenever AUTOPLAY_NEXT is off server-side.
+let nextUp=null, nextTimer=null;
+const AUTONEXT_SECONDS=10;
+
+function unlockGesture(){
+  // Preparation takes 30-120s -- long past the click's activation window -- so
+  // the element is unlocked now, muted, while the gesture is still live. This
+  // is what keeps the later pv.play() from being silently blocked.
+  pv.muted=true; pv.play().catch(()=>{}); pv.pause(); pv.muted=false;
+}
+
+function setPState(text,pct){ pstate.hidden=false; ptext.textContent=text; setProg(['pprog'],pct||0,pct!=null); }
+function clearPState(){ pstate.hidden=true; setProg(['pprog'],0,false); }
+function showTap(){ pstate.hidden=true; ptap.hidden=false; }
+function hideTap(){ ptap.hidden=true; }
+function showError(text){ perr.hidden=false; perrtext.textContent=text; pstate.hidden=true; hideTap(); }
+function hideError(){ perr.hidden=true; }
+
+function stopHeartbeat(){ if(beatTimer){ clearInterval(beatTimer); beatTimer=null; } }
+async function sendBeat(){
+  if(!playToken) return;
+  const state = pv.ended ? 'ended' : pv.paused ? 'paused' : (pv.readyState<3 ? 'waiting' : 'playing');
+  try{
+    const r=await fetch('/api/bx/beat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:playToken, gen:playTokenGen, pos:pv.currentTime||0, state})});
+    if(r.status===409){          // another device took over
+      stopHeartbeat(); pv.pause();
+      showError('This playback was taken over by another device.');
+    }
+  }catch(e){ /* one missed beat is not fatal -- the next one retries */ }
+}
+function startHeartbeat(){
+  stopHeartbeat();
+  beatTimer=setInterval(sendBeat, 5000);
+}
+// Release a session token without waiting for the answer. Used both when the
+// page is going away (pagehide, where only sendBeacon survives) and when a
+// token turns up for a play the user has already abandoned -- see playHere.
+function releaseToken(t,g){
+  if(!t) return;
+  const body=JSON.stringify({token:t, gen:g});
+  try{ if(navigator.sendBeacon('/api/bx/stop', body)) return; }catch(e){}
+  try{ fetch('/api/bx/stop',{method:'POST',keepalive:true,
+        headers:{'Content-Type':'application/json'},body:body}); }catch(e){}
+}
+function stopBeacon(){ releaseToken(playToken, playTokenGen); }
+// The awaited version, for when something has to happen AFTER the session is
+// really gone. sendBeacon cannot be awaited, and autoplay needs the order:
+// the server refuses a second browser session while the first still holds the
+// player (claim_owner), and the next episode is a second session -- a new
+// token, a new job. Beaconing the stop would race the play that follows it.
+async function stopSession(){
+  if(!playToken) return;
+  const t=playToken, g=playTokenGen;
+  playToken=null; playTokenGen=null;
+  stopHeartbeat();
+  try{
+    await fetch('/api/bx/stop',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:t, gen:g})});
+  }catch(e){ /* the play below will fail loudly enough on its own */ }
+}
+
+function cancelNextUp(){
+  if(nextTimer){ clearInterval(nextTimer); nextTimer=null; }
+  pnext.hidden=true;
+}
+function offerNextUp(){
+  if(!nextUp || !pov.classList.contains('open')) return;
+  if(nextTimer) return;             // 'ended' can fire again after a seek back
+  const label=nextUp.label;
+  let left=AUTONEXT_SECONDS;
+  const draw=()=>{ pnexttext.textContent='Next: '+label+' — playing in '+left+'s'; };
+  draw();
+  pnext.hidden=false;
+  nextTimer=setInterval(()=>{
+    left--;
+    if(left<=0){ playNextUp(); return; }
+    draw();
+  },1000);
+}
+async function playNextUp(){
+  const n=nextUp;
+  cancelNextUp();
+  if(!n) return;
+  nextUp=null;                      // never offer the same episode twice
+  await stopSession();
+  playHere('tv', n.id, n.s, n.e, n.label);
+}
+function closePlayer(){
+  pgen++;                           // abandon any in-flight poll for this play
+  // An undestroyed hls.js instance is attached through MediaSource, not src --
+  // pv.removeAttribute('src') below does nothing to it, so it keeps fetching
+  // segments and keeps the server preparing media for a viewer who has gone.
+  if(hls){ try{ hls.destroy(); }catch(e){} hls=null; }
+  stopBeacon(); stopHeartbeat();
+  cancelNextUp(); nextUp=null;
+  clearTimeout(waitTimer); waitTimer=null;
+  pov.classList.remove('open');
+  pv.pause(); pv.removeAttribute('src'); pv.load();   // release the connection
+  playToken=null; playTokenGen=null;
+  hideTap(); hideError(); clearPState();
+}
+pclose.onclick=closePlayer;
+pback.onclick=closePlayer;
+pov.onclick=e=>{ if(e.target===pov) closePlayer(); };
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && pov.classList.contains('open')) closePlayer(); });
+addEventListener('pagehide', stopBeacon);
+// Hiding the tab is NOT the end of the session. This used to beacon a Stop
+// the moment document.hidden went true, so glancing at another tab tore the
+// session down server-side -- and nothing restored it on the way back, which
+// made switching tabs indistinguishable from stopping the film. A hidden
+// tab's timers are throttled to roughly one a minute, which is on the edge of
+// the server's BX_IDLE window, so each transition sends a beat of its own:
+// it keeps the session fresh going away, and on the way back it is what
+// notices promptly that another device took the player over meanwhile.
+document.addEventListener('visibilitychange', ()=>{ sendBeat(); });
+
+ptap.onclick=()=>{
+  // the gesture expired, not a stream failure -- must not touch setProg,
+  // notify(...,true) or the retry path
+  hideTap();
+  pv.play().catch(e=>showError(e.message||String(e)));
+};
+
+// Client-only buffering: a seek into unprepared media, or slow delivery over a
+// remote link, surfaces here as the video element's own 'waiting' event, not
+// as a server-reported error.
+pv.addEventListener('waiting', ()=>{
+  if(!pov.classList.contains('open')) return;
+  setPState('Buffering…');
+  clearTimeout(waitTimer);
+  waitTimer=setTimeout(()=>{ ptext.textContent='Still preparing this part of the film…'; }, 20000);
+});
+['playing','canplay'].forEach(ev=>pv.addEventListener(ev, ()=>{
+  clearTimeout(waitTimer); waitTimer=null;
+  if(pov.classList.contains('open')) clearPState();
+}));
+
+// Autoplay the next episode. The TV does this server-side, off the app's own
+// heartbeat (see app_heartbeat); a browser cannot, because nothing tells the
+// server the film ended until this page says so -- and by then the tab may be
+// closed, hidden, or on a phone that went to sleep. So the page decides, which
+// is also what makes Cancel possible.
+pv.addEventListener('ended', ()=>{
+  if(!pov.classList.contains('open')) return;
+  offerNextUp();
+});
+pnextgo.onclick=()=>{ playNextUp(); };
+pnextstop.onclick=()=>{ cancelNextUp(); nextUp=null; };
+
+let hlsPromise=null;
+function loadHls(){
+  if(window.Hls) return Promise.resolve();
+  if(!hlsPromise) hlsPromise=new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='/static/hls-1.7.3.min.js';
+    s.onload=()=>resolve();
+    s.onerror=()=>{ hlsPromise=null; reject(new Error('Could not load the HLS player.')); };   // let a retry re-attempt the load
+    document.head.appendChild(s);
+  });
+  return hlsPromise;
+}
+async function attachMedia(media){
+  // An undestroyed hls.js instance keeps requesting segments, which keeps the
+  // server preparing media for a viewer who has gone -- so any instance from
+  // a previous play is torn down before this one is set up.
+  if(hls){ try{ hls.destroy(); }catch(e){} hls=null; }
+  if(media.kind==='direct'){ pv.src=media.url; return; }
+  // Safari plays HLS natively; everyone else gets hls.js, loaded lazily --
+  // it is 605KB and must never be fetched by a browser that doesn't need it.
+  if(caps && caps.nativeHls){ pv.src=media.url; return; }
+  await loadHls();
+  if(!Hls.isSupported()){
+    showError('This browser cannot play prepared video. Try a different browser, or a different source.');
+    return;
+  }
+  hls=new Hls();
+  let networkRetried=false, mediaRetried=false;   // reset each attachMedia call, so a later play starts fresh
+  hls.on(Hls.Events.ERROR, (evt,data)=>{
+    if(!data || !data.fatal) return;              // non-fatal: hls.js recovers on its own
+    if(data.type===Hls.ErrorTypes.NETWORK_ERROR){
+      if(!networkRetried){ networkRetried=true; hls.startLoad(); }   // a segment can 503 while preparation catches up -- normal and recoverable
+      else{ showError('Could not load the video stream.'); if(hls){ try{ hls.destroy(); }catch(e){} hls=null; } }
+    } else if(data.type===Hls.ErrorTypes.MEDIA_ERROR){
+      if(!mediaRetried){ mediaRetried=true; hls.recoverMediaError(); }
+      else{ showError('The video failed to decode.'); if(hls){ try{ hls.destroy(); }catch(e){} hls=null; } }
+    } else{
+      showError('Could not play the video stream.');
+      if(hls){ try{ hls.destroy(); }catch(e){} hls=null; }
+    }
+  });
+  hls.loadSource(media.url);
+  hls.attachMedia(pv);
+}
+
+async function playHere(kind,id,s,e,title,isRetry){
+  pov.classList.add('open');        // synchronous, before any await -- the click IS the gesture
+  unlockGesture();
+  const gen=++pgen;
+  if(!isRetry){ triedKeys=[]; lastPlayArgs={kind,id,s,e,title}; }
+  // Whatever was offered belonged to the film that just finished, not this
+  // one -- a retry included, since a retry re-prepares and will be told again.
+  cancelNextUp(); nextUp=null;
+  hideError(); hideTap();
+  setPState('Finding a source…');
+  const path = kind==='tv' ? '/api/bplay/tv/'+id+'/'+s+'/'+e : '/api/bplay/'+id;
+  // Release the previous attempt's session BEFORE asking for another one.
+  // The server refuses a second browser session while the first still holds
+  // the player (claim_owner), so a retry that merely dropped its old token
+  // was answered "Another device is playing" by its own replacement request.
+  // playNextUp() already does this; doing it here covers the retry button and
+  // anything else that reaches playHere with a session still open.
+  await stopSession();
+  if(gen!==pgen) return;
+  playToken=null; playTokenGen=null;
+  const capsVal = caps || {mse:false,nativeHls:false,types:{}};
+  const body = isRetry ? {caps:capsVal, skip:triedKeys} : {caps:capsVal};
+
+  let r,d;
+  try{
+    r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    d=await r.json();
+  }catch(err){ if(gen===pgen) showError('Could not reach the server: '+err); return; }
+  if(gen!==pgen){
+    // The overlay closed -- or another play started -- while this request was
+    // in flight. closePlayer() had no token to stop, because this response
+    // carries the only copy of it, so without releasing it here the job it
+    // started keeps buffering: holding the swarm open, and making
+    // claim_owner() refuse every other device for a film nobody is waiting on.
+    if(d && d.ok) releaseToken(d.token, d.gen);
+    return;
+  }
+  if(r.status===409){ showError(d.msg||'Another device is playing'); return; }   // do NOT retry
+  if(!d.ok){ showError(d.msg||'Could not start playback.'); return; }
+  const jobId=d.job;
+  playToken=d.token; playTokenGen=d.gen;
+
+  // Reused verbatim from the old TV play() loop: same cadence, same 5-minute
+  // deadline, same 10-consecutive-miss bail, same setProg usage, same stage
+  // names -- only the terminal branches differ, since this ends in a local
+  // <video> rather than on the TV.
+  const deadline = Date.now() + 5*60*1000;
+  let misses = 0;
+  for(;;){
+    if(gen!==pgen) return;
+    if(Date.now() > deadline || misses >= 10){
+      showError('Lost track of playback progress — the server may have restarted.');
+      return;
+    }
+    await new Promise(res=>setTimeout(res,700));
+    if(gen!==pgen) return;
+    let j;
+    try{ j=await (await fetch('/api/progress/'+jobId)).json(); }catch(err){ misses++; continue; }
+    if(!j || !j.stage){ misses++; continue; }
+    misses=0;
+    if(Array.isArray(j.tried_keys)) triedKeys=j.tried_keys;   // authoritative; never accumulated locally
+    if(j.stage==='starting') setPState('Finding a source…');
+    else if(j.stage==='buffering') setPState('Preparing — '+(j.pct||0)+'%', j.pct||0);
+    else if(j.stage==='encoding')  setPState('Converting audio — '+(j.pct||0)+'%', j.pct||0);
+    else if(j.stage==='launching') setPState('Starting…');
+    else if(j.stage==='playing'){
+      clearPState();
+      nextUp=(j.media && j.media.next) || null;
+      try{ await attachMedia(j.media); }
+      catch(err){ showError(err.message||String(err)); return; }
+      if(gen!==pgen) return;
+      try{ await pv.play(); }
+      catch(err){
+        if(err.name==='NotAllowedError' || err.name==='AbortError') showTap();
+        else showError(err.message||String(err));
+      }
+      startHeartbeat();
+      return;
+    } else if(j.stage==='error'){
+      showError(j.msg||'Playback failed.');
+      return;
+    }
+  }
+}
+pretry.onclick=()=>{
+  if(!lastPlayArgs) return;
+  hideError();
+  playHere(lastPlayArgs.kind, lastPlayArgs.id, lastPlayArgs.s, lastPlayArgs.e, lastPlayArgs.title, true);
+};
 
 /* ---------- provider settings / setup ---------- */
 // apiSession holds the CSRF token in memory only (never localStorage) --
@@ -1506,9 +1786,6 @@ document.getElementById('stop').onclick=async()=>{
   }catch(e){ notify('Stop failed: '+e, true); }
 };
 
-document.getElementById('reconnect').onclick=()=>reconnect('Manual reconnect');
-setInterval(pollHealth, 15000);
-
 (async()=>{
   // Purely local rendering first, and nothing below it awaits the network.
   // A hanging /api/genres used to freeze the whole init: the await never
@@ -1517,7 +1794,6 @@ setInterval(pollHealth, 15000);
   renderSorts();
   const setupCheck = checkSetup();   // cheap and local on the server; still awaited
   refreshNet();                      // below, so the grid never appears half-working
-  pollHealth();
   pollNowPlaying();
   await setupCheck;
   if(setupConfigured){

@@ -57,14 +57,18 @@ need() {
 # own Python 3.12 venv, that install.sh sets up from deploy/install-sendspin.sh
 # and deploy/cinematica-sendspin.service.in. It must sit beside server.py --
 # the rendered unit's ExecStart is @DIR@/sendspin_bridge.py.
-for f in install.sh server.py sendspin_bridge.py index.html INSTALL.md README.md; do
+for f in install.sh server.py browser_play.py sendspin_bridge.py index.html \
+         INSTALL.md README.md; do
     need "$SERVER_DIR/$f"
     cp -p "$SERVER_DIR/$f" "$ROOT/$f"
 done
 chmod +x "$ROOT/install.sh"
-# The files the page pulls in besides itself, served under /static.
+# The files the page pulls in besides itself, served under /static: the
+# wordmark's face, and hls.js -- vendored rather than fetched from a CDN,
+# so the player works with no third-party origin in its trust chain.
 mkdir -p "$ROOT/static"
-for f in alfa-slab-one.ttf alfa-slab-one-OFL.txt; do
+for f in alfa-slab-one.ttf alfa-slab-one-OFL.txt \
+         hls-1.7.3.min.js hls-1.7.3-LICENSE.txt; do
     need "$SERVER_DIR/static/$f"
     cp -p "$SERVER_DIR/static/$f" "$ROOT/static/$f"
 done

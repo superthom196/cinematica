@@ -19,7 +19,14 @@ services:
     image: stremio/server:latest
     container_name: stremio-server
     environment:
-      - NO_CORS=1
+      # NO_CORS=1 used to be here. It turns off this server's cross-origin
+      # checks, and nothing in Cinematica ever needed that: server.py reaches
+      # it over STREMIO_INTERNAL and the TV app plays from it directly, and
+      # neither is a browser subject to CORS. The one browser path -- the
+      # /bx/ player -- is proxied through server.py under its own origin and
+      # never addresses this port at all (BROWSER-TESTING.md checks exactly
+      # that). What it did do was leave a port with no authentication on it
+      # readable by any web page that got itself treated as same-origin.
       - APP_PATH=/stremio-server
     volumes:
       # Cache + server-settings.json. install.sh seeds the settings file here

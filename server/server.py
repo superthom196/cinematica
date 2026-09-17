@@ -10,13 +10,14 @@ Stdlib only, deliberately: no pip install, nothing to break on a rebuild.
   TV app     -> picks that URL up over the heartbeat channel and plays it
   adb        -> optional: wakes the TV app to the foreground (phone remote)
 """
-import hmac, io, json, os, queue, random, re, shutil, subprocess, sys, tarfile, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
+import hmac, io, ipaddress, json, math, os, queue, random, re, shutil, subprocess, sys, tarfile, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE      = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from providers import contract, gateway   # noqa: E402
+import browser_play   # noqa: E402 -- the HLS grid/tfdt helpers the packager needs
 # Defaults to .env beside server.py. Was hardcoded to a second directory in
 # $HOME, which is the only reason that directory still existed.
 ENV_FILE  = os.environ.get("ENV_FILE", os.path.join(HERE, ".env"))
@@ -45,6 +46,20 @@ def _default_host():
 
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST") or _default_host()
 STREMIO   = os.environ.get("STREMIO", f"http://{PUBLIC_HOST}:11470")
+# The names this server answers to. A page on the public internet can point a
+# hostname it owns at this box's private address -- DNS rebinding -- and from
+# then on the browser treats it as same-origin, so _origin_ok() below sees
+# Origin and Host agree and waves it through. Both of them say the attacker's
+# name, which is the tell: the one thing the attack cannot fake is being
+# addressed to a name this server actually has. An IP literal is always
+# accepted, because the attack needs a name whose DNS it controls and cannot
+# make a browser put someone else's address in Host.
+HOST_ALLOW = tuple(h.strip().lower() for h in
+                   os.environ.get("HOST_ALLOW", "").split(",") if h.strip())
+# Suffixes nobody can register against this house from the public DNS: .lan and
+# .local are link-local, and a .ts.net name exists only inside one tailnet. The
+# phone reaches this server under all three, so none of them can be dropped.
+HOST_ALLOW_SUFFIX = (".lan", ".local", ".ts.net")
 # adb is no longer how a film gets played: the TV app is the player, and it needs
 # none of this. What is left is an opt-in "phone remote" for a hand-built install
 # without the app, and it is OFF unless an address is given -- empty means
@@ -567,6 +582,50 @@ def best_stream(identity, runtime_min=None, kind="movie", season=None, episode=N
     tail.sort(key=lambda c: -c["score"])
     return strict + tail, len(cands), rejected
 
+def probe_full(url_internal):
+    """Everything ffprobe knows about the file, video and audio alike.
+
+    probe_media() only ever asked about audio, because the TV panel's question
+    was always "can this thing decode the sound" -- video went out as-copied to
+    a box with a hardware decoder for everything a source is likely to carry.
+    A browser
+    has no such guarantee: it needs the video codec, its profile and level, and
+    the pixel format before it can say whether it can play the file at all, so
+    this widens the same ffprobe call by dropping -select_streams a and asking
+    about every stream, instead of duplicating the docker-exec/timeout/JSON
+    plumbing a second time for a video-only probe.
+
+    Same call shape as before -- -rw_timeout, -v error, -analyzeduration,
+    -probesize, -of json, timeout=120 -- so there is exactly one place that
+    knows how to reach into the ffmpeg container. Never raises: a probe that
+    throws mid-transcode-decision is worse than one that answers "unknown".
+    """
+    empty = {"format_name": "", "duration": None, "video": None, "audio": [], "langs": []}
+    try:
+        r = subprocess.run(
+            ["docker", "exec", FFMPEG_CTR, FFPROBE, "-rw_timeout", "30000000", "-v", "error",
+             "-show_entries",
+             "stream=index,codec_type,codec_name,profile,level,pix_fmt,width,height,channels:"
+             "stream_tags=language:format=format_name,duration",
+             "-of", "json",
+             "-analyzeduration", "5000000", "-probesize", "5000000", url_internal],
+            capture_output=True, text=True, timeout=120)
+        d = json.loads(r.stdout or "{}")
+        streams = d.get("streams") or []
+        fmt = d.get("format") or {}
+        video = next((s for s in streams if s.get("codec_type") == "video"), None)
+        audio = [s for s in streams if s.get("codec_type") == "audio"]
+        langs = [((s.get("tags") or {}).get("language") or "und").strip().lower() or "und"
+                 for s in audio]
+        try:
+            dur = float(fmt.get("duration") or 0) or None
+        except (TypeError, ValueError):
+            dur = None
+        return {"format_name": fmt.get("format_name") or "", "duration": dur,
+                "video": video, "audio": audio, "langs": langs}
+    except Exception:
+        return empty
+
 def probe_media(url_internal):
     """(codec of the first audio track, duration in seconds, audio languages, per-track codecs).
 
@@ -581,30 +640,90 @@ def probe_media(url_internal):
     ALL audio streams, not a:0: the language question is about the file's set of
     tracks, and one extra -show_entries field costs nothing on a call that is
     already being made. Tracks with no language tag come back as "und".
+
+    Now a thin view over probe_full(): there is only one ffprobe call shape to
+    maintain, and this just reshapes its audio list into the tuple callers expect.
+    """
+    full = probe_full(url_internal)
+    audio = full["audio"]
+    codec = (audio[0].get("codec_name") or "").strip().lower() or None if audio else None
+    codecs = [(s.get("codec_name") or "").strip().lower() or None for s in audio]
+    return codec, full["duration"], full["langs"], codecs
+
+def probe_gop(url_internal, window=40):
+    """Median gap between keyframes, in seconds, over the first `window` seconds.
+
+    Only the first window seconds: the pre-buffer has already pulled that part
+    of the file into the local cache before this is ever called, so reading it
+    again costs a couple of seconds of ffprobe time and no extra network
+    traffic -- probing the whole file would mean fetching parts nothing else
+    needs yet, just to answer a question the first few keyframes already settle.
+
+    The answer picks a segment length. A stream that is being copied rather
+    than re-encoded can only be cut on keyframe boundaries, so a segment grid
+    finer than the keyframe interval is a promise the copy can't keep -- every
+    segment would actually start early or late at the nearest keyframe instead.
     """
     try:
         r = subprocess.run(
             ["docker", "exec", FFMPEG_CTR, FFPROBE, "-rw_timeout", "30000000", "-v", "error",
-             "-select_streams", "a",
-             "-show_entries",
-             "stream=index,codec_name:stream_tags=language:format=duration",
-             "-of", "json",
+             "-select_streams", "v:0", "-skip_frame", "nokey",
+             "-read_intervals", "%%+%d" % window,
+             "-show_entries", "frame=pts_time", "-of", "csv=p=0",
              "-analyzeduration", "5000000", "-probesize", "5000000", url_internal],
             capture_output=True, text=True, timeout=120)
-        d = json.loads(r.stdout or "{}")
-        streams = d.get("streams") or []
-        st = streams[0] if streams else {}
-        codec = (st.get("codec_name") or "").strip().lower() or None
-        try:
-            dur = float((d.get("format") or {}).get("duration") or 0) or None
-        except (TypeError, ValueError):
-            dur = None
-        langs = [((s.get("tags") or {}).get("language") or "und").strip().lower() or "und"
-                 for s in streams]
-        codecs = [(s.get("codec_name") or "").strip().lower() or None for s in streams]
-        return codec, dur, langs, codecs
+        times = sorted(float(line) for line in (r.stdout or "").splitlines() if line.strip())
+        if len(times) < 2:
+            return None
+        gaps = sorted(b - a for a, b in zip(times, times[1:]))
+        n = len(gaps)
+        mid = n // 2
+        median = gaps[mid] if n % 2 else (gaps[mid - 1] + gaps[mid]) / 2
+        if not math.isfinite(median) or median <= 0:
+            return None
+        return median
     except Exception:
-        return None, None, [], []
+        return None
+
+def probe_keyframes(url_internal, t, window=30):
+    """Keyframe presentation times, in seconds, in a window ENDING at t.
+
+    Same ffprobe shape as probe_gop above, and windowed for the same
+    reason: this is called once per packager run, against a source that may
+    be a torrent still filling in, and reading the whole file to list every
+    keyframe would pull down parts nothing is going to watch yet just to
+    answer a question about one point in the film.
+
+    The window ends at t because the only keyframe this has to find is the
+    one ffmpeg's input seek will land on -- the last one AT OR BEFORE t. A
+    window shorter than the GOP finds nothing, so this asks for `window`
+    seconds of lead-in, comfortably more than grid()'s largest segment. The
+    end of that window is absolute, not a duration -- see
+    keyframe_probe_cmd, where getting that wrong hid the one keyframe this
+    whole call exists to find.
+    Returns [] on any failure; anchor_time() treats that as "assume the
+    grid position", which is what this code did before it asked at all.
+
+    The timeout is short on purpose, and much shorter than probe_gop's. That
+    one runs once while the film is being prepared and the viewer is already
+    watching a progress message; this one runs inside bx_restart, on the
+    request thread of the segment fetch that IS the seek, so every second it
+    spends is a second of the viewer staring at a stalled scrubber. Giving
+    up costs at most one GOP of anchor accuracy -- worth far less than the
+    wait.
+    """
+    end = float(t)
+    start = max(0.0, end - window)
+    if end <= start:
+        return []
+    try:
+        r = subprocess.run(
+            ["docker", "exec", FFMPEG_CTR, FFPROBE]
+            + browser_play.keyframe_probe_cmd(url_internal, start, end),
+            capture_output=True, text=True, timeout=20)
+        return browser_play.parse_keyframe_times(r.stdout)
+    except Exception:
+        return []
 
 def audio_url(c):
     """The transcoding endpoint for this pick."""
@@ -665,6 +784,19 @@ def stream_url_internal(c):
         return "http://127.0.0.1:%d/src/%s" % (PORT, register_source(c))
     idx = c.get("fileIdx")
     return f"{STREMIO_IN}/{c['infoHash']}" + (f"/{idx}" if idx is not None else "")
+
+def stream_url_public(c):
+    """The same source as a RELATIVE url, for a browser.
+
+    stream_url() bakes in PUBLIC_HOST and, for a torrent, the streaming server's
+    own port -- both correct for the TV, which is on the LAN, and both useless to
+    a browser that reached this page over a tailnet address. A relative url rides
+    whatever origin the page was actually opened on, and carries no credential.
+    """
+    if c.get("transport") == "http":
+        return "/src/%s" % register_source(c)
+    idx = c.get("fileIdx")
+    return "/t/%s" % c["infoHash"] + (("/%d" % idx) if idx is not None else "")
 
 # ---- caches -----------------------------------------------------------------
 # RLock, not Lock. Every thread in a 22-thread dump was blocked on this lock with
@@ -1269,7 +1401,11 @@ def get_stream(mid, force=False, entry=None):
         # automatic "no imdb_id".
         ranked, n, rejected = best_stream(identity, det.get("runtime"))
         e = {"at": time.time(), "pick": (ranked[0] if ranked else None),
-             "picks": ranked[:ATTEMPTS], "count": n, "rejected": rejected,
+             # picks is what the TV plays, ranked by score() and cut to ATTEMPTS.
+             # picks_all keeps the relaxed tail too, because a browser may need an
+             # H.264 candidate that the TV's HEVC-first ranking pushed past the cut.
+             "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
+             "rejected": rejected,
              "imdb_id": ext.get("imdb"), "runtime": det.get("runtime"), "title": det.get("title"),
              "soft": True,
              "err": None if ranked else stream_miss(n, rejected)}
@@ -1314,7 +1450,8 @@ def get_stream_tv(tid, s, e, force=False, entry=None):
         # lookup, only a reason it might fail.
         ranked, n, rejected = best_stream(identity, runtime, kind="tv", season=s, episode=e)
         ent = {"at": time.time(), "pick": (ranked[0] if ranked else None),
-               "picks": ranked[:ATTEMPTS], "count": n, "rejected": rejected,
+               "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
+               "rejected": rejected,
                "imdb_id": ext.get("imdb"), "runtime": runtime, "title": title,
                "soft": True,
                "err": None if ranked else stream_miss(n, rejected),
@@ -1393,10 +1530,24 @@ def sustain_from_samples():
         return None
     return s[min(len(s) - 1, int(len(s) * NET_PCT))]
 
+def browser_playing():
+    """Whether a browser session is currently watching something.
+
+    A pause still counts: the viewer is sitting in front of it, and treating a
+    paused film as idle is what would let cache_watch() empty the cache under
+    them. Only a session that has stopped sending heartbeats is gone.
+    """
+    with _lock:
+        return (_bx["token"] is not None and _bx["state"] != "ended"
+                and time.time() - _bx["at"] < BX_IDLE)
+
 def playing_now():
-    """Cheap guard: measuring saturates the link, so it must yield to a film."""
+    """Cheap guard: measuring saturates the link, so it must yield to a film.
+
+    The TV is not the only player any more, so a browser watching counts too.
+    """
     try:
-        return tv_playback_state() in (2, 3)
+        return tv_playback_state() in (2, 3) or browser_playing()
     except Exception:
         return False
 
@@ -1469,12 +1620,25 @@ _last_req = {"at": 0.0}
 # The TV app's heartbeat belongs here too, and more strongly than the rest: it
 # never stops while the app is running, so counting it as use would mean the link
 # was never idle and the calibration never ran at all.
+# The browser heartbeat is bookkeeping, not someone browsing -- the same
+# reasoning as the TV app's heartbeat above -- so it must not keep
+# app_in_use() permanently true and starve the link calibration. (The route
+# itself does not exist yet; adding the path now keeps the two in one place.)
 POLL_PATHS = ("/api/health", "/api/nowplaying", "/api/netcheck",
-              "/api/player/heartbeat")
+              "/api/player/heartbeat", "/api/bx/beat")
 
 # Static files served under /static/<name> -> (file under static/, content type).
 STATIC = {
     "/static/alfa-slab-one.ttf": ("alfa-slab-one.ttf", "font/ttf"),
+    # hls.js, vendored and pinned. Only fetched by browsers without native HLS,
+    # so Safari and iOS never pay for it. sha256
+    # a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e --
+    # the only provenance trail a minified bundle gets in a repo with no
+    # package manager; it is dist/hls.min.js as published to npm, and this
+    # digest was checked against the one jsdelivr publishes for that exact
+    # file before the bytes were committed. A new version gets a NEW PATH,
+    # never a new body here.
+    "/static/hls-1.7.3.min.js": ("hls-1.7.3.min.js", "text/javascript"),
 }
 
 def note_request(path):
@@ -1771,7 +1935,9 @@ def cache_watch():
     while True:
         time.sleep(20)
         try:
-            now = tv_playback_state() in (2, 3)
+            # A browser watching counts as playing too, or the cache gets torn
+            # down out from under a film someone is watching in the browser.
+            now = tv_playback_state() in (2, 3) or browser_playing()
             if now:
                 idle_count = 0
             elif was or idle_count:
@@ -2575,6 +2741,16 @@ TC_LEAD  = int(os.environ.get("TRANSCODE_LEAD_SECS", 180))
 TC_BAND  = float(os.environ.get("TRANSCODE_LEAD_BAND", 0.9))
 TC_KEEP  = int(os.environ.get("TRANSCODE_KEEP", 0))   # cache is emptied per film, so keep none
 
+# The on-demand browser HLS packager: one ffmpeg per session, remuxing the
+# source into fMP4 segments a grid-index at a time, paced against the real
+# playhead instead of an estimate. See regulate_hls / bx_spawn below.
+BX_DIR      = "bx_"                    # per-session directory prefix under TC_HOST
+BX_SEG_WAIT = float(os.environ.get("BX_SEG_WAIT", 45))   # long-poll ceiling per segment
+BX_LEAD     = float(os.environ.get("BX_LEAD", 300))      # seconds ahead of the playhead
+BX_BEHIND   = float(os.environ.get("BX_BEHIND", 600))    # seconds kept behind it
+BX_SEEK_DEBOUNCE = float(os.environ.get("BX_SEEK_DEBOUNCE", 0.25))
+BX_LOOKAHEAD = int(os.environ.get("BX_LOOKAHEAD", 8))    # segments past the frontier that just wait
+
 def tv_playback_state(max_age=6):
     """3 = playing, 2 = paused, anything else idle.
 
@@ -2657,7 +2833,12 @@ def _ctr_ffmpegs():
         parts = line.strip().split(None, 1)
         if len(parts) < 2 or "ffmpeg" not in parts[1] or TC_CTR + "/" not in parts[1]:
             continue
-        name = parts[1].rsplit(TC_CTR + "/", 1)[-1].split()[0]
+        rel = parts[1].rsplit(TC_CTR + "/", 1)[-1].split()[0]
+        # The first path component, not the whole relative path: a browser session
+        # writes /transcode/bx_<token>/s000001.m4s and is registered under the
+        # DIRECTORY name. Existing .ts outputs sit directly in /transcode and have
+        # no slash, so they come through this unchanged.
+        name = rel.split("/", 1)[0]
         out.append((parts[0], name))
     return out
 
@@ -2735,6 +2916,22 @@ def tc_cleanup(keep_name=None):
             if os.path.basename(old) in busy or os.path.basename(old) == keep_name:
                 continue
             os.remove(old)
+    except Exception:
+        pass
+    # Second pass: a browser session directory left over from a previous
+    # process (a deploy, a crash) or an earlier session in THIS process holds
+    # a whole remux's worth of segments and is otherwise never revisited, so
+    # it has to be swept the same way the orphaned .ts files above are.
+    try:
+        with _lock:
+            live_token = _bx.get("token")
+        live_dir = (BX_DIR + live_token) if live_token else None
+        for name in os.listdir(TC_HOST):
+            if not name.startswith(BX_DIR) or name == live_dir:
+                continue
+            full = os.path.join(TC_HOST, name)
+            if os.path.isdir(full):
+                shutil.rmtree(full, ignore_errors=True)
     except Exception:
         pass
 
@@ -3047,6 +3244,396 @@ _play_gen  = 0        # bumped per accepted play; an older job stands down
 _cancel_gen = 0
 _play_inflight = 0
 
+# One browser session at a time, mirroring the one-play-job rule above. The
+# token is minted by the server rather than the page: a token the page chose
+# could be replayed from a bookmarked url, and this one is also the segment
+# path, so it is the only thing standing between a stale tab and a live
+# session's ffmpeg.
+#
+# _bx is also the SINGLE answer to "is a browser watching something right
+# now" -- browser_playing(), claim_owner()'s browser rows, cache_watch()
+# (via playing_now()) and /api/bx/beat's own match check all read it, and
+# nothing else. That is deliberate: active_job()/_jobs cannot serve as that
+# answer, because a job that has finished publishing is stage="playing",
+# which is NOT in JOB_ACTIVE -- active_job() stops seeing it the moment
+# playback actually starts, exactly when "is a browser watching" needs to
+# start being true. publish() (in run_browser_job) is what populates this
+# for EVERY mode, direct included, precisely so cache_watch() does not
+# clear the cache out from under a direct-played film ~60s in for want of
+# a live heartbeat that was never going to exist until the first
+# /api/bx/beat arrived.
+_bx = {"token": None, "job": None, "gen": 0, "at": 0.0, "state": "idle",
+       "pos": 0.0, "dur": None, "title": None,
+       # Packager fields, added alongside the existing heartbeat shape rather
+       # than replacing it -- api/stop and the heartbeat route only know the
+       # keys above, and must keep working unchanged.
+       "dir": None, "seg": None, "anchor": None, "frontier": None,
+       "seek_gen": 0, "pending_anchor": None, "timescales": None,
+       # run_anchor is the REAL presentation time the current ffmpeg run
+       # starts at -- the keyframe at or before anchor*seg, not anchor*seg
+       # itself (see bx_spawn). Every segment file in the session directory
+       # belongs to the current run, so this one number re-times all of
+       # them at serve time.
+       "run_anchor": 0.0,
+       "n_segs": None, "proc_key": None, "src": None, "plan": None}
+BX_IDLE = float(os.environ.get("BX_IDLE", 60))
+
+def bx_begin(token, src_internal, plan, seg, duration, mid, gen):
+    """Start a browser HLS session: make its directory, record the state the
+    routes below read, and kick off the first ffmpeg at the front of the
+    film. Returns True on success, False if the directory could not be made
+    or the first ffmpeg failed to start -- either way there is nothing yet
+    for the browser to fetch.
+    """
+    sess_dir = os.path.join(TC_HOST, BX_DIR + token)
+    try:
+        os.makedirs(sess_dir, exist_ok=True)
+    except OSError:
+        return False
+    n_segs = math.ceil(duration / seg) if duration and seg else 0
+    with _lock:
+        _bx.update(token=token, job=mid, gen=gen, at=time.time(), state="starting",
+                   pos=0.0, dur=duration,
+                   dir=sess_dir, seg=seg, anchor=0, frontier=-1,
+                   seek_gen=0, pending_anchor=None, timescales=None,
+                   run_anchor=0.0,
+                   n_segs=n_segs, proc_key="bx:" + token, src=src_internal, plan=plan)
+    return bx_spawn(token, 0)
+
+def bx_spawn(token, k0):
+    """Start the ffmpeg for this session anchored at segment k0: the source
+    is fed from k0*seg onward, so a seek to segment k0 is exactly a restart
+    of ffmpeg at that offset.
+
+    -ss before -i is an INPUT seek, and -copyts is never passed (see the
+    init.mp4 comment above BX_DIR), so ffmpeg resets the seeked stream's own
+    presentation clock to (near) zero at the seek point and counts up from
+    there for as long as this process keeps running. -start_number k0 only
+    renames the OUTPUT FILES this run writes -- s000100.m4s and so on -- onto
+    their real place on the absolute grid; it does not tell ffmpeg to stamp
+    an offset into the bytes it writes. So the files on disk are correctly
+    named while everything inside them still starts its clock at zero. The
+    server corrects that at serve time -- see the segment route below, and
+    the reasoning next to its delta calculation.
+
+    Registered through transcode_start with key "bx:"+token and name
+    "bx_"+token, so MAX_TRANSCODES, _stop(), transcode_stop_all() and
+    _kill_orphans() all manage this exactly like a TV transcode, with no
+    special case anywhere in that machinery for what a browser session is.
+    ffmpeg's own ff.m3u8 is written but never served -- the server hands out
+    its own VOD playlist instead (see vod_playlist / the index.m3u8 route).
+    """
+    with _lock:
+        if _bx["token"] != token:
+            return False
+        sess_dir, seg, src = _bx["dir"], _bx["seg"], _bx["src"]
+        plan = _bx["plan"] or {}
+    if not sess_dir or not seg or not src:
+        return False
+    name = BX_DIR + token
+    aidx = int(plan.get("aidx") or 0)
+    # Every segment file left in this directory was written by the run that
+    # is being replaced, on a different anchor, so its bytes carry a
+    # different zero point -- and the whole re-timing below rests on one
+    # number covering every file present. Clearing them is what makes that
+    # invariant true instead of merely likely: whatever survives here would
+    # otherwise be served with the new run's anchor added to the old run's
+    # clock. It also fixes the frontier, which reads file existence and
+    # used to count a previous run's leftovers as this run's progress.
+    bx_clear_segments(sess_dir)
+    # Where this run's clock will actually start. -ss before -i is an input
+    # seek and the video is copied, so ffmpeg cannot begin at k0*seg unless
+    # a keyframe happens to sit exactly there; it begins at the last
+    # keyframe at or before it and calls that moment zero. Probing for that
+    # keyframe is the only way to know how far back "zero" really is, and
+    # k0 == 0 is the one case that needs no probe -- the run starts at the
+    # start of the film, so its zero is the film's zero.
+    if k0 <= 0:
+        run_anchor = 0.0
+    else:
+        run_anchor = browser_play.anchor_time(
+            probe_keyframes(src, k0 * seg), k0, seg)
+    # The argv itself is built in browser_play.segment_cmd -- a pure
+    # function with no docker/host detail -- precisely so a test can assert
+    # "-c:v copy" is unconditional and no video encoder ever sneaks in.
+    # Only the docker-exec/ffmpeg-binary prefix belongs here.
+    out_dir = "%s/%s" % (TC_CTR, name)
+    playlist = "%s/ff.m3u8" % out_dir
+    cmd = ["docker", "exec", FFMPEG_CTR, FFMPEG] + browser_play.segment_cmd(
+        src, out_dir, playlist, k0, seg, plan, aidx)
+    # Published BEFORE the process that will write the segments, not after.
+    # The serve path re-times whatever is on disk by _bx["run_anchor"], so
+    # any moment where ffmpeg is writing this run's segments while _bx still
+    # names the previous run's anchor is a moment a segment can be served
+    # with the wrong timeline -- and once it is in the player's buffer, that
+    # is not something a later correction can take back.
+    with _lock:
+        if _bx["token"] != token:
+            return False
+        _bx.update(anchor=k0, frontier=k0 - 1, run_anchor=run_anchor)
+    transcode_start("bx:" + token, cmd, name=name)
+    with _lock:
+        if _bx["token"] != token:
+            return False   # the session moved on while ffmpeg was starting
+    threading.Thread(target=regulate_hls, args=(token,), daemon=True).start()
+    return True
+
+
+def bx_clear_segments(sess_dir):
+    """Delete this session's segment files, leaving init.mp4 alone.
+
+    init.mp4 deliberately survives: it is identical for every anchor (that
+    is exactly why -copyts is never passed -- see segment_cmd) and the
+    browser fetched it once, at the top of the session, and will not fetch
+    it again.
+    """
+    try:
+        names = os.listdir(sess_dir)
+    except OSError:
+        return
+    for fn in names:
+        if fn.startswith("s") and fn.endswith(".m4s"):
+            try:
+                os.remove(os.path.join(sess_dir, fn))
+            except OSError:
+                pass
+
+def bx_restart(token, k):
+    """Reposition the packager to segment k. This IS how a scrub is served
+    -- see the segment route below, the only caller, which already collapsed
+    a burst of seek requests into this one call via seek_gen and
+    BX_SEEK_DEBOUNCE before ever reaching here.
+    """
+    with _lock:
+        if _bx["token"] != token:
+            return False
+        my_gen = _bx["seek_gen"]
+    name = BX_DIR + token
+    with _tc_lock:
+        ent = _transcodes.get("bx:" + token)
+    _kill_ctr(name)
+    if isinstance(ent, dict):
+        _stop(ent)
+    with _lock:
+        # _kill_ctr/_stop above is several blocking docker execs; if a newer
+        # seek landed while the old ffmpeg was dying, that request owns the
+        # restart now and this stale one must not spawn ffmpeg at the wrong
+        # place -- exactly the abandoned-seek case seek_gen exists to catch.
+        if _bx["token"] != token or _bx["seek_gen"] != my_gen:
+            return False
+    return bx_spawn(token, k)
+
+def bx_stop_all(reason=None):
+    """Stop the browser session's ffmpeg, reset _bx to idle, and remove the
+    session directory. The counterpart to transcode_stop_all() for the
+    packager. `reason` is only for the log line -- there is exactly one
+    browser session at a time, so there is nothing to compare it against.
+    """
+    with _lock:
+        token = _bx["token"]
+        sess_dir = _bx["dir"]
+        _bx.update(token=None, job=None, gen=0, at=0.0, state="idle",
+                   pos=0.0, dur=None, title=None,
+                   dir=None, seg=None, anchor=None, frontier=None,
+                   seek_gen=0, pending_anchor=None, timescales=None,
+                   run_anchor=0.0,
+                   n_segs=None, proc_key=None, src=None, plan=None)
+    if token:
+        with _tc_lock:
+            ent = _transcodes.pop("bx:" + token, None)
+        _kill_ctr(BX_DIR + token)
+        if isinstance(ent, dict):
+            _stop(ent)
+        print("bx: stopped %s (%s)" % (token, reason or "?"), flush=True)
+    if sess_dir:
+        shutil.rmtree(sess_dir, ignore_errors=True)
+
+def bx_timescales(token):
+    """{track_id: timescale} for this session, parsed from init.mp4 once.
+
+    A bare fMP4 segment carries no moov, so the tick rate each track counts
+    its tfdt in can only come from the init segment -- and it is the same
+    for every run and every segment of the session, so it is read once and
+    kept on _bx from then on.
+
+    BUG this used to be a field nothing ever wrote. _bx carried a
+    "timescales" key that bx_begin, bx_restart and bx_stop_all all set to
+    None and no code path ever filled in, so the segment route's "no
+    timescales yet" guard was permanently true and EVERY segment request
+    came back 503. Only the tests populated it, by hand, which is exactly
+    why nothing caught it. It is computed here, from the file, so there is
+    no field left to forget to write.
+
+    Returns None when init.mp4 is not on disk yet or will not parse. The
+    caller must treat that as not-ready rather than assuming a timescale:
+    guessing wrong stamps a time that looks entirely plausible and is not.
+    """
+    with _lock:
+        if _bx["token"] != token:
+            return None
+        cached = _bx["timescales"]
+        sess_dir = _bx["dir"]
+    if cached:
+        return cached
+    if not sess_dir:
+        return None
+    try:
+        with open(os.path.join(sess_dir, "init.mp4"), "rb") as f:
+            data = f.read()
+        found = browser_play.track_timescales(data)
+    except Exception:
+        return None
+    if not found:
+        return None
+    with _lock:
+        if _bx["token"] != token:
+            return None
+        _bx["timescales"] = found
+    return found
+
+def bx_frontier(token):
+    """The highest complete segment index for this session, or anchor - 1 if
+    none are complete yet. Complete means the file exists AND its successor
+    exists too -- the HLS muxer only finalizes segment k the instant it opens
+    k+1, so reading s%06d.m4s while it is still the file ffmpeg is writing
+    hands back a truncated fragment. Returns None if the token no longer
+    matches the live session.
+    """
+    with _lock:
+        if _bx["token"] != token:
+            return None
+        sess_dir, anchor = _bx["dir"], _bx["anchor"]
+    if not sess_dir or anchor is None:
+        return None
+    try:
+        names = os.listdir(sess_dir)
+    except OSError:
+        return anchor - 1
+    have = set()
+    for n in names:
+        m = re.match(r"^s(\d{6})\.m4s$", n)
+        if m:
+            have.add(int(m.group(1)))
+    best = anchor - 1
+    # >= anchor only: a segment left behind by a PREVIOUS anchor (before a
+    # seek restarted ffmpeg) is not something this run is still producing,
+    # and counting it would tell the pacer below the run is further along
+    # than it really is.
+    for k in have:
+        if k >= anchor and (k + 1) in have and k > best:
+            best = k
+    return best
+
+def _bx_trim(token, pos, frontier):
+    """Delete segments the viewer is well behind. Bounded only below --
+    never at or ahead of the frontier, which is the one region a rewind
+    seek, or ffmpeg itself, might still need.
+    """
+    with _lock:
+        if _bx["token"] != token:
+            return
+        sess_dir, seg = _bx["dir"], _bx["seg"]
+    if not sess_dir or not seg:
+        return
+    try:
+        names = os.listdir(sess_dir)
+    except OSError:
+        return
+    for n in names:
+        m = re.match(r"^s(\d{6})\.m4s$", n)
+        if not m:
+            continue
+        k = int(m.group(1))
+        if k >= frontier:
+            continue
+        if browser_play.seg_start(k, seg) < pos - BX_BEHIND:
+            try:
+                os.remove(os.path.join(sess_dir, n))
+            except OSError:
+                pass
+
+def regulate_hls(token):
+    """Pace the packager's ffmpeg the way regulate_lead paces the TV
+    transcode -- SIGSTOP once it is comfortably ahead, SIGCONT once the lead
+    has drained -- but against the browser's OWN reported position instead
+    of an estimate. regulate_lead never had that: the TV pipe has no notion
+    of "where the player actually is", only how many bytes it has produced
+    and how long it has been running, so it measures a proxy and lives with
+    the proxy's error. A browser session heartbeats its real currentTime
+    every few seconds (_bx["pos"], _bx["at"]), so the lead here is measured
+    against the number the player is actually showing, not guessed from a
+    bitrate.
+    """
+    key = "bx:" + token
+    name = BX_DIR + token
+    pid = None
+    # The caller starts this thread immediately after transcode_start, with
+    # no wait loop first (unlike regulate_lead, whose caller already waited
+    # for a head start to build) -- so the container process may not be
+    # visible to pgrep yet. Give it a moment rather than bailing out cold.
+    for _ in range(20):
+        pid = _ctr_pid(name)
+        if pid:
+            break
+        time.sleep(0.25)
+    if not pid:
+        return
+    started = time.time()
+    stopped = False
+    try:
+        while True:
+            with _tc_lock:
+                ent = _transcodes.get(key)
+            proc = ent.get("proc") if isinstance(ent, dict) else None
+            if proc is None or proc.poll() is not None:
+                break
+            with _lock:
+                if _bx["token"] != token:
+                    break   # session moved on; nothing left here to regulate
+                seg, anchor, at, pos = _bx["seg"], _bx["anchor"], _bx["at"], _bx["pos"]
+            frontier = bx_frontier(token)
+            if frontier is None:
+                break
+            now = time.time()
+            if at:
+                playhead = pos
+            else:
+                # No heartbeat has arrived yet: assume real-time playback
+                # from the anchor, the same wall-clock fallback regulate_lead
+                # uses before it has a real measurement either.
+                playhead = anchor * seg + (now - started)
+            lead = browser_play.seg_start(frontier + 1, seg) - playhead
+            real = _ctr_stopped(pid)
+            if real is not None and real != stopped:
+                print("bx: %s externally %s -- resyncing"
+                      % (token[:8], "suspended" if real else "resumed"), flush=True)
+                stopped = real
+                _tc_flag(key, suspended=real)
+            if not stopped and lead > BX_LEAD:
+                subprocess.run(["docker", "exec", FFMPEG_CTR, "kill", "-STOP", pid],
+                               capture_output=True, timeout=15)
+                stopped = True
+                _tc_flag(key, suspended=True)
+                print("bx: suspend %s lead=%.0fs" % (token[:8], lead), flush=True)
+            elif stopped and lead < BX_LEAD * TC_BAND:
+                subprocess.run(["docker", "exec", FFMPEG_CTR, "kill", "-CONT", pid],
+                               capture_output=True, timeout=15)
+                stopped = False
+                _tc_flag(key, suspended=False)
+                print("bx: resume  %s lead=%.0fs" % (token[:8], lead), flush=True)
+            _bx_trim(token, playhead, frontier)
+            time.sleep(2.0)
+    except Exception:
+        pass
+    finally:
+        if stopped:                       # never leave it suspended
+            try:
+                subprocess.run(["docker", "exec", FFMPEG_CTR, "kill", "-CONT", pid],
+                               capture_output=True, timeout=15)
+            except Exception:
+                pass
+            _tc_flag(key, suspended=False)
+
 def active_job():
     """(mid, job) of the play job still working, if any."""
     now = time.time()
@@ -3067,6 +3654,70 @@ def play_claim():
 def superseded(gen):
     with _lock:
         return gen is not None and gen != _play_gen
+
+def claim_owner(owner, token=None):
+    """Decide whether `owner` ("tv" or "browser") may take the player now.
+
+    | incoming | current holder                                        | result |
+    |----------|--------------------------------------------------------|--------|
+    | tv       | nothing, or a TV job                                    | accept |
+    | tv       | a live browser session, or an active browser job         | refuse |
+    |          | still preparing (buffering/encoding, no heartbeat yet)   |        |
+    | browser  | nothing                                                 | accept |
+    | browser  | an active TV job, or tv_playback_state() in (2, 3)      | refuse |
+    | browser  | a browser session with the same token                   | accept |
+    | browser  | a live browser session with a different token           | refuse |
+    | browser  | another browser's job still preparing                   | refuse |
+
+    Cross-device is refused rather than superseded on purpose: a TV play
+    silently taking over a film someone is watching on a phone in another
+    room is the exact "silently interrupt" failure this whole scheme exists
+    to prevent, and POST /api/stop remains the unambiguous way to take the
+    player back from another device.
+
+    Returns (True, None) to accept, or (False, message) to refuse -- the
+    message is always "Another device is playing".
+    """
+    if owner == "tv":
+        if browser_playing():
+            return False, "Another device is playing"
+        # A browser job that is still preparing has no heartbeat yet -- the
+        # page cannot send one until the media is ready and the player is
+        # attached -- so browser_playing() reads False for the 30-120s a
+        # candidate takes to buffer, probe and convert. Without this check a
+        # TV request landing in that window would supersede a film someone
+        # is already sitting and waiting for.
+        amid, aj = active_job()
+        if amid is not None and (aj or {}).get("owner") == "browser":
+            return False, "Another device is playing"
+        return True, None
+    # owner == "browser"
+    amid, aj = active_job()
+    if amid is not None:
+        aj = aj or {}
+        if aj.get("owner") != "browser":
+            return False, "Another device is playing"
+        # The same blind spot the TV branch above guards against, and it
+        # needs guarding in this direction too: a browser job that is still
+        # preparing has no _bx session yet, so browser_playing() below reads
+        # False for the whole 30-120s a candidate takes to buffer, and a
+        # second browser landing in that window took the player off the
+        # viewer who was already sitting waiting for it.
+        #
+        # The token is what separates "this same attempt asking again" from
+        # a different browser: it is minted per attempt, and a page starting
+        # a fresh attempt releases its old session first (POST /api/bx/stop),
+        # which ends that job and takes it out of active_job().
+        if token is None or aj.get("otoken") != token:
+            return False, "Another device is playing"
+    if tv_playback_state() in (2, 3):
+        return False, "Another device is playing"
+    if browser_playing():
+        with _lock:
+            same = token is not None and _bx["token"] == token
+        if not same:
+            return False, "Another device is playing"
+    return True, None
 
 def job_set(mid, **kw):
     with _lock:
@@ -3249,6 +3900,64 @@ def launch(url, mid, pick, title, gen):
         return False, "The TV app did not start playback"
     return False, "No TV app is connected, and the phone remote is off"
 
+def prepare_candidate(mid, pick, runtime_min, i, total, gen, tried):
+    """Buffer one candidate, probe it, and check its audio language.
+
+    Steps 1-9 of what run_play_job does per candidate, lifted out so the
+    browser worker can run exactly the same preparation rather than a
+    plausible-looking copy of it. Returns None when this candidate is out --
+    too slow, wrong language, or superseded -- and the caller moves to the
+    next one. `tried` is appended to in place, because the caller builds its
+    final "Tried: ..." message from it.
+    """
+    ok, got, rate = probe_and_buffer(mid, pick, runtime_min, i, total, gen)
+    tried.append("%s %.1fGB @ %.1f Mbps" % (pick.get("tag"), pick.get("gb") or 0,
+                                            rate * 8 / 1048576))
+    if not ok:
+        job_set(mid, msg="Candidate %d/%d too slow — trying the next…" % (i, total))
+        return None
+    # Probe the real stream, never the release name. "Shawshank
+    # [2160p x265 10bit FS97 Joy]" carries no audio token at all and is
+    # actually DTS 5.1, which this panel has no decoder for.
+    if superseded(gen):
+        return None
+    job_set(mid, msg="Checking the audio track…")
+    # BUG this used to build the torrent URL by hand, which assumed every
+    # candidate is a torrent. A provider can hand back a direct HTTP source
+    # instead (transport == "http"), and normalise_candidate() sets infoHash
+    # to None for those, so the hand-built URL came out as ".../None" and
+    # ffprobe had nothing to probe. On the TV that just degraded silently
+    # (no codec, no language check, no AC-3 fix); on the browser it made
+    # decide() see no video codec at all and skip every HTTP candidate, so a
+    # source that needed no server work at all was reported as unplayable.
+    # stream_url_internal() already knows how to build this URL for both
+    # transports -- for a torrent it is the exact same string this line used
+    # to build by hand, so use it instead of duplicating the logic.
+    internal = stream_url_internal(pick)
+    acodec, adur, alangs, acodecs = probe_media(internal)
+    # probe_media can block for up to two minutes. Re-check before the
+    # next statements, which stop every other conversion and start one:
+    # a superseded worker reaching them would kill its successor's live
+    # transcode and leave an orphan of its own.
+    if superseded(gen):
+        return None
+    # The file is the one that actually knows. score()'s language check
+    # only spares us from probing the obvious rejects -- a release name
+    # with no flag on it can still turn out to be a foreign dub, and
+    # this is where that is found out. Mirrors the "too slow" path: move
+    # on to the next candidate rather than failing the film.
+    if REJECT_LANG and alangs and not audio_has_lang(alangs, PREF_LANG):
+        job_set(mid, msg="Candidate %d/%d has no %s audio — trying the next…"
+                         % (i, total, LANG_NAME.get(PREF_LANG, PREF_LANG)))
+        return None
+    # transcode_begin keeps whichever track passed the language check,
+    # not track 0, so needs_fix has to be judged on that same track.
+    aidx = audio_track_for(alangs, PREF_LANG) if REJECT_LANG else 0
+    if acodecs and aidx < len(acodecs) and acodecs[aidx]:
+        acodec = acodecs[aidx]
+    return {"internal": internal, "acodec": acodec, "adur": adur, "alangs": alangs,
+            "acodecs": acodecs, "aidx": aidx, "got": got, "rate": rate}
+
 def run_play_job(mid, picks, runtime_min, title=None, gen=None):
     """Work down the ranked candidates until one actually streams."""
     def stand_down():
@@ -3264,41 +3973,16 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
         for i, pick in enumerate(picks[:ATTEMPTS], start=1):
             if stand_down():
                 return
-            ok, got, rate = probe_and_buffer(mid, pick, runtime_min, i, total, gen)
-            tried.append("%s %.1fGB @ %.1f Mbps" % (pick.get("tag"), pick.get("gb") or 0,
-                                                    rate * 8 / 1048576))
-            if not ok:
-                job_set(mid, msg="Candidate %d/%d too slow — trying the next…" % (i, total))
+            prep = prepare_candidate(mid, pick, runtime_min, i, total, gen, tried)
+            if prep is None:
+                if stand_down():
+                    return
                 continue
-            # Probe the real stream, never the release name. "Shawshank
-            # [2160p x265 10bit FS97 Joy]" carries no audio token at all and is
-            # actually DTS 5.1, which this panel has no decoder for.
-            if stand_down():
-                return
-            job_set(mid, msg="Checking the audio track…")
+            internal = prep["internal"]
+            acodec, adur = prep["acodec"], prep["adur"]
+            alangs, acodecs, aidx = prep["alangs"], prep["acodecs"], prep["aidx"]
+            got, rate = prep["got"], prep["rate"]
             fidx = pick.get("fileIdx")
-            internal = f"{STREMIO_IN}/{pick['infoHash']}" + (f"/{fidx}" if fidx is not None else "")
-            acodec, adur, alangs, acodecs = probe_media(internal)
-            # probe_media can block for up to two minutes. Re-check before the
-            # next statements, which stop every other conversion and start one:
-            # a superseded worker reaching them would kill its successor's live
-            # transcode and leave an orphan of its own.
-            if stand_down():
-                return
-            # The file is the one that actually knows. score()'s language check
-            # only spares us from probing the obvious rejects -- a release name
-            # with no flag on it can still turn out to be a foreign dub, and
-            # this is where that is found out. Mirrors the "too slow" path: move
-            # on to the next candidate rather than failing the film.
-            if REJECT_LANG and alangs and not audio_has_lang(alangs, PREF_LANG):
-                job_set(mid, msg="Candidate %d/%d has no %s audio — trying the next…"
-                                 % (i, total, LANG_NAME.get(PREF_LANG, PREF_LANG)))
-                continue
-            # transcode_begin keeps whichever track passed the language check,
-            # not track 0, so needs_fix has to be judged on that same track.
-            aidx = audio_track_for(alangs, PREF_LANG) if REJECT_LANG else 0
-            if acodecs and aidx < len(acodecs) and acodecs[aidx]:
-                acodec = acodecs[aidx]
             needs_fix = bool(AUDIO_FIX and acodec and acodec not in NATIVE_AUDIO)
             if _hifi["on"] and SENDSPIN_ENABLED:
                 # hifi: the bridge/DAC plays the audio straight off the
@@ -3415,6 +4099,275 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
         # its last stage forever and the phone polls it with no way out.
         job_set(mid, stage="error", ok=False, msg=f"{type(ex).__name__}: {ex}")
 
+def candidate_key(c):
+    """The stable identity of one candidate: its own release key, falling
+    back to its infoHash and then its url. This is the ONLY thing the
+    skip contract (the browser retrying with {"skip": [...]}) may compare
+    against -- job ids and list positions both change between a page's
+    retries, so either would silently skip the wrong candidate, or none
+    at all, the moment the ranking reorders.
+    """
+    return c.get("key") or c.get("infoHash") or c.get("url")
+
+def browser_picks(entry, caps):
+    """Candidates ordered so the ones a browser can actually decode are
+    tried first, without changing WHICH candidates exist or their
+    relative order within either group -- score() and best_stream()
+    already decided that, and the TV's own ranking must not move because
+    a browser asked.
+
+    entry.get("picks_all") -- the full 25-deep relaxed tail -- is
+    preferred over entry.get("picks") (the TV's top 5 by score()): a
+    browser is commonly the one device that can decode plain H.264 that
+    the TV's HEVC-first ranking pushed past the cut, and there is no
+    reason to make it start from a shorter list than the TV does.
+
+    This is only a pre-filter on the release's OWN metadata -- a
+    candidate's "codec" field, as contract.normalise_candidate() sets it
+    ("HEVC", "H264", "AV1" or "?" for unknown) -- cheap, and known before
+    anything is probed. The real decision is browser_play.decide(), after
+    prepare_candidate() and probe_full() run on the file itself; this
+    only picks a better order to try candidates in. A "?" candidate is
+    left exactly where it was rather than pushed to the back: an unknown
+    codec is common for a perfectly playable file (plenty of providers
+    just never report one), and there is nothing here that says it can't
+    play -- only decide() finds that out.
+    """
+    picks = list(entry.get("picks_all") or entry.get("picks") or [])
+    types = (caps or {}).get("types") or {}
+    codec_name = {"HEVC": "hevc", "H264": "h264", "AV1": "av1"}
+    def supported(c):
+        name = codec_name.get(c.get("codec"))
+        if name is None:
+            return True    # "?" or missing -- possibly playable, not demoted
+        ok, _cap_level = browser_play.video_supported(types, {"codec_name": name})
+        return ok
+    # sorted() is stable, so this only ever moves the unsupported candidates
+    # to the back -- the relative order within "supported" and within
+    # "unsupported" stays exactly best_stream()'s own order.
+    return sorted(picks, key=lambda c: not supported(c))
+
+def bx_verify_url(url_path):
+    """A cheap sanity check on a "direct" URL before it is handed to the
+    browser: a 1-byte Range request to this same process, over loopback.
+
+    Without this, a candidate that decide() approved for direct playback
+    but whose stream_url_public() target 404s (a stale /src/ key, a
+    torrent route that never actually resolved) would only be discovered
+    by the <video> element itself, minutes into what looked like a
+    successful play. Loopback rather than PUBLIC_HOST: this runs on the
+    same box that will serve the real request and must not depend on the
+    browser's own network path -- a tailnet address or a VPN route this
+    process cannot exercise from inside a docker-exec -- to prove it.
+    """
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d%s" % (PORT, url_path),
+            headers={"Range": "bytes=0-0", "User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return 200 <= getattr(r, "status", 200) < 400
+    except urllib.error.HTTPError as ex:
+        return 200 <= ex.code < 400
+    except Exception:
+        return False
+
+def publish(mid, token, pick, media, gen, title):
+    """Tell the job -- and so the browser polling /api/progress -- that
+    this candidate is ready, AND register the session in _bx, for every
+    mode. _bx is the one thing browser_playing()/claim_owner()/
+    cache_watch() trust to know "is a browser watching something"; a
+    direct play never calls bx_begin(), so without this line _bx stayed at
+    its idle defaults for the whole film -- cache_watch() saw
+    playing_now() as False, cleared the cache out from under a torrent
+    source about a minute in, and claim_owner("tv") let a second device
+    silently take the player over mid-film. See the comment on _bx's own
+    definition.
+
+    Ordering with bx_begin(): for "remux"/"audio", bx_begin() has already
+    run by the time run_browser_job calls this (see there) and has
+    already populated the packager-specific fields -- dir, seg, anchor,
+    frontier, run_anchor, n_segs, proc_key, src, plan -- under this same
+    token/gen (timescales is the exception: it is filled in lazily by
+    bx_timescales(), from an init.mp4 ffmpeg has not written yet at this
+    point). This only touches token/job/gen/state/at/dur/title, so it
+    cannot clobber those; it only advances state from bx_begin's
+    "starting" to "playing" and stamps a fresh heartbeat time. For
+    "direct", bx_begin() never runs, _bx is otherwise still at its idle
+    defaults, and this is the only thing that will ever populate it.
+
+    `at` is seeded to now rather than left for the first /api/bx/beat:
+    the page cannot send a beat until the media is ready and the player
+    is attached, and leaving `at` at 0 (or stale) for that gap would open
+    the exact same "browser_playing() reads False while a viewer is
+    already watching" hole that claim_owner()'s own preparation-window
+    comment describes for the buffering phase -- BX_IDLE-wide, here.
+    """
+    with _lock:
+        _bx.update(token=token, job=mid, gen=gen, state="playing",
+                   at=time.time(), dur=media.get("duration"), title=title)
+    job_set(mid, stage="playing", ok=True, pct=100, owner="browser",
+            otoken=token, media=media, pick=pick, msg="Ready to play")
+
+def bx_next_episode(mid):
+    """The episode after this browser job's, for the page to autoplay, or
+    None. {"id", "s", "e", "label"}.
+
+    Computed HERE, during preparation, rather than when the film ends: it
+    costs provider calls, and the moment playback ends is the moment the
+    viewer is waiting to see something happen.
+
+    Why the browser is told rather than driven: the TV path fires autoplay
+    from app_heartbeat, because the TV app keeps reporting state to the
+    server and the server can simply start the next episode itself. A
+    browser has no such channel -- the server does not know the film ended
+    until the page says so, and the page may by then be closed, hidden, or
+    on a phone that has gone to sleep. So the server offers the next
+    episode and the page decides, which also means a viewer who does not
+    want it is one button away from not getting it.
+
+    Returns None for a film, when AUTOPLAY_NEXT is off, and at the end of a
+    show -- next_episode() already swallows provider errors into None, and
+    a failed lookup here must cost nothing more than autoplay not firing.
+    """
+    if not AUTOPLAY_NEXT or not str(mid).startswith("tv:"):
+        return None
+    try:
+        tid, s, e = tv_job_parts(str(mid))
+        nxt = next_episode(tid, s, e)
+    except Exception:
+        return None
+    if not nxt:
+        return None
+    ns, ne = nxt
+    return {"id": tid, "s": ns, "e": ne, "label": "S%02dE%02d" % (ns, ne)}
+
+def _bx_track_codec(probe, aidx):
+    # probe["audio"] is whatever ffprobe found; aidx is prep["aidx"], an
+    # index into that SAME list (both probe_full() calls share the one
+    # ffprobe call shape) -- but a file with fewer audio tracks than
+    # expected is not impossible, so this is bounds-checked rather than
+    # trusted.
+    try:
+        return probe["audio"][aidx].get("codec_name")
+    except (IndexError, TypeError):
+        return None
+
+def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None):
+    """The browser's sibling of run_play_job: walk the ranked candidates,
+    ask browser_play.decide() how (or whether) THIS browser can play each
+    one, and publish the first that works.
+
+    Deliberately never touches _hifi, _ss_q, app_cmd, app_fresh, wake_app
+    or adb() -- see the requirement-3 guard test in test_bplay.py. Browser
+    playback has no TV app to hand off to and no Sendspin bridge decoding
+    for it; the browser IS the player, reading straight off /src/, /t/ or
+    /hls/. Reaching into any of that machinery here would mean a film
+    someone is watching on their phone silently starts hifi audio, or
+    issues a command to a TV nobody asked to involve -- exactly the
+    cross-device interference claim_owner() exists to prevent.
+    """
+    def stand_down():
+        if superseded(gen):
+            job_set(mid, stage="error", ok=False,
+                    msg="Superseded by a newer play request")
+            return True
+        return False
+    skip = set(skip or [])
+    try:
+        picks = [p for p in (picks or []) if p]
+        total = min(len(picks), ATTEMPTS)
+        tried_keys = []
+        reasons = []
+        for i, pick in enumerate(picks[:ATTEMPTS], start=1):
+            if stand_down():
+                return
+            key = candidate_key(pick)
+            if key in skip:
+                continue        # the page already knows this one is out
+            tried = []
+            prep = prepare_candidate(mid, pick, runtime_min, i, total, gen, tried)
+            tried_keys.append(key)
+            job_set(mid, tried_keys=tried_keys)
+            if prep is None:
+                if stand_down():
+                    return
+                reasons.append("%s: %s" % (pick.get("codec") or "?",
+                               tried[-1] if tried else "could not be prepared"))
+                continue
+            probe = probe_full(prep["internal"])
+            plan = browser_play.decide(caps, {
+                "format_name": probe["format_name"], "duration": probe["duration"],
+                "video": probe["video"], "audio": probe["audio"], "aidx": prep["aidx"],
+            })
+            if plan["mode"] == "skip":
+                reasons.append("%s: %s" % (pick.get("codec") or "?", plan["reason"]))
+                job_set(mid, msg="Candidate %d/%d: %s — trying the next…"
+                                 % (i, total, plan["reason"]))
+                continue
+            if stand_down():
+                return
+            if plan["mode"] == "direct":
+                url = stream_url_public(pick)
+                if not bx_verify_url(url):
+                    reasons.append("%s: the direct url did not check out"
+                                   % (pick.get("codec") or "?"))
+                    job_set(mid, msg="Candidate %d/%d could not be verified — "
+                                     "trying the next…" % (i, total))
+                    continue
+                media = {"kind": "direct", "url": url, "duration": probe["duration"],
+                         "mode": "direct",
+                         "video": (probe["video"] or {}).get("codec_name"),
+                         "audio": _bx_track_codec(probe, prep["aidx"]), "seg": None,
+                         "next": bx_next_episode(mid)}
+                # The check above is separated from here by a network round
+                # trip (bx_verify_url) and a provider lookup
+                # (bx_next_episode), and a Stop or a newer play can land
+                # inside either. Publishing after that puts a cancelled film
+                # back on screen AND back into _bx, where browser_playing()
+                # then holds the player for a viewer who has gone -- so the
+                # last word has to be here, immediately before publish().
+                if stand_down():
+                    return
+                publish(mid, token, pick, media, gen, title)
+                return
+            # "remux" or "audio" -- both need the packager running, and
+            # differ only in whether ffmpeg re-encodes the audio track
+            # (decide() already put that choice in plan["acodec"]).
+            duration = probe["duration"] or (runtime_min or 0) * 60
+            gop = probe_gop(prep["internal"])
+            seg, n_segs = browser_play.grid(duration, gop)
+            if not bx_begin(token, prep["internal"], plan, seg, duration, mid, gen):
+                reasons.append("%s: the packager could not start"
+                               % (pick.get("codec") or "?"))
+                job_set(mid, msg="Candidate %d/%d could not start — trying "
+                                 "the next…" % (i, total))
+                continue
+            media = {"kind": "hls", "url": "/hls/%s/index.m3u8" % token,
+                     "duration": duration, "mode": plan["mode"],
+                     "video": (probe["video"] or {}).get("codec_name"),
+                     "audio": _bx_track_codec(probe, prep["aidx"]), "seg": seg,
+                     "next": bx_next_episode(mid)}
+            # The same last word as the direct branch, except this one has
+            # already started ffmpeg: the packager has to go with it, or it
+            # keeps writing segments for a session nothing will ever publish.
+            # Guarded on the token so the session that superseded this one --
+            # if it has already begun its own -- is never what gets stopped.
+            if stand_down():
+                with _lock:
+                    mine = _bx["token"] == token
+                if mine:
+                    bx_stop_all("superseded")
+                return
+            publish(mid, token, pick, media, gen, title)
+            return
+        job_set(mid, stage="error", ok=False, tried_keys=tried_keys,
+                msg="No candidate could stream. " + (
+                    "; ".join(reasons) if reasons else "Nothing left to try."))
+    except Exception as ex:
+        # Same guard run_play_job has: an uncaught error here must not
+        # leave the job -- and the page's poll loop -- stuck forever.
+        job_set(mid, stage="error", ok=False, msg=f"{type(ex).__name__}: {ex}")
+
 def providers_health():
     """Per-role provider status for /api/health, which the phone polls every
     15s -- this must stay a read: nothing here contacts a provider, only the
@@ -3525,14 +4478,21 @@ def _read_package_manifest(package_dir):
     return manifest
 
 # ---- HTTP -------------------------------------------------------------------
-def start_play(jobid, resolve, autoplay=False):
+def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
+                worker=run_play_job):
     """Shared tail of every play route -- a film, an episode and autoplay all
     land here. resolve() returns (entry, runtime) from get_stream() or
     get_stream_tv(); it is called inside the cancel guard because it can run
     for seconds with no job registered yet, so a cancel arriving in that
     window has nothing in active_job() to act on. Snapshot _cancel_gen first
-    and recheck it before the job is allowed to actually start. Returns
-    (status_code, body) for the caller to send straight through."""
+    and recheck it before the job is allowed to actually start. `owner`
+    defaults to "tv" so every existing caller is unaffected; a browser caller
+    passes owner="browser" and its session token. `worker` is the function
+    run on the background thread once the job is accepted -- it defaults to
+    run_play_job (the TV path); a /api/bplay/... route passes a closure that
+    calls run_browser_job instead, with the extra token/caps/skip it needs
+    already bound in. Returns (status_code, body) for the caller to send
+    straight through."""
     global _play_inflight, _cancel_gen
     with _lock:
         c0 = _cancel_gen
@@ -3548,8 +4508,9 @@ def start_play(jobid, resolve, autoplay=False):
         # to be used. A connected app needs none of this, and with the
         # phone remote off there is nothing to check -- but then there is
         # also no way to play anything, and the phone should be told why
-        # rather than watching a job fail a minute later.
-        if not app_fresh():
+        # rather than watching a job fail a minute later. A browser owner
+        # has no TV app to reach at all, so this whole check is TV-only.
+        if owner == "tv" and not app_fresh():
             if not ADB_ENABLED:
                 return 502, {"ok": False,
                     "msg": "No TV app is connected, and the phone remote is off"}
@@ -3563,6 +4524,13 @@ def start_play(jobid, resolve, autoplay=False):
         with _lock:
             if _cancel_gen != c0:
                 return 409, {"ok": False, "msg": "Cancelled"}
+        # A stream that resolved fine is still not this owner's to take if
+        # another device already has the player -- see claim_owner()'s table.
+        # Refusing here, before anything is touched, keeps a losing request
+        # from stomping on a film someone else is already watching.
+        ok, msg = claim_owner(owner, token)
+        if not ok:
+            return 409, {"ok": False, "msg": msg}
         # Only now that the new request is known to be viable -- it has a
         # stream and the TV answered -- is the old one stood down. Doing
         # it earlier meant an unplayable pick or an unreachable TV marked
@@ -3571,12 +4539,15 @@ def start_play(jobid, resolve, autoplay=False):
         amid, aj = active_job()
         if amid is not None and amid != jobid:
             job_set(amid, stage="error", ok=False,
-                    msg="Superseded by a newer Send to TV")
+                    msg="Superseded by a newer play request")
         gen = play_claim()
-        job_set(jobid, stage="starting", got=0, target=0, pct=0,
-                msg="Resolving streams…", ok=None, url=url,
-                title=title, gen=gen, autoplay=autoplay)
-        threading.Thread(target=run_play_job,
+        kw = dict(stage="starting", got=0, target=0, pct=0,
+                  msg="Resolving streams…", ok=None, url=url,
+                  title=title, gen=gen, autoplay=autoplay, owner=owner)
+        if token is not None:
+            kw["otoken"] = token
+        job_set(jobid, **kw)
+        threading.Thread(target=worker,
                          args=(jobid, entry.get("picks") or [entry["pick"]], runtime,
                                title, gen),
                          daemon=True).start()
@@ -3590,22 +4561,17 @@ class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a): pass
 
-    def _proxy_source(self, key):
-        """Stream a direct source through, adding its credentials here.
+    def _proxy_upstream(self, url, headers=None):
+        """Stream any upstream through this server, Range and framing intact.
 
-        Range is passed both ways untouched: the player seeks, the transcoder
-        reads ahead, and the Sendspin bridge decodes from an offset, all of
-        which depend on 206 and Content-Range surviving the hop. Encoding is
-        forced to identity -- a gzipped video body would make Content-Length
-        and byte offsets disagree with the file the player thinks it is
-        reading.
+        Split out of _proxy_source so the torrent route below can reuse it. The
+        framing in particular is not optional anywhere: the local streaming
+        server answers some requests chunked too, and a body that goes out under
+        keep-alive with no declared length and no terminator makes the player
+        read the whole film and then block forever on a connection that will
+        never say anything else.
         """
-        if not contract.RE_HASH40.match(key or ""):
-            return self._send(400, {"err": "bad source key"})
-        src = source_for(key)
-        if not src:
-            return self._send(404, {"err": "unknown source"})
-        h = dict(src["headers"])
+        h = dict(headers or {})
         h.setdefault("User-Agent", UA)
         h["Accept-Encoding"] = "identity"
         rng = self.headers.get("Range")
@@ -3613,7 +4579,7 @@ class H(BaseHTTPRequestHandler):
             h["Range"] = rng
         try:
             r = urllib.request.urlopen(
-                urllib.request.Request(src["url"], headers=h), timeout=30)
+                urllib.request.Request(url, headers=h), timeout=30)
         except urllib.error.HTTPError as e:
             # The upstream's own answer, not ours -- but its body may echo a
             # signed URL back, so it is not forwarded.
@@ -3698,6 +4664,30 @@ class H(BaseHTTPRequestHandler):
             try: r.close()
             except Exception: pass
 
+    def _proxy_source(self, key):
+        """A direct source, with its credentials added here and nowhere else."""
+        if not contract.RE_HASH40.match(key or ""):
+            return self._send(400, {"err": "bad source key"})
+        src = source_for(key)
+        if not src:
+            return self._send(404, {"err": "unknown source"})
+        h = dict(src["headers"])
+        h.setdefault("User-Agent", UA)
+        return self._proxy_upstream(src["url"], h)
+
+    def _proxy_torrent(self, ih, idx):
+        """The local streaming server, reached through this origin instead.
+
+        The browser player must never be told to open the streaming server's own
+        port: the page may have been opened on a tailnet address that has no
+        route to it, and a LAN-only host name means nothing to a phone away from
+        the house. Same bytes, same Range behaviour, one origin.
+        """
+        if not contract.RE_HASH40.match(ih or ""):
+            return self._send(400, {"err": "bad infoHash"})
+        url = "%s/%s" % (STREMIO_IN, ih) + (("/%s" % idx) if idx is not None else "")
+        return self._proxy_upstream(url)
+
     def _id(self, raw):
         """A title id out of a URL path.
 
@@ -3720,6 +4710,19 @@ class H(BaseHTTPRequestHandler):
             # Hanging up after this response: say so, rather than leaving a
             # keep-alive client to find out by having its next request reset.
             self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _retry(self, secs=2):
+        """503 + Retry-After: the standard "come back shortly" answer for a
+        long-poll that timed out without becoming ready. Kept separate from
+        _send() because Retry-After has no place in an ordinary JSON reply."""
+        body = json.dumps({"err": "not ready"}).encode()
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Retry-After", str(secs))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -3746,6 +4749,35 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             return {}
         return d if isinstance(d, dict) else {}
+
+    def _host_ok(self):
+        """False for a request addressed to a name this server does not answer to.
+
+        This is the DNS-rebinding guard, and it has to run on GET as well as
+        POST: once the browser believes the attacker's page and this server
+        share an origin, it will read the response back, so /src/ and /audio/
+        leak the film just as surely as a forged POST starts one.
+
+        A request with no Host at all is accepted -- that is an HTTP/1.0
+        client, and no browser omits it.
+        """
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return True
+        if host.startswith("["):                 # [::1]:8090 -- bracketed IPv6
+            host = host[1:host.find("]")] if "]" in host else host[1:]
+        elif host.count(":") == 1:               # name:port, never bare IPv6
+            host = host.split(":", 1)[0]
+        if not host:
+            return False
+        try:
+            ipaddress.ip_address(host)           # LAN address, tailnet address
+            return True
+        except ValueError:
+            pass
+        if host == "localhost" or host == PUBLIC_HOST.lower():
+            return True
+        return host in HOST_ALLOW or host.endswith(HOST_ALLOW_SUFFIX)
 
     def _origin_ok(self):
         """False for a POST that smells like a cross-site browser request.
@@ -3933,6 +4965,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = urllib.parse.urlparse(self.path)
         note_request(p.path)
+        if not self._host_ok():
+            self.close_connection = True
+            return self._send(403, {"ok": False, "msg": "unrecognised host"})
         try:
             if p.path == "/":
                 body = open(os.path.join(HERE, "index.html"), "rb").read()
@@ -4121,8 +5156,24 @@ class H(BaseHTTPRequestHandler):
                                         "url": stream_url(pick) if pick else None})
             if p.path.startswith("/api/progress/"):
                 return self._send(200, job_get(self._id(p.path.rsplit("/", 1)[-1])))
+            if p.path == "/api/bx/probes":
+                # Unauthenticated and cheap: a static list, published so the
+                # page and this server cannot drift apart on which codec
+                # strings caps["types"] is keyed by -- both sides build
+                # against browser_play.CODEC_PROBES, but only this process
+                # can prove which version of it actually shipped.
+                # "audio" is the subset of "probes" that names an audio
+                # codec. Every probe is published as video/mp4, so the page
+                # cannot work that out for itself -- and without it the
+                # pairing probes it builds have nothing to pair.
+                return self._send(200, {"probes": list(browser_play.CODEC_PROBES),
+                                        "audio": list(browser_play.AUDIO_PROBES)})
             if p.path.startswith("/src/"):
                 return self._proxy_source(p.path[len("/src/"):].strip("/"))
+            if p.path.startswith("/t/"):
+                bits = [x for x in p.path[len("/t/"):].split("/") if x]
+                idx = bits[1] if len(bits) > 1 and bits[1].isdigit() else None
+                return self._proxy_torrent(bits[0] if bits else "", idx)
             if p.path.startswith("/audio/"):
                 # Serve the converted file from disk, following it as ffmpeg
                 # appends. A real file means a player reconnect resumes from a
@@ -4205,6 +5256,243 @@ class H(BaseHTTPRequestHandler):
                             time.sleep(0.1)
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass                          # player went away; expected
+                return
+            if p.path.startswith("/hls/"):
+                # On-demand browser HLS: index.m3u8, init.mp4, and the
+                # per-segment fMP4 files, all under /hls/<token>/... The
+                # token IS the route: checking it against _bx["token"] here
+                # is the whole mechanism that keeps a stale browser tab's
+                # requests from ever reaching a session that replaced it --
+                # there is no other check anywhere downstream of this one.
+                bits = [x for x in p.path[len("/hls/"):].split("/") if x]
+                if len(bits) != 2 or not browser_play.RE_TOKEN.match(bits[0]):
+                    return self._send(404, {"err": "not found"})
+                token, leaf = bits
+                with _lock:
+                    if _bx["token"] != token:
+                        return self._send(404, {"err": "not found"})
+                    sess_dir, seg, dur = _bx["dir"], _bx["seg"], _bx["dur"]
+                    n_segs = _bx["n_segs"]
+
+                if leaf == "index.m3u8":
+                    body = browser_play.vod_playlist(dur, seg)
+                    if body is None:
+                        return self._send(404, {"err": "not found"})
+                    data = body.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+
+                if leaf == "init.mp4":
+                    init_path = os.path.join(sess_dir, "init.mp4")
+                    t0 = time.time()
+                    while not os.path.exists(init_path):
+                        with _lock:
+                            if _bx["token"] != token:
+                                return self._send(404, {"err": "not found"})
+                        if time.time() - t0 > BX_SEG_WAIT:
+                            return self._retry()
+                        time.sleep(0.1)
+                    try:
+                        with open(init_path, "rb") as f:
+                            data = f.read()
+                    except OSError:
+                        return self._retry()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+
+                m = re.match(r"^s(\d{6})\.m4s$", leaf)
+                if not m:
+                    return self._send(404, {"err": "not found"})
+                k = int(m.group(1))
+                if n_segs is None or k >= n_segs:
+                    return self._send(404, {"err": "not found"})
+
+                key = "bx:" + token
+                seg_path = os.path.join(sess_dir, "s%06d.m4s" % k)
+                succ_path = os.path.join(sess_dir, "s%06d.m4s" % (k + 1))
+                # The last slot in the playlist has to carry the end of the
+                # film, and a run that seeked does not fit the grid it was
+                # numbered against.
+                #
+                # BUG a seek makes ffmpeg start at the keyframe at or before
+                # k0*seg -- EARLIER than the grid point, by design (see
+                # bx_spawn) -- so that run has more film left to write than
+                # the grid budgeted slots for, and it numbers the overflow
+                # past the end of the playlist. Measured: seeking to 40s in
+                # a 60s clip on a 4s grid wrote s000010..s000015, six files
+                # for the five slots 10..14 that the playlist has. s000015
+                # held the last 2.04s, the playlist never named it, and the
+                # film ended 2s early -- silently, because nothing errored:
+                # the player simply ran out of playlist.
+                #
+                # So the final slot serves its own file AND every file after
+                # it. They are consecutive fragments of one continuous run,
+                # already stamped on one timeline by the shift below, so
+                # what the player gets is the real end of the film.
+                last_slot = (k == n_segs - 1)
+
+                def _bx_complete():
+                    # The next file existing is what proves the muxer closed
+                    # this one -- it only finalizes segment k the instant it
+                    # opens k+1. The one exception is the process being gone
+                    # entirely: nothing will ever open a successor then, so
+                    # whatever is on disk for k is all there is ever going to
+                    # be, and has to be served as final rather than waited on
+                    # forever.
+                    if last_slot:
+                        # A successor file proves nothing here: on the final
+                        # slot the successor is part of THIS response, so it
+                        # has to be finished too. Only the run being over
+                        # settles that -- and a run that has reached the last
+                        # slot has reached the end of the film, so it is
+                        # about to end anyway.
+                        return os.path.exists(seg_path) and not transcode_alive(key)
+                    return os.path.exists(seg_path) and (
+                        os.path.exists(succ_path) or not transcode_alive(key))
+
+                if not _bx_complete():
+                    frontier = bx_frontier(token)
+                    if frontier is None:
+                        return self._send(404, {"err": "not found"})
+                    near = frontier <= k <= frontier + BX_LOOKAHEAD
+                    if not near:
+                        # Far from the frontier: a seek. There is no separate
+                        # seek API for an HLS <video> element to call, so the
+                        # segment request IS the seek channel -- this is how
+                        # the player tells the server it moved. Debounce it
+                        # so a drag across many segments collapses into one
+                        # restart instead of one per segment the scrub
+                        # passes over; seek_gen is what lets a later request
+                        # (a newer point in the same drag) cancel this one.
+                        with _lock:
+                            if _bx["token"] != token:
+                                return self._send(404, {"err": "not found"})
+                            _bx["pending_anchor"] = k
+                            _bx["seek_gen"] += 1
+                        time.sleep(BX_SEEK_DEBOUNCE)
+                        with _lock:
+                            still = (_bx["token"] == token
+                                    and _bx["pending_anchor"] == k)
+                        if still:
+                            bx_restart(token, k)
+                        # either way, fall through to the long-poll below
+
+                    t0 = time.time()
+                    while not _bx_complete():
+                        with _lock:
+                            gen = _bx["gen"]
+                            alive = _bx["token"] == token
+                        if not alive or superseded(gen):
+                            return self._send(404, {"err": "not found"})
+                        if time.time() - t0 > BX_SEG_WAIT:
+                            return self._retry()
+                        time.sleep(0.1)
+
+                try:
+                    with open(seg_path, "rb") as f:
+                        data = f.read()
+                    if last_slot:
+                        # Re-listed here rather than reused from above: the
+                        # long poll may have waited a while, and the run may
+                        # have written more of the tail in the meantime.
+                        j = k + 1
+                        while True:
+                            more = os.path.join(sess_dir, "s%06d.m4s" % j)
+                            if not os.path.exists(more):
+                                break
+                            with open(more, "rb") as f:
+                                # Only the fragments: appending whole files
+                                # would leave a styp and two sidx boxes in
+                                # the middle of a media segment.
+                                data += browser_play.fragments_only(f.read())
+                            j += 1
+                except OSError:
+                    return self._retry()
+
+                timescales = bx_timescales(token)
+                if not timescales:
+                    return self._retry()
+                with _lock:
+                    if _bx["token"] != token:
+                        return self._send(404, {"err": "not found"})
+                    run_anchor = _bx["run_anchor"]
+
+                # What is added is the RUN's real start time, once, to every
+                # segment that run wrote -- not this segment's own grid
+                # position.
+                #
+                # BUG it used to add seg_start(k, seg), reasoning that k*seg
+                # is segment k's absolute position on the grid. That part is
+                # true; adding it was not. -ss is an input seek and -copyts
+                # is never passed, so ffmpeg zeroes the run's clock at the
+                # keyframe it seeked to and then counts up CONTINUOUSLY
+                # across every segment that run writes -- the second segment
+                # of a run already carries a segment's worth of ticks in its
+                # own bytes. Adding k*seg on top counted the same elapsed
+                # time twice: on the unseeked run, the segment holding 6s of
+                # the film was served stamped 12s, and the error grew with
+                # k. The bytes are missing exactly one thing, the offset
+                # ffmpeg threw away when it zeroed its clock, and that is
+                # the run's anchor.
+                #
+                # Adding the anchor rather than the grid position is also
+                # what keeps consecutive segments gapless: ffmpeg's own
+                # count is contiguous within a run, so shifting the whole
+                # run by one constant preserves that, while stamping each
+                # segment at k*seg would have forced a gap or an overlap
+                # wherever a keyframe made the real segment longer or
+                # shorter than the grid promised.
+                #
+                # This needs every file present to belong to the current
+                # run, which bx_spawn guarantees by clearing the older ones
+                # before the run starts.
+                deltas = browser_play.deltas_for(timescales, run_anchor)
+                try:
+                    data, _trafs, _sidx = browser_play.shift_timeline(data, deltas)
+                except browser_play.TfdtPatchError as ex:
+                    # A silently mis-stamped segment plays back with a
+                    # timestamp that looks plausible and is not -- far worse
+                    # than a failed request, so this is a hard stop, logged
+                    # for whoever has to work out which segment went wrong.
+                    print("bx: tfdt patch failed for %s seg %06d: %s"
+                          % (token[:8], k, contract.redact(str(ex), gateway.secret_values())),
+                          flush=True)
+                    return self._send(500, {"err": "segment could not be timestamped"})
+
+                total = len(data)
+                start, end, status = 0, total - 1, 200
+                rng = self.headers.get("Range") or ""
+                mrange = re.match(r"bytes=(\d+)-(\d*)", rng)
+                if mrange:
+                    start = int(mrange.group(1))
+                    end = int(mrange.group(2)) if mrange.group(2) else total - 1
+                    end = min(end, total - 1)
+                    if start > end or start >= total:
+                        return self._send(416, {"err": "range not satisfiable"})
+                    status = 206
+                chunk = data[start:end + 1]
+                self.send_response(status)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Cache-Control", "no-store")
+                if status == 206:
+                    self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, total))
+                self.send_header("Content-Length", str(len(chunk)))
+                # Unlike /audio/, deliberately keep-alive: segments are many
+                # and small, and a fresh TCP+TLS-less handshake per one would
+                # cost more than the segment itself on a slow link.
+                self.end_headers()
+                self.wfile.write(chunk)
                 return
             if p.path == "/api/nowplaying":
                 app = app_fresh()
@@ -4330,7 +5618,7 @@ class H(BaseHTTPRequestHandler):
                                         "streams_cached": len(_streams),
                                         "providers": providers_health(),
                                         "fourk_only": FOURK_ONLY, "hevc_only": HEVC_ONLY,
-                                        "tv": True, "autoplay": AUTOPLAY_NEXT,
+                                        "autoplay": AUTOPLAY_NEXT,
                                         "min_seeders": MIN_SEEDERS,
                                         "max_gb": MAX_GB_4K,
                                         "sustain_mbps": SUSTAIN_MBPS,
@@ -4344,6 +5632,11 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         p = urllib.parse.urlparse(self.path)
         note_request(p.path)
+        # Addressed to a name that is not ours: rebinding, and the body is
+        # still unread, so the connection goes with it.
+        if not self._host_ok():
+            self.close_connection = True
+            return self._send(403, {"ok": False, "msg": "unrecognised host"})
         # Every mutating route lives behind this: reject a forged cross-site
         # POST before it touches anything.
         if not self._origin_ok():
@@ -4558,6 +5851,165 @@ class H(BaseHTTPRequestHandler):
                     e = get_stream(tid)
                     return e, e.get("runtime")
                 return self._send(*start_play(str(tid), resolve))
+            if p.path.startswith("/api/bplay/tv/"):
+                # The browser's counterpart to /api/play/tv/... above --
+                # same id/season/episode shape and the same dedupe, but it
+                # claims the player as owner="browser" against a session
+                # token rather than the TV app, and its worker is
+                # run_browser_job rather than run_play_job.
+                bits = p.path[len("/api/bplay/tv/"):].split("/")
+                if len(bits) != 3:
+                    return self._send(404, {"ok": False, "msg": "not found"})
+                try:
+                    tid, s, ep = self._id(bits[0]), int(bits[1]), int(bits[2])
+                except ValueError:
+                    return self._send(400, {"ok": False, "msg": "bad id/season/episode"})
+                if not tid:
+                    return self._send(400, {"ok": False, "msg": "bad id/season/episode"})
+                jobid = f"tv:{tid}:{s}:{ep}"
+                amid, aj = active_job()
+                if amid is not None and amid == jobid:
+                    return self._send(202, {"ok": True, "msg": "already starting",
+                                            "job": amid})
+                caps = d.get("caps") or {}
+                skip = d.get("skip") or []
+                token = browser_play.new_token()
+                # resolve() is the only place start_play() ever computes the
+                # catalogue entry, and it runs INSIDE start_play's cancel
+                # guard -- so the worker closure below cannot call
+                # get_stream_tv() a second time without losing that guard.
+                # Stashing the entry in this holder as a side effect of
+                # resolve() is what lets the worker reach it, since by the
+                # time the worker actually runs, resolve() has already been
+                # called (start_play calls it synchronously before spawning
+                # the thread).
+                holder = {}
+                def resolve():
+                    entry = get_stream_tv(tid, s, ep)
+                    holder["entry"] = entry
+                    return entry, entry.get("runtime") or 45
+                def worker(mid, picks, runtime_min, title, gen):
+                    run_browser_job(mid, browser_picks(holder["entry"], caps),
+                                    runtime_min, title, gen, token, caps, skip)
+                status, body = start_play(jobid, resolve, owner="browser",
+                                          token=token, worker=worker)
+                if status != 202:
+                    return self._send(status, body)
+                # No absolute media URL here -- unlike /api/play/'s body,
+                # which hands the TV app a URL it dials directly. The
+                # browser gets its media URL only once run_browser_job has
+                # actually decided how to serve it (see publish()), and it
+                # is always a path relative to this same origin.
+                return self._send(202, {"ok": True, "job": jobid, "token": token,
+                                        "gen": job_get(jobid).get("gen")})
+            if p.path.startswith("/api/bplay/"):
+                # The browser's counterpart to /api/play/<id> above.
+                tid = self._id(p.path.rsplit("/", 1)[-1])
+                amid, aj = active_job()
+                if amid is not None and amid == str(tid):
+                    return self._send(202, {"ok": True, "msg": "already starting",
+                                            "job": amid})
+                caps = d.get("caps") or {}
+                skip = d.get("skip") or []
+                token = browser_play.new_token()
+                holder = {}
+                def resolve():
+                    e = get_stream(tid)
+                    holder["entry"] = e
+                    return e, e.get("runtime")
+                def worker(mid, picks, runtime_min, title, gen):
+                    run_browser_job(mid, browser_picks(holder["entry"], caps),
+                                    runtime_min, title, gen, token, caps, skip)
+                status, body = start_play(str(tid), resolve, owner="browser",
+                                          token=token, worker=worker)
+                if status != 202:
+                    return self._send(status, body)
+                return self._send(202, {"ok": True, "job": str(tid), "token": token,
+                                        "gen": job_get(str(tid)).get("gen")})
+            if p.path == "/api/bx/beat":
+                # The browser's heartbeat: real currentTime and play/pause
+                # state, on whatever cadence the page chooses.
+                # browser_playing() treats a live heartbeat as "still
+                # watching" even while paused, and regulate_hls() paces the
+                # packager off _bx["pos"]/_bx["at"] this sets -- so a stale
+                # or mismatched beat must change NOTHING, not even the
+                # fields a live session's OWN beat would touch, or a
+                # straggling request from a tab that has already moved on
+                # could corrupt a newer session's pacing.
+                token, gen = d.get("token"), d.get("gen")
+                with _lock:
+                    match = (token is not None and token == _bx["token"]
+                             and gen == _bx["gen"])
+                if not match:
+                    return self._send(409, {"ok": False, "stale": True})
+                state = d.get("state")
+                with _lock:
+                    _bx["at"] = time.time()
+                    _bx["state"] = state
+                    pos = d.get("pos")
+                    if pos is not None:
+                        try:
+                            _bx["pos"] = float(pos)
+                        except (TypeError, ValueError):
+                            pass
+                # A pause must never tear the job down -- only a lost
+                # heartbeat does, via browser_playing()'s own staleness
+                # check above. All a pause has to do here is stop the
+                # packager burning CPU (and lead-time) on a viewer who has
+                # stepped away, the same SIGSTOP/SIGCONT regulate_lead()
+                # already uses for the TV's own transcode, with the same
+                # _tc_flag(..., suspended=...) bookkeeping so /audio/-style
+                # readers and regulate_hls()'s own resync never disagree
+                # about whether this process is actually running.
+                key = "bx:" + token
+                name = BX_DIR + token
+                if state in ("paused", "playing"):
+                    pid = _ctr_pid(name)
+                    if pid:
+                        sig = "-STOP" if state == "paused" else "-CONT"
+                        subprocess.run(["docker", "exec", FFMPEG_CTR, "kill", sig, pid],
+                                      capture_output=True, timeout=15)
+                        _tc_flag(key, suspended=(state == "paused"))
+                return self._send(200, {"ok": True})
+            if p.path == "/api/bx/stop":
+                # A browser session can be abandoned at any point: before
+                # bx_begin() ever runs (still buffering/probing -- there is
+                # no _bx session yet to tear down), during a live HLS
+                # session, or after a direct-mode play that never touched
+                # _bx at all. The token is the one thing that identifies
+                # "this viewer's attempt" across every one of those states
+                # -- a job id gets reused by a later replay of the same
+                # title, but a token is minted fresh per attempt -- so both
+                # halves of this route match on the token, independently of
+                # each other, rather than on the job id.
+                #
+                # Must tolerate navigator.sendBeacon, which POSTs
+                # Content-Type: text/plain and never reads the response --
+                # _body() above parses JSON regardless of Content-Type, and
+                # every reply here is a plain 200 the beacon will ignore.
+                token = d.get("token")
+                if not token:
+                    return self._send(200, {"ok": True})
+                with _lock:
+                    bx_match = _bx["token"] == token
+                if bx_match:
+                    bx_stop_all("Stopped")
+                # Independently of the above: a job still buffering or
+                # probing has no _bx session yet, so closing the tab during
+                # that window must still be able to stand the worker down
+                # -- otherwise it keeps holding the swarm open, and
+                # active_job() keeps telling claim_owner() a browser is
+                # still playing long after the viewer gave up and walked to
+                # the TV, which then refuses to play with "Another device
+                # is playing" for a film nobody is watching.
+                with _lock:
+                    amid = next((k for k, j in _jobs.items()
+                                if j.get("otoken") == token
+                                and j.get("stage") in JOB_ACTIVE), None)
+                if amid is not None:
+                    play_claim()   # the worker's next superseded(gen) check returns
+                    job_set(amid, stage="error", ok=False, msg="Playback abandoned")
+                return self._send(200, {"ok": True})
             if p.path == "/api/netcheck":
                 # The probe saturates the link for a few seconds, so it must not
                 # run against a film in progress -- it would starve the very
@@ -4584,6 +6036,13 @@ class H(BaseHTTPRequestHandler):
                 # a film already on screen is not an active job and must not be
                 # interrupted by closing a different film's popup.
                 amid, aj = active_job()
+                # A browser tab fires this on popup-close, and once browser
+                # playback exists that tab is not necessarily the one that
+                # is actually playing -- a stray cancel from a second tab or
+                # a delayed request must not kill somebody else's film.
+                if (amid is not None and aj.get("owner") == "browser"
+                        and d.get("token") != aj.get("otoken")):
+                    return self._send(200, {"ok": False, "msg": "not yours"})
                 if amid is None:
                     with _lock:
                         inflight = _play_inflight > 0
@@ -4634,6 +6093,15 @@ class H(BaseHTTPRequestHandler):
                     # checkpoint, or an immediate replay of the same film attaches
                     # to a job that is already doomed and fails for no reason.
                     job_set(amid, stage="error", ok=False, msg="Stopped")
+                # Stop means stop regardless of who was playing -- a browser
+                # session left live here would otherwise go on blocking a TV
+                # play through claim_owner() after the human has already hit
+                # the one button that is supposed to end it. bx_stop_all()
+                # is the real teardown (kills the packager's ffmpeg, drops
+                # the session directory); this used to only reset _bx's
+                # fields by hand, which left that ffmpeg running -- a real
+                # leak, since nothing else here ever reaped it.
+                bx_stop_all("Stopped")
                 threading.Thread(target=cache_clear, daemon=True).start()
                 ok, msg = tv_stop()
                 return self._send(200, {"ok": ok, "msg": msg})
