@@ -1,0 +1,21 @@
+# Secrets.
+# server.py reads .env from its own directory ($ENV_FILE overrides). The real
+# file is gitignored and chmod 600; deploy/env.example documents its shape.
+.env
+
+# Runtime state and generated data.
+# transcode/ holds the AC3 conversions (gigabytes) and their ffmpeg logs.
+transcode/
+nowplaying.json
+# The sendspin bridge's own keypair and the players that have trusted it.
+# Per-machine, and sendspin_identity.json is a private key.
+sendspin_identity.json
+sendspin_pairing.json
+__pycache__/
+*.pyc
+
+# 8.6 MB IMDb dataset, re-downloaded from datasets.imdbws.com when >24h stale.
+imdb-ratings.tsv.gz
+
+# The pre-git editing convention. History lives in git now.
+*.bak-*

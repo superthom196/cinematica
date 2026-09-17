@@ -1,0 +1,36 @@
+# Template for the systemd unit that runs the sendspin hifi-audio bridge
+# (server/sendspin_bridge.py). Rendered by install.sh and by deploy/post-receive,
+# same as cinematica.service.in is for the main server.
+#
+# Placeholders:
+#   @DIR@    install directory the bridge script lives in (same value as
+#            cinematica.service{,.in}'s @DIR@ -- the bridge sits beside server.py)
+#   @USER@   service user (same value as cinematica.service{,.in}'s @USER@)
+#   @VENV@   the uv-managed Python 3.12 venv from deploy/install-sendspin.sh --
+#            NOT the system python, and deliberately NOT under @DIR@ so a code
+#            deploy never touches it. install.sh puts it at
+#            /var/lib/cinematica-sendspin/venv312, owned by @USER@; the
+#            developer push-deploy path keeps it in the pushing user's home.
+#
+# aiosendspin needs Python >=3.12; the rest of the server runs on the
+# system's 3.11 (see cinematica.service.in), hence the separate venv and unit.
+
+[Unit]
+Description=Cinematica sendspin bridge — hifi audio to the Music Assistant player
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DIR@
+EnvironmentFile=-@DIR@/.env
+# Without this the bridge's own print() output is block-buffered and never
+# reaches the journal, so discovery and connect failures debug blind.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@VENV@/bin/python @DIR@/sendspin_bridge.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

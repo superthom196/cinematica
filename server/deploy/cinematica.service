@@ -1,0 +1,41 @@
+# A worked example of the unit deploy/post-receive installs for the git-push deploy path (see
+# deploy/README.md) -- not literally live infrastructure in this repo. Swap User/WorkingDirectory/
+# host for your own box; %h below expands to User='s home directory.
+#
+# KEEP IN SYNC with cinematica.service.in, the template the distributable
+# installer (../install.sh) renders for someone else's machine. Same environment
+# block, different paths/user/host. Change one, change the other.
+
+[Unit]
+Description=Cinematica — top-rated 4K films, streamed to the TV
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+# Provider packages, their configuration and the admin credentials live here,
+# outside the install directory, so an update that replaces the code cannot
+# destroy them. Kept in sync with cinematica.service.in.
+StateDirectory=cinematica
+StateDirectoryMode=0700
+Type=simple
+User=cinematica
+WorkingDirectory=%h/cinematica
+Environment=PORT=8090
+Environment=PAGE_SIZE=24
+Environment=STREMIO=http://mediabox.lan:11470
+Environment=PUBLIC_HOST=mediabox.lan
+Environment=ADB_TV=192.168.1.50:5555
+Environment=SUSTAIN_MBPS=8
+Environment=BUFFER_SECS=300
+Environment=BUFFER_MIN_MB=80
+Environment=BUFFER_MAX_MB=1000
+Environment=HARD_CAP_SECS=600
+Environment=AUDIO_FIX=1
+# Candidate pool per view. The code default (600) left the film wall at ~240 playable titles.
+Environment=POOL_MAX=1500
+ExecStart=/usr/bin/python3 %h/cinematica/server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

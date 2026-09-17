@@ -1,0 +1,131 @@
+name: TV Release
+
+# See server-release.yml for why both tag spellings are here: the v1.0.0
+# product tag matched neither of the old patterns, so this workflow never ran
+# and the APK on that release was uploaded by hand -- a build from a modified
+# tree, reporting versionName 0.109.17-dirty, published as
+# Cinematica-TV-1.0.0.apk. Every check below existed at the time and would have
+# caught it; none of them ran.
+on:
+  push:
+    tags: ['v*', 'tv-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* or tv-v* tag to build and attach the APK to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # versionCode is the repo's commit count, so the whole history has to
+          # be here; a shallow checkout would silently produce versionCode 1.
+          fetch-depth: 0
+
+      - name: Work out the release version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#tv-v}"
+          version="${version#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' does not carry an x.y.z version."
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "APK=app/build/outputs/apk/release/Cinematica-TV-${version}.apk" >> "$GITHUB_ENV"
+          echo "Releasing TV $version from tag $TAG"
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          # The action's default package list includes the legacy "tools"
+          # package, which Google removed from the repository; asking for it
+          # fails the whole job before Gradle runs.
+          packages: platform-tools
+
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Size the build for a 7 GB runner
+        run: |
+          mkdir -p ~/.gradle
+          cat >> ~/.gradle/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8
+          kotlin.compiler.execution.strategy=in-process
+          EOF
+
+      - name: Restore the signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CINEMATICA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::CINEMATICA_KEYSTORE_BASE64 is not set."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/cinematica.jks"
+
+      - name: Assemble the signed release build
+        working-directory: tv
+        env:
+          CINEMATICA_KEYSTORE_PATH: ${{ runner.temp }}/cinematica.jks
+          CINEMATICA_KEYSTORE_PASSWORD: ${{ secrets.CINEMATICA_KEYSTORE_PASSWORD }}
+          CINEMATICA_KEY_ALIAS: ${{ secrets.CINEMATICA_KEY_ALIAS }}
+          CINEMATICA_KEY_PASSWORD: ${{ secrets.CINEMATICA_KEY_PASSWORD }}
+        # CINEMATICA_VERSION is what makes the APK say "1.0.0": the build cannot
+        # derive that on its own, its fallback scheme counts commits and is
+        # fixed at major 0. The versionName check below verifies it was
+        # believed. $VERSION comes from $GITHUB_ENV, hence the shell rather than
+        # an `env:` entry.
+        run: CINEMATICA_VERSION="$VERSION" ./gradlew assembleRelease
+
+      - name: Check it is signed with the release key, not the debug key
+        working-directory: tv
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          certs=$("$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk)
+          if grep -q 'CN=Android Debug' <<<"$certs"; then
+            echo "::error::APK is debug-signed; the keystore secrets were not picked up."
+            exit 1
+          fi
+          echo "Signed with the release key."
+
+      - name: Rename the APK to its release name
+        working-directory: tv
+        run: cp app/build/outputs/apk/release/app-release.apk "$APK"
+
+      - name: Verify the APK's versionName matches the tag
+        working-directory: tv
+        run: |
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          apk_version=$("$aapt2" dump badging "$APK" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          if [ "$apk_version" != "$VERSION" ]; then
+            # "-dirty" here means the tree was modified: whatever this is, it is
+            # not the tagged release, and it does not get published as one.
+            echo "::error::APK versionName '$apk_version' does not match tag version '$VERSION'."
+            exit 1
+          fi
+          echo "APK versionName matches tag: $apk_version"
+
+      - name: Attach the APK to the release
+        working-directory: tv
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # As in server-release.yml: create the draft if nobody has yet, and
+          # tolerate losing the race to the server job on a shared `v*` tag.
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --draft --title "Cinematica $TAG" --generate-notes || \
+            gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" "$APK" --clobber

@@ -1,0 +1,7 @@
+{
+  "cacheSize": 32212254720,
+  "btDownloadSpeedSoftLimit": 10485760,
+  "btDownloadSpeedHardLimit": 16777216,
+  "btMaxConnections": 100,
+  "transcodeHardwareAccel": false
+}

@@ -1,0 +1,39 @@
+# Secrets and signing material
+.env
+server/.env
+*.jks
+*.keystore
+*.p12
+signing.properties
+tv/signing.properties
+
+# Server runtime state (lives beside server.py on the Pi, never committed)
+server/transcode/
+server/nowplaying.json
+server/netprofile.json
+server/imdb-ratings.tsv.gz
+__pycache__/
+*.pyc
+*.bak-*
+
+# Android build output and IDE state
+tv/.gradle/
+tv/build/
+tv/app/build/
+tv/local.properties
+tv/.kotlin/
+.gradle/
+*.iml
+.idea/
+dist/
+*.apk
+
+# Tooling and agent files that stay local
+.DS_Store
+.claude/
+.codex/
+.vscode/
+.mcp.json
+.repowise/
+graphify-out/
+AGENTS.md

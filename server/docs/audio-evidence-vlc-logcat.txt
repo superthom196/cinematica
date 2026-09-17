@@ -1,0 +1,233 @@
+    09-13 21:16:05.041 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: buffer too late (-35012818 us): dropped
+    09-13 21:16:05.508 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed, reset positions
+    09-13 21:16:05.514 W/AudioTrack(22715): releaseBuffer() track 0x8db06800 disabled due to previous underrun, restarting
+    09-13 21:16:05.543 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1961382): playing silence
+    09-13 21:16:05.543 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 94146 zeroes
+    09-13 21:16:20.001 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60580): up-sampling
+    09-13 21:16:20.954 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 123400 us): stopping resampling
+    09-13 21:16:20.955 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (123303): up-sampling
+    09-13 21:16:47.695 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-42057): down-sampling
+    09-13 21:16:58.340 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -41437 us)
+    09-13 21:16:58.369 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-41499): down-sampling
+    09-13 21:17:07.748 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -11164 us)
+    09-13 21:17:21.102 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed, reset positions
+    09-13 21:17:21.103 W/AudioTrack(22715): releaseBuffer() track 0x8db06800 disabled due to previous underrun, restarting
+    09-13 21:17:21.133 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1967727): playing silence
+    09-13 21:17:21.133 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 94450 zeroes
+    09-13 21:17:22.195 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-40949): down-sampling
+    09-13 21:17:30.130 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60136): up-sampling
+    09-13 21:17:31.884 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 142751 us): stopping resampling
+    09-13 21:17:31.894 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (101982): up-sampling
+    09-13 21:17:49.423 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -1998 us)
+    09-13 21:18:10.513 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60560): up-sampling
+    09-13 21:18:13.340 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 121874 us): stopping resampling
+    09-13 21:18:13.358 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (121703): up-sampling
+    09-13 21:18:38.991 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -23879 us)
+    09-13 21:23:12.336 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60019): up-sampling
+    09-13 21:23:37.843 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -9057 us)
+    09-13 21:31:09.325 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62821): up-sampling
+    09-13 21:31:11.161 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 128835 us): stopping resampling
+    09-13 21:31:11.213 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (135299): up-sampling
+    09-13 21:31:12.242 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (183720): flushing buffers
+    09-13 21:31:12.328 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1860996): playing silence
+    09-13 21:31:12.328 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 89327 zeroes
+    09-13 21:34:15.602 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60878): up-sampling
+    09-13 21:34:21.053 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 122087 us): stopping resampling
+    09-13 21:34:21.073 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (121806): up-sampling
+    09-13 21:34:21.617 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (180256): flushing buffers
+    09-13 21:34:21.679 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1834541): playing silence
+    09-13 21:34:21.679 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 88057 zeroes
+    09-13 21:35:25.518 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60132): up-sampling
+    09-13 21:35:43.024 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -23351 us)
+    09-13 21:36:18.352 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62239): up-sampling
+    09-13 21:36:21.503 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 124679 us): stopping resampling
+    09-13 21:36:21.520 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (124463): up-sampling
+    09-13 21:36:25.243 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (197475): flushing buffers
+    09-13 21:36:25.285 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1869302): playing silence
+    09-13 21:36:25.285 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 89726 zeroes
+    09-13 21:36:26.544 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60207): up-sampling
+    09-13 21:36:26.778 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 122892 us): stopping resampling
+    09-13 21:36:26.844 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (136829): up-sampling
+    09-13 21:36:27.130 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (183503): flushing buffers
+    09-13 21:36:27.191 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1882770): playing silence
+    09-13 21:36:27.192 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90372 zeroes
+    09-13 21:36:27.858 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60920): up-sampling
+    09-13 21:36:32.969 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 123617 us): stopping resampling
+    09-13 21:36:32.979 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (123359): up-sampling
+    09-13 21:36:53.807 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -14097 us)
+    09-13 21:38:37.489 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62775): up-sampling
+    09-13 21:38:56.015 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -8800 us)
+    09-13 21:39:32.013 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60715): up-sampling
+    09-13 21:39:34.366 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 121637 us): stopping resampling
+    09-13 21:39:34.382 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (121497): up-sampling
+    09-13 21:39:37.655 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181837): flushing buffers
+    09-13 21:39:37.746 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1848404): playing silence
+    09-13 21:39:37.747 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 88723 zeroes
+    09-13 21:39:39.987 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-40333): down-sampling
+    09-13 21:39:44.790 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60725): up-sampling
+    09-13 21:39:45.249 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 122302 us): stopping resampling
+    09-13 21:39:45.251 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (122334): up-sampling
+    09-13 21:39:45.728 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181467): flushing buffers
+    09-13 21:39:45.770 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1922850): playing silence
+    09-13 21:39:45.771 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 92296 zeroes
+    09-13 21:39:51.021 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (61620): up-sampling
+    09-13 21:40:05.080 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 128761 us): stopping resampling
+    09-13 21:40:05.103 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (128129): up-sampling
+    09-13 21:40:08.816 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (183289): flushing buffers
+    09-13 21:40:08.877 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1895067): playing silence
+    09-13 21:40:08.877 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90963 zeroes
+    09-13 21:44:01.677 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (64956): up-sampling
+    09-13 21:44:02.782 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 132788 us): stopping resampling
+    09-13 21:44:02.799 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (132698): up-sampling
+    09-13 21:44:03.629 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (182724): flushing buffers
+    09-13 21:44:03.693 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1890097): playing silence
+    09-13 21:44:03.694 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90724 zeroes
+    09-13 21:44:06.127 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60026): up-sampling
+    09-13 21:44:07.099 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 120288 us): stopping resampling
+    09-13 21:44:07.156 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (125828): up-sampling
+    09-13 21:44:07.568 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (182339): flushing buffers
+    09-13 21:44:07.630 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1887505): playing silence
+    09-13 21:44:07.630 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90600 zeroes
+    09-13 21:44:08.078 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60027): up-sampling
+    09-13 21:44:08.537 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 122298 us): stopping resampling
+    09-13 21:44:08.538 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (122235): up-sampling
+    09-13 21:44:09.369 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181757): flushing buffers
+    09-13 21:44:09.432 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1898554): playing silence
+    09-13 21:44:09.432 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 91130 zeroes
+    09-13 21:44:09.902 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (68286): up-sampling
+    09-13 21:44:10.245 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 148659 us): stopping resampling
+    09-13 21:44:10.246 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (148597): up-sampling
+    09-13 21:44:10.475 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (183258): flushing buffers
+    09-13 21:44:10.535 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1915887): playing silence
+    09-13 21:44:10.535 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 91962 zeroes
+    09-13 21:44:10.802 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60871): up-sampling
+    09-13 21:44:11.157 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 125580 us): stopping resampling
+    09-13 21:44:11.159 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (125528): up-sampling
+    09-13 21:44:11.453 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (182353): flushing buffers
+    09-13 21:44:11.508 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1880848): playing silence
+    09-13 21:44:11.509 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90280 zeroes
+    09-13 21:44:12.238 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62428): up-sampling
+    09-13 21:44:12.687 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 125044 us): stopping resampling
+    09-13 21:44:12.727 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (129179): up-sampling
+    09-13 21:44:13.268 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (185430): flushing buffers
+    09-13 21:44:13.389 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1824030): playing silence
+    09-13 21:44:13.391 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 87553 zeroes
+    09-13 21:44:14.158 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62922): up-sampling
+    09-13 21:44:14.742 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 129712 us): stopping resampling
+    09-13 21:44:14.763 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (129638): up-sampling
+    09-13 21:44:15.119 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (184915): flushing buffers
+    09-13 21:44:15.169 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1868133): playing silence
+    09-13 21:44:15.169 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 89670 zeroes
+    09-13 21:44:16.141 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (64880): up-sampling
+    09-13 21:44:17.192 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 131625 us): stopping resampling
+    09-13 21:44:17.229 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (139196): up-sampling
+    09-13 21:44:17.640 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (180617): flushing buffers
+    09-13 21:44:17.667 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1930666): playing silence
+    09-13 21:44:17.667 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 92671 zeroes
+    09-13 21:44:20.274 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (63526): up-sampling
+    09-13 21:44:21.146 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 141579 us): stopping resampling
+    09-13 21:44:21.186 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (152857): up-sampling
+    09-13 21:44:21.356 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (186378): flushing buffers
+    09-13 21:44:21.402 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1887443): playing silence
+    09-13 21:44:21.402 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90597 zeroes
+    09-13 21:44:23.729 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (61179): up-sampling
+    09-13 21:44:24.638 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 123882 us): stopping resampling
+    09-13 21:44:24.673 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (127215): up-sampling
+    09-13 21:44:27.661 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181958): flushing buffers
+    09-13 21:44:27.678 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1914976): playing silence
+    09-13 21:44:27.679 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 91918 zeroes
+    09-13 21:44:31.213 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (64816): up-sampling
+    09-13 21:44:31.577 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 130788 us): stopping resampling
+    09-13 21:44:31.613 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (140566): up-sampling
+    09-13 21:44:32.344 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181690): flushing buffers
+    09-13 21:44:32.405 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1911863): playing silence
+    09-13 21:44:32.406 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 91769 zeroes
+    09-13 21:44:36.209 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60313): up-sampling
+    09-13 21:44:36.975 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 123830 us): stopping resampling
+    09-13 21:44:37.022 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (127746): up-sampling
+    09-13 21:44:37.768 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181861): flushing buffers
+    09-13 21:44:37.837 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed, reset positions
+    09-13 21:44:37.870 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1898355): playing silence
+    09-13 21:44:37.870 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 91121 zeroes
+    09-13 21:44:42.225 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60060): up-sampling
+    09-13 21:44:43.887 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 125552 us): stopping resampling
+    09-13 21:44:43.959 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (135029): up-sampling
+    09-13 21:44:44.215 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (190544): flushing buffers
+    09-13 21:44:44.267 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1911121): playing silence
+    09-13 21:44:44.268 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 91733 zeroes
+    09-13 21:44:50.797 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (63179): up-sampling
+    09-13 21:44:52.519 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 132573 us): stopping resampling
+    09-13 21:44:52.551 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (141217): up-sampling
+    09-13 21:44:53.365 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (183185): flushing buffers
+    09-13 21:44:53.433 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed, reset positions
+    09-13 21:44:53.454 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1844869): playing silence
+    09-13 21:44:53.454 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 88553 zeroes
+    09-13 21:44:56.941 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62369): up-sampling
+    09-13 21:44:57.295 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 153283 us): stopping resampling
+    09-13 21:44:57.297 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (97451): up-sampling
+    09-13 21:44:58.766 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (188785): flushing buffers
+    09-13 21:44:58.815 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1891293): playing silence
+    09-13 21:44:58.816 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90782 zeroes
+    09-13 21:45:00.621 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60516): up-sampling
+    09-13 21:45:00.983 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 123340 us): stopping resampling
+    09-13 21:45:01.025 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (131530): up-sampling
+    09-13 21:45:01.811 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181396): flushing buffers
+    09-13 21:45:01.859 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1882661): playing silence
+    09-13 21:45:01.860 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90367 zeroes
+    09-13 21:45:06.573 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (61019): up-sampling
+    09-13 21:45:07.113 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 128447 us): stopping resampling
+    09-13 21:45:07.177 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (137679): up-sampling
+    09-13 21:45:08.074 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (182293): flushing buffers
+    09-13 21:45:08.099 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1935676): playing silence
+    09-13 21:45:08.099 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 92912 zeroes
+    09-13 21:45:09.524 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60134): up-sampling
+    09-13 21:45:55.184 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-40482): down-sampling
+    09-13 21:45:57.586 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: -83142 us): stopping resampling
+    09-13 21:45:57.614 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-83830): down-sampling
+    09-13 21:46:13.441 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: 12762 us)
+    09-13 21:54:02.890 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (65437): up-sampling
+    09-13 21:54:03.480 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: 28568 us)
+    09-13 21:54:48.817 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62133): up-sampling
+    09-13 21:54:50.111 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 126827 us): stopping resampling
+    09-13 21:54:50.132 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (126746): up-sampling
+    09-13 21:54:50.794 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (180465): flushing buffers
+    09-13 21:54:50.862 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1894968): playing silence
+    09-13 21:54:50.863 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90958 zeroes
+    09-13 22:02:12.985 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed, reset positions
+    09-13 22:02:12.986 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (1876028): flushing buffers
+    09-13 22:02:13.158 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-44223): down-sampling
+    09-13 22:02:13.246 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1819926): playing silence
+    09-13 22:02:13.275 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 87356 zeroes
+    09-13 22:04:00.326 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (62532): up-sampling
+    09-13 22:04:00.466 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: 26142 us)
+    09-13 22:04:56.082 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60190): up-sampling
+    09-13 22:05:01.872 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 120476 us): stopping resampling
+    09-13 22:05:01.904 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (122477): up-sampling
+    09-13 22:05:13.915 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (183539): flushing buffers
+    09-13 22:05:13.965 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1920645): playing silence
+    09-13 22:05:13.965 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 92190 zeroes
+    09-13 22:05:16.270 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (63393): up-sampling
+    09-13 22:05:17.003 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 132285 us): stopping resampling
+    09-13 22:05:17.082 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (143210): up-sampling
+    09-13 22:05:17.292 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (181937): flushing buffers
+    09-13 22:05:17.362 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1850309): playing silence
+    09-13 22:05:17.363 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 88814 zeroes
+    09-13 22:05:17.774 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (73824): up-sampling
+    09-13 22:05:18.068 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 156317 us): stopping resampling
+    09-13 22:05:18.147 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (173483): up-sampling
+    09-13 22:05:18.278 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (201169): flushing buffers
+    09-13 22:05:18.381 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1732974): playing silence
+    09-13 22:05:18.381 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 83182 zeroes
+    09-13 22:05:19.213 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (60116): up-sampling
+    09-13 22:05:38.359 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-41504): down-sampling
+    09-13 22:05:43.695 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -37744 us)
+    09-13 22:05:44.781 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too early (-40122): down-sampling
+    09-13 22:05:55.376 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: -13710 us)
+    09-13 22:07:58.394 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (61160): up-sampling
+    09-13 22:08:11.279 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: resampling stopped (drift: 15138 us)
+    09-13 22:08:23.119 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (64500): up-sampling
+    09-13 22:08:28.054 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: timing screwed (drift: 129737 us): stopping resampling
+    09-13 22:08:28.084 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback too late (130463): up-sampling
+    09-13 22:08:32.383 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too late (180157): flushing buffers
+    09-13 22:08:32.413 W/VLC     (22715): [a761dc30/58f0] libvlc audio output: playback way too early (-1883410): playing silence
+    09-13 22:08:32.413 D/VLC     (22715): [a761dc30/58f0] libvlc audio output: inserting 90403 zeroes

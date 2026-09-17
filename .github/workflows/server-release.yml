@@ -1,0 +1,105 @@
+name: Server Release
+
+# Both spellings fire this. `v*` is the product tag -- one tag covering the
+# server and the TV app, which is how 1.0.0 was cut -- and `server-v*` is the
+# server-only tag this workflow originally took. v1.0.0 matched NEITHER of the
+# old patterns, so nothing ran and every asset on that release was uploaded by
+# hand; that is the gap this is closing.
+on:
+  push:
+    tags: ['v*', 'server-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* or server-v* tag to package and attach the tarball to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # package.sh names the tarball from `git describe --tags`, which needs
+          # the tags and the history behind them, not a shallow checkout.
+          fetch-depth: 0
+
+      - name: Work out the release version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#server-v}"
+          version="${version#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$TAG' does not carry an x.y.z version."
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "Releasing server $version from tag $TAG"
+
+      - name: Syntax-check the shipped scripts
+        run: |
+          for f in server/install.sh server/deploy/package.sh server/deploy/install-sendspin.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -x server/install.sh server/deploy/package.sh server/deploy/install-sendspin.sh
+
+      - name: Tests
+        run: python3 -m unittest discover -s server/tests -t server
+
+      - name: Build the tarball
+        # VERSION is passed explicitly rather than left to package.sh's
+        # `git describe`, which would answer "server-v1.0.0" for one tag
+        # spelling and "1.0.0-3-gabc1234" for the other.
+        run: VERSION="$VERSION" bash server/deploy/package.sh
+
+      - name: Check the release contains everything it advertises
+        # The README tells a stranger to run `sha256sum -c` before unpacking,
+        # so the sidecar is a shipped asset, not a nicety -- if it is missing
+        # the documented first step of the install fails.
+        run: |
+          missing=0
+          for f in "dist/cinematica-server-${VERSION}.tar.gz" \
+                   "dist/cinematica-server-${VERSION}.tar.gz.sha256"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::expected $f"
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "package.sh produced:"
+            ls -l dist
+            exit 1
+          fi
+          (cd dist && sha256sum -c "cinematica-server-${VERSION}.tar.gz.sha256")
+          # It must unpack to the directory the install instructions name, and
+          # that directory must hold the installer they say to run.
+          tar tzf "dist/cinematica-server-${VERSION}.tar.gz" \
+            | grep -qx 'cinematica-server/install.sh'
+
+      - name: Attach the tarball and its checksum to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # If the release already exists (notes written by hand, or the TV job
+          # got here first), just attach to it. Otherwise leave a draft so the
+          # notes get written before anyone sees it. The second `view` is for
+          # the race on a shared `v*` tag: both release jobs run at once, and
+          # the one that loses `create` must carry on, not fail.
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --draft --title "Cinematica $TAG" --generate-notes || \
+            gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" \
+            "dist/cinematica-server-${VERSION}.tar.gz" \
+            "dist/cinematica-server-${VERSION}.tar.gz.sha256" --clobber

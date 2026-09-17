@@ -1,0 +1,36 @@
+# The Stremio streaming server.
+#
+# This file is a TEMPLATE: install.sh replaces the install-directory placeholder
+# below throughout, writes the result to deploy/docker-compose.yml, and brings it
+# up with:  docker compose -p cinematica -f .../docker-compose.yml up -d
+#
+# This is the piece that does all the BitTorrent work — joining swarms,
+# verifying pieces, serving byte ranges over HTTP. Cinematica implements none of
+# it. The image also carries the ffmpeg/ffprobe that server.py reaches with
+# `docker exec stremio-server …` to convert audio to AC3; nothing is installed
+# on the host for that.
+
+services:
+  stremio-server:
+    # The original install pins an arm64 side-loaded image with
+    # `pull_policy: never`, because that host's link corrupts sustained TLS and
+    # `docker pull` restarts every layer forever. On a normal link just use the
+    # upstream tag, which is what this does.
+    image: stremio/server:latest
+    container_name: stremio-server
+    environment:
+      - NO_CORS=1
+      - APP_PATH=/stremio-server
+    volumes:
+      # Cache + server-settings.json. install.sh seeds the settings file here
+      # once, if it is absent, from deploy/server-settings.json.
+      - @DIR@/stremio:/stremio-server
+      # The seam between the two halves: ffmpeg writes the AC3 conversion into
+      # /transcode inside the container, which lands on the host as @DIR@/transcode,
+      # where server.py serves it over /audio/… as a real seekable file. Both
+      # sides write here, so the files end up root-owned. That is expected.
+      - @DIR@/transcode:/transcode
+    ports:
+      - "11470:11470"   # HTTP  — the one Cinematica uses
+      - "12470:12470"   # HTTPS — self-signed, unused here
+    restart: unless-stopped

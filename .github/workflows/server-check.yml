@@ -1,0 +1,29 @@
+name: Server Check
+
+on:
+  push:
+    paths: ['server/**']
+  pull_request:
+    paths: ['server/**']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compile server.py
+        run: python3 -m py_compile server/server.py
+
+      - name: Compile sendspin bridge and probe
+        run: python3 -m py_compile server/sendspin_bridge.py server/deploy/sendspin_probe.py
+
+      - name: Hifi regression tests (bridge teardown, heartbeat state machine)
+        run: python3 -m unittest discover -s server/tests -t server
+
+      - name: Shell-check deploy scripts and hook
+        run: |
+          for f in server/deploy/*.sh server/deploy/post-receive; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done

@@ -1,0 +1,68 @@
+name: TV Build
+
+on:
+  push:
+    branches: [main]
+    paths: ['tv/**', '.github/workflows/tv-build.yml']
+  pull_request:
+    paths: ['tv/**', '.github/workflows/tv-build.yml']
+  workflow_dispatch:
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tv
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # versionName is "0.<features>.<bugfixes>", derived by scanning every commit subject in
+          # the repository's whole history (a fix-like subject counts as a bugfix, everything else
+          # a feature), and versionCode is the total commit count (see tv/app/build.gradle.kts) --
+          # both need the full history, so the default shallow clone would build 0.0.0 (1).
+          fetch-depth: 0
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          # The action's default package list includes the legacy "tools"
+          # package, which Google removed from the repository; asking for it
+          # fails the whole job before Gradle runs.
+          packages: platform-tools
+
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+      - name: Size the build for a 7 GB runner
+        # The project asks for -Xmx8g, which suits a dev machine and not a hosted runner. A
+        # user-level gradle.properties overrides the project's, and compiling Kotlin in-process
+        # keeps a second large JVM off the box.
+        run: |
+          mkdir -p ~/.gradle
+          cat >> ~/.gradle/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8
+          kotlin.compiler.execution.strategy=in-process
+          EOF
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Assemble the release build
+        # Pulls the libvlc-all AAR (~93 MB) from Maven Central; only armeabi-v7a is kept via
+        # abiFilters, so the resulting APK is ~41 MB. Nothing special is needed on CI for this.
+        run: ./gradlew assembleRelease
+
+      - name: Report what was built
+        run: |
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          "$aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -1
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cinematica-tv-release-apk
+          path: tv/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error

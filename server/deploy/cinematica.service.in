@@ -1,0 +1,54 @@
+# Template for the systemd unit that install.sh renders and installs to
+# /etc/systemd/system/cinematica.service.
+#
+# Placeholders, substituted by install.sh:
+#   @DIR@    install directory   (--dir,  default /opt/cinematica)
+#   @USER@   service user        (--user, default the invoking sudo user)
+#   @HOST@   PUBLIC_HOST         (--host, default the primary LAN IPv4)
+#   @ADB@    the optional phone-remote line (--adb IP:PORT); the whole line is
+#            removed when --adb is not given, because ADB_TV is what enables adb
+#            at all and an empty value must not appear.
+#   @STATE@  the optional CINEMATICA_STATE override line, only present when the
+#            state directory was moved away from the StateDirectory= default
+#            below; removed entirely otherwise, same rule as @ADB@.
+#
+# StateDirectory=cinematica asks systemd to create /var/lib/cinematica (mode
+# 0700, owned by @USER@) before every start and keep it that way -- this is
+# the providers/store.py state tree (installed provider packages, their
+# config and credentials, the admin password). install.sh also creates it
+# directly during install, so a first run of the freshly-installed unit finds
+# it already there either way.
+#
+# KEEP IN SYNC with cinematica.service, the committed unit for the original Pi
+# (deployed by deploy/post-receive, not by install.sh). Same environment block,
+# different paths/user/host. Change one, change the other.
+
+[Unit]
+Description=Cinematica — top-rated 4K films, streamed to the TV
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DIR@
+StateDirectory=cinematica
+StateDirectoryMode=0700
+Environment=PORT=8090
+Environment=PAGE_SIZE=24
+Environment=STREMIO=http://@HOST@:11470
+Environment=PUBLIC_HOST=@HOST@
+@ADB@
+@STATE@
+Environment=SUSTAIN_MBPS=8
+Environment=BUFFER_SECS=300
+Environment=BUFFER_MIN_MB=80
+Environment=BUFFER_MAX_MB=1000
+Environment=HARD_CAP_SECS=600
+Environment=AUDIO_FIX=1
+ExecStart=/usr/bin/python3 @DIR@/server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
