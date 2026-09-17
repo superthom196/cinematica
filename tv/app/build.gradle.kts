@@ -15,9 +15,10 @@ val repoRoot = rootDir.parentFile
 // Android compares it to decide that one build is newer than another and refuses
 // an APK whose code is below the installed one, so it has to survive the
 // repository's history being rewritten. The commit count it used to be did not:
-// the rebuilt public repository counts 1, and the published 1.0.0 APK is 141, so
-// every update built from that repository would have been rejected as a
-// downgrade. Bump the file when cutting a release; version.properties says how.
+// it answers whatever the current history happens to be long, which changed when
+// this repository was rebuilt -- tying an install-blocking number to something
+// that can be rewritten underneath it. A number in a file cannot drift that way.
+// Bump the file when cutting a release; version.properties says how.
 val versionCodeFile = rootProject.file("version.properties")
 val declaredVersionCode: Int = run {
     if (!versionCodeFile.exists()) {
