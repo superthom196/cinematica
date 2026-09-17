@@ -153,6 +153,13 @@ An HTTP URL alone does not guarantee playback. The response must be media the
 playback path can handle; browser pages, DRM playback and arbitrary streaming
 formats are not covered by URL acceptance.
 
+Whether a candidate can play in a browser is decided the same way: by probing
+the actual file with ffprobe and matching the result against what that specific
+browser reports it can decode, not from the release name and not assumed from
+the container or file extension. A candidate can therefore work on the TV or in
+one browser and not another, or not reach the browser player at all when
+nothing it returns is decodable there.
+
 The adapter reads `behaviorHints.videoSize` when present. It can also extract sizes
 and seeder counts from descriptive text. These estimates depend on what the add-on
 reports; missing values remain unknown.

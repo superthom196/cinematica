@@ -13,13 +13,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Compile server.py
-        run: python3 -m py_compile server/server.py
+        run: python3 -m py_compile server/server.py server/browser_play.py
 
       - name: Compile sendspin bridge and probe
         run: python3 -m py_compile server/sendspin_bridge.py server/deploy/sendspin_probe.py
 
-      - name: Hifi regression tests (bridge teardown, heartbeat state machine)
+      - name: Install ffmpeg
+        # The browser packager's tests in server/tests/test_bx_ffmpeg.py skip
+        # themselves when there is no ffmpeg, and they are the only coverage
+        # that ever sees a real fMP4. Three bugs shipped behind a green suite
+        # of hand-built fixtures -- segments that 503'd forever, a timeline
+        # counted twice, and segment lengths that a copied video stream
+        # cannot actually deliver -- so a runner without ffmpeg would make
+        # this job green for exactly the reason it was green before.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | sed -n 1p
+
+      - name: Tests (hifi regressions, browser packager, providers)
         run: python3 -m unittest discover -s server/tests -t server
+
+      - name: Fail if the ffmpeg-backed tests did not actually run
+        # A skipped test reads as a pass in the step above, which would put
+        # this job back in the state that let three bugs through. Running the
+        # one module by name (rather than grepping a second full discover)
+        # also means a rename turns into a loud import error here instead of
+        # a check that quietly stops checking anything.
+        working-directory: server
+        run: |
+          out=$(python3 -m unittest tests.test_bx_ffmpeg -v 2>&1)
+          echo "$out" | tail -n 20
+          case "$out" in
+            *skipped*)
+              echo "::error::test_bx_ffmpeg skipped -- ffmpeg/ffprobe not usable here"
+              exit 1 ;;
+          esac
+          echo "$out" | grep -qE '^Ran [1-9][0-9]* tests?' || {
+            echo "::error::test_bx_ffmpeg ran no tests"
+            exit 1
+          }
 
       - name: Shell-check deploy scripts and hook
         run: |

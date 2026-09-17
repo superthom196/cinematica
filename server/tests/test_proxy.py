@@ -219,6 +219,94 @@ class ProxyFramingTest(unittest.TestCase):
                 c.close()
 
 
+class TorrentProxyFramingTest(unittest.TestCase):
+    """/t/<infoHash> goes through the same _proxy_upstream as /src/<key>, so it
+    has to be held to the same framing guarantees -- it is reached from a
+    tailnet address that has no route to the streaming server's own port, so
+    this proxy is the only path a browser player has to that torrent at all.
+
+    _proxy_torrent only ever contributes an infoHash and an optional numeric
+    fileIdx to the upstream URL, so there is no path segment of our own to pick
+    /chunked, /sized or /ranged on the stub with. STREMIO_IN is patched to the
+    stub's base URL plus that selector instead, for the life of each test, and
+    restored afterwards -- _proxy_torrent then appends "/<infoHash>" (and, for
+    the Range test, "/<idx>") onto it, landing on the same _Upstream branch the
+    /src/ tests already cover.
+    """
+
+    def setUp(self):
+        self._orig_stremio_in = server.STREMIO_IN
+
+    def tearDown(self):
+        server.STREMIO_IN = self._orig_stremio_in
+
+    def test_chunked_upstream_completes_and_the_connection_stays_usable(self):
+        with _Live() as live:
+            server.STREMIO_IN = live.up_url + "/chunked"
+            ih = "b" * 40
+            c = live.conn()
+            try:
+                c.request("GET", "/t/%s" % ih)
+                r = c.getresponse()
+                self.assertEqual(r.status, 200)
+                self.assertIsNone(r.getheader("Content-Length"))
+                self.assertEqual((r.getheader("Transfer-Encoding") or "").lower(),
+                                 "chunked")
+                # As with /src/, read() returning at all is the regression --
+                # before the fix it hung on the socket timeout instead.
+                self.assertEqual(r.read(), BODY)
+
+                c.request("GET", "/t/%s" % ih)
+                self.assertEqual(c.getresponse().read(), BODY)
+            finally:
+                c.close()
+
+    def test_sized_upstream_still_passes_its_own_length_through_unchanged(self):
+        with _Live() as live:
+            server.STREMIO_IN = live.up_url + "/sized"
+            ih = "c" * 40
+            c = live.conn()
+            try:
+                c.request("GET", "/t/%s" % ih)
+                r = c.getresponse()
+                self.assertEqual(r.status, 200)
+                self.assertEqual(r.getheader("Content-Length"), str(len(BODY)))
+                self.assertIsNone(r.getheader("Transfer-Encoding"))
+                self.assertEqual(r.read(), BODY)
+            finally:
+                c.close()
+
+    def test_range_request_survives_the_hop_intact(self):
+        with _Live() as live:
+            server.STREMIO_IN = live.up_url + "/ranged"
+            ih = "d" * 40
+            c = live.conn()
+            try:
+                # The fileIdx exercises the /t/<hash>/<idx> shape, which
+                # _proxy_torrent has to fold into the same upstream path.
+                c.request("GET", "/t/%s/1" % ih,
+                          headers={"Range": "bytes=1000-"})
+                r = c.getresponse()
+                self.assertEqual(r.status, 206)
+                self.assertEqual(r.getheader("Content-Range"),
+                                 "bytes 1000-%d/%d" % (len(BODY) - 1, len(BODY)))
+                self.assertEqual(r.read(), BODY[1000:])
+            finally:
+                c.close()
+
+    def test_non_hex_infohash_is_refused_without_reaching_any_upstream(self):
+        with _Live() as live:
+            server.STREMIO_IN = live.up_url
+            c = live.conn()
+            try:
+                c.request("GET", "/t/not-a-hash")
+                r = c.getresponse()
+                self.assertEqual(r.status, 400)
+                r.read()
+            finally:
+                c.close()
+
+
 class ProxyCredentialTest(unittest.TestCase):
     def test_the_players_url_carries_no_credential_and_the_proxy_adds_it(self):
         """The whole point of the proxy: the key is derived from the URL, so

@@ -1,6 +1,7 @@
 # Install Cinematica
 
-This guide sets up the Cinematica server on Linux. You will also need the
+This guide sets up the Cinematica server on Linux. The browser interface can
+browse and play on its own; for TV playback you will also need the
 [Cinematica TV app](https://github.com/superthom196/cinematica/tree/main/tv).
 
 ## What you need
@@ -84,11 +85,54 @@ journalctl -u cinematica -n 100
 ## Connect the TV
 
 Install and open the TV app. Select your server or enter its LAN address, including
-port `8090` if needed. The app remembers the connection.
+port `8090` if needed. The app remembers the connection. The TV app must be
+running to play a title on the TV, unless you have configured the optional app
+wake-up feature below.
 
-The same browser address used for setup also provides browsing and playback controls.
-The TV app must be running to receive playback commands unless you have configured
-the optional app wake-up feature below.
+The same browser address used for setup browses the library and can play a
+film or episode directly in the browser, with no TV app involved.
+
+## Play in the browser
+
+Open the same browser address used for setup. Browsing, search and title
+details work as before; the button to start a film or episode is now **Play**,
+and it plays there in the browser rather than only sending a command to the TV.
+
+The server tries each candidate source in turn: if your browser can decode its
+container, video and audio, it plays directly; otherwise the server repackages
+it or converts its audio to AAC, without re-encoding the video. There is no
+video transcoding, so a title whose video track none of your browsers can
+decode — see the limits below — cannot be played in the browser at all; the
+page explains why.
+
+Everything the browser needs is fetched from the same address you opened, so
+playback works over an existing Tailscale or other remote connection with no
+extra configuration.
+
+Only one device plays at a time: the TV or a browser. Starting playback on one
+refuses a competing request from the other with "Another device is playing";
+stop it first to hand playback over. Two browsers compete the same way.
+
+Seeking works anywhere in the title. Seeking into a part not yet prepared
+restarts preparation from that point, and accuracy is bounded by the source's
+keyframe interval (a few seconds), because video is copied rather than
+re-encoded.
+
+Playing in the browser does not start network audio and does not send commands
+to the TV; the TV app and its hi-fi audio path are unaffected.
+
+Limits to expect:
+
+- Firefox cannot decode HEVC, and Chrome's HEVC support depends on the
+  machine's hardware. A title that exists only as HEVC will report no
+  compatible source in such a browser; this is expected, not a fault.
+- Seeking far ahead in a torrent-backed source is slow regardless, because the
+  source downloads in order and the requested part may not have arrived yet.
+  This shows as buffering.
+- Browser audio is stereo; surround is not downmixed for the browser in this
+  version.
+- A 4K source can be selected and still be too large to deliver smoothly over
+  a weak connection, which also shows as buffering rather than an error.
 
 ## Optional: network audio
 
@@ -205,6 +249,8 @@ journalctl -u cinematica -n 100
 | Library works, playback fails | Test the stream provider and check that it accepts the catalogue's title IDs. See the provider guide. |
 | TV cannot connect | Check the server address, port 8090, firewall and whether both devices can reach each other. |
 | No TV app connected | Open Cinematica on the TV. This message is normal while the app is closed. |
+| No compatible source in browser | The candidate's video codec cannot be decoded by that browser. See [Play in the browser](#play-in-the-browser) for the HEVC limits this usually comes from; try another browser or the TV app. |
+| "Another device is playing" | Only one device, the TV or a browser, plays at a time. Stop playback on the other device first. |
 | Streaming container fails | Run `docker logs stremio-server` and check `http://localhost:11470/stats.json`. An empty JSON object is normal while idle. |
 | Port already in use | Run `ss -ltnp` on the server to identify the service using port 8090 or 11470. |
 | Network audio fails | Check the bridge log, selected player and player address. Turn network audio off to use the TV output. |
@@ -213,6 +259,7 @@ journalctl -u cinematica -n 100
 Connection measurements and available sources affect stream selection. Use the
 network check in the interface to reassess the connection after changing networks.
 
-The server converts audio, not video. A stream still needs a video codec the TV can
-play. Codec selection defaults and advanced settings are described in the
-[server reference](README.md#configuration).
+The server converts audio, not video: to AC-3 for the TV, or to AAC for a
+browser. A stream still needs a video codec the target device — the TV, or that
+specific browser — can decode. Codec selection defaults and advanced settings
+are described in the [server reference](README.md#configuration).
