@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cinematica</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1a1d21;--dim:#5b6270;--line:#e1e4e9;--accent:#2563eb;
+      --ok:#15803d;--warn:#b45309;--bad:#b91c1c;--shadow:0 1px 3px rgba(0,0,0,.08)}
+@media(prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1d2025;--text:#eceef1;--dim:#9aa2b1;
+      --line:#2b2f36;--accent:#5b9dff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--shadow:0 1px 3px rgba(0,0,0,.4)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);padding:1.25rem 1rem 4rem;
+     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+/* ---- mobile first: this is used on a phone ---- */
+body{padding:.75rem .6rem 4.5rem}
+/* Full-bleed sticky band. The inner wrap keeps content centred, which a sticky
+   element with max-width + auto margins cannot do for itself. */
+header{
+  position:sticky;top:0;z-index:45;
+  margin:-.75rem -.6rem 1rem;padding:.75rem .6rem .7rem;
+  border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--bg) 90%,transparent);
+  backdrop-filter:blur(10px) saturate(1.15);
+  -webkit-backdrop-filter:blur(10px) saturate(1.15);
+}
+.hwrap{
+  max-width:1180px;margin:0 auto;display:flex;align-items:flex-end;
+  justify-content:space-between;gap:.6rem;flex-wrap:wrap;
+}
+/* The wordmark, as the TV app sets it: the name in Alfa Slab One (the face on the ticket-stub
+   logo), served from /static so the phone caches it once. Cream on the dark theme is the ticket's
+   own lettering; the light theme has no dark ground for cream, so it takes the ticket's red. */
+@font-face{font-family:"Alfa Slab One";src:url(/static/alfa-slab-one.ttf) format("truetype");
+  font-weight:400;font-style:normal;font-display:swap}
+:root{--mark:#c8382b}
+@media(prefers-color-scheme:dark){:root{--mark:#f3e6c8}}
+.brand{position:relative}
+.brand h1{
+  margin:0;font-size:1.45rem;font-weight:400;line-height:1;color:var(--mark);
+  font-family:"Alfa Slab One","Rockwell","Roboto Slab",Georgia,serif;
+  text-transform:uppercase;letter-spacing:.03em;
+  /* Alfa Slab One has no ascenders above cap height and the name has no descenders, so the
+     box is trimmed to the capitals -- what the row is sized for. */
+  padding:.05em 0 .02em;
+}
+.controls{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;width:100%}
+/* Movies | Series: one pill, the chosen half filled, the other greyed inside it. It sits on
+   the wordmark's row, to the right of the name, so the controls row below keeps its width for
+   the buttons that grow (the link chip becomes "⚡ 42 Mbps" once measured). */
+.kwrap{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:999px;background:var(--card);
+  align-self:center;margin-left:auto}
+.kwrap button{border:none;border-radius:999px;background:transparent;color:var(--dim);box-shadow:none}
+.kwrap button.on{background:var(--accent);color:#fff}
+/* A phone is ~360-390px across and the controls must stay on ONE row there: the
+   words a button can do without ("Search", "Sort:", the carets) go, and the
+   padding tightens. Wider screens get them back. */
+@media(max-width:480px){
+  .controls{gap:.3rem}
+  .controls button{padding:.4rem .45rem}
+  .controls .wide{display:none}
+}
+.status{font-size:.72rem;color:var(--dim);white-space:nowrap;margin-left:auto}
+.dot{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;margin-right:.3rem;vertical-align:middle}
+main{max-width:1180px;margin:0 auto}
+
+/* three poster tiles across on a phone; more as the screen grows */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem}
+@media(min-width:700px){.grid{grid-template-columns:repeat(5,1fr);gap:.75rem}}
+@media(min-width:1050px){.grid{grid-template-columns:repeat(7,1fr)}}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+      box-shadow:var(--shadow);display:flex;flex-direction:column;cursor:pointer;
+      -webkit-tap-highlight-color:transparent}
+.card:active{transform:scale(.97)}
+.poster{position:relative;aspect-ratio:2/3;background:#0003}
+.poster img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{position:absolute;top:.25rem;left:.25rem;background:#000c;color:#fff;font-size:.58rem;
+       padding:.1rem .28rem;border-radius:4px;font-weight:700;letter-spacing:.02em}
+.badge.k4{background:#7c3aede6}
+.badge.tvbadge{left:auto;right:.25rem;background:var(--accent)}
+.rate{position:absolute;bottom:.25rem;right:.25rem;background:#000c;color:#fff;font-size:.62rem;
+      padding:.1rem .3rem;border-radius:4px;font-weight:700;font-variant-numeric:tabular-nums}
+.rate .bo{color:#7dd3fc;font-weight:600}
+.meta{padding:.35rem .4rem .45rem;display:flex;flex-direction:column;gap:.1rem;min-width:0}
+.t{font-size:.7rem;font-weight:600;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;
+   -webkit-box-orient:vertical;overflow:hidden}
+.y{font-size:.62rem;color:var(--dim)}
+.s{font-size:.6rem;color:var(--dim);font-variant-numeric:tabular-nums;
+   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.s.ok{color:var(--ok)}.s.bad{color:var(--bad)}.s.wait{opacity:.6}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+       background:var(--card);color:var(--text);padding:.4rem .5rem;font-size:.76rem;font-weight:600}
+button.play{background:var(--accent);color:#fff;border-color:transparent;width:100%;margin-top:.4rem;padding:.35rem .5rem}
+button:disabled{opacity:.45;cursor:default}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);
+     padding:.5rem .6rem;padding-bottom:calc(.5rem + env(safe-area-inset-bottom));
+     font-size:.75rem;box-shadow:0 -2px 10px #0003;z-index:50}
+/* Same centred column as the header, so the Stop button sits under the controls
+   rather than pinned to the far corner of a wide window. */
+.bwrap{max-width:1180px;margin:0 auto;display:flex;gap:.5rem;align-items:center}
+.bar .msg{display:none}   /* status text removed; the progress bar carries the state */
+.np{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:var(--dim);
+    min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.npdot{flex:none;width:.55rem;height:.55rem;border-radius:50%;background:var(--dim)}
+.npdot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.npdot.pause{background:var(--warn)}
+.npdot.bad{background:var(--bad)}
+.card .s.thin{color:var(--warn);font-weight:600}
+#nptext{overflow:hidden;text-overflow:ellipsis}
+.bar button{flex:none;padding:.35rem .5rem;font-size:.72rem}
+/* transient toast: the bar stays silent by design, but errors / action-needed
+   messages still have to reach the user somehow */
+.toasts{position:fixed;left:.6rem;right:.6rem;z-index:55;display:flex;flex-direction:column;gap:.4rem;
+  bottom:calc(3.4rem + env(safe-area-inset-bottom));pointer-events:none}
+.toast{pointer-events:auto;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--dim);
+  border-radius:10px;padding:.55rem .7rem;font-size:.78rem;line-height:1.35;color:var(--text);
+  box-shadow:var(--shadow);cursor:pointer;animation:toastin .18s ease-out}
+.toast.err{border-left-color:var(--bad);color:var(--bad)}
+@keyframes toastin{from{opacity:0;transform:translateY(.35rem)}to{opacity:1;transform:translateY(0)}}
+code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
+/* buffering progress */
+.prog{height:6px;border-radius:999px;background:#8883;overflow:hidden;display:none;width:100%}
+.prog.on{display:block}
+.prog > i{display:block;height:100%;width:0;background:var(--accent);border-radius:999px;
+  transition:width .35s ease}
+.bar .pwrap{flex:1;display:flex;align-items:center;min-width:0}
+.card .prog{margin-top:.35rem}
+#mprog{margin:.5rem 0 .2rem}
+/* genre dropdown */
+.gwrap{position:relative}
+#gbtn{display:flex;align-items:center;gap:.4rem}
+#gmenu{position:absolute;z-index:40;top:calc(100% + .35rem);left:0;background:var(--card);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px #0004;padding:.5rem;
+  display:none;grid-template-columns:repeat(2,minmax(130px,1fr));gap:.15rem;min-width:290px;max-height:60vh;overflow:auto}
+#gmenu.open{display:grid}
+/* Genres is the LAST control on the row, so on a phone its button sits near the right edge and a
+   menu hung from its left corner ran half off screen. There is no corner of the button a 290px
+   menu can hang from on a 360px screen, so on narrow screens it spans the controls row instead:
+   the genre .gwrap stops being the positioning parent and the row is. Neither menu may outgrow
+   the viewport anywhere. */
+#gmenu,#smenu{max-width:calc(100vw - 1.2rem)}
+@media(max-width:600px){
+  .controls{position:relative}
+  .gwrap.gg{position:static}
+  #gmenu{left:0;right:0}
+}
+#smenu{position:absolute;z-index:40;top:calc(100% + .35rem);left:0;background:var(--card);
+  border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px #0004;padding:.4rem;
+  display:none;min-width:230px}
+#smenu.open{display:block}
+#smenu button{display:block;width:100%;text-align:left;border:none;background:none;padding:.45rem .55rem;
+  border-radius:6px;font-size:.82rem}
+#smenu button:hover,#smenu button.sel{background:#8881}
+#smenu .d{display:block;font-size:.72rem;color:var(--dim);font-weight:400;margin-top:.1rem}
+#gmenu .gopt{display:flex;align-items:center;gap:.4rem;font-size:.8rem;padding:.35rem .45rem;
+  border:none;background:none;color:var(--text);text-align:left;width:100%;border-radius:6px;font-weight:500}
+#gmenu .gmark{display:inline-block;width:1em;font-weight:700}
+#gmenu .gopt.inc{color:var(--ok)}
+#gmenu .gopt.exc{color:var(--bad);text-decoration:line-through;opacity:.75}
+#gmenu label{display:flex;align-items:center;gap:.45rem;font-size:.8rem;padding:.3rem .4rem;
+  border-radius:6px;cursor:pointer;white-space:nowrap}
+#gmenu label:hover{background:#8881}
+#gmenu input{accent-color:var(--accent);margin:0}
+.gfoot{grid-column:1/-1;display:flex;gap:.4rem;border-top:1px solid var(--line);padding-top:.45rem;margin-top:.3rem}
+.gfoot button{flex:1}
+.poster{cursor:pointer}
+/* modal */
+/* Calibration blocks the page outright: it saturates the link, so anything
+   started during it would stall and look broken. Covering the UI is the
+   guard -- nothing else can be launched while it runs. */
+#cal{position:fixed;inset:0;background:#000c;backdrop-filter:blur(4px);display:none;
+  align-items:center;justify-content:center;z-index:90;padding:1.5rem}
+#cal.open{display:flex}
+.calbox{background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:1.6rem 1.8rem;max-width:24rem;text-align:center;box-shadow:0 20px 60px #0008}
+.spin{width:2.4rem;height:2.4rem;margin:0 auto 1rem;border-radius:50%;
+  border:3px solid var(--line);border-top-color:var(--accent);animation:spin 900ms linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
+#caltitle{font-size:1rem;font-weight:600;margin-bottom:.35rem}
+/* Determinate once swarms are being measured; a sliding bar during the speed
+   probe, which has no countable steps. */
+.calbar{height:5px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:1.1rem}
+.calbar i{display:block;height:100%;width:0;background:var(--accent);
+  border-radius:3px;transition:width .45s ease}
+.calbar.indet i{width:38%;animation:calslide 1.3s ease-in-out infinite}
+@keyframes calslide{0%{margin-left:-38%}100%{margin-left:100%}}
+@media(prefers-reduced-motion:reduce){.calbar.indet i{animation-duration:3s}}
+#calstep{font-size:.76rem;color:var(--dim);margin-top:.5rem}
+#sov,#setov{position:fixed;inset:0;background:#000a;backdrop-filter:blur(3px);display:none;
+  align-items:flex-start;justify-content:center;z-index:70;padding:1rem}
+#sov.open,#setov.open{display:flex}
+.smodal{background:var(--card);border:1px solid var(--line);border-radius:16px;max-width:900px;
+  width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px #0007;position:relative;padding:.9rem}
+.smodal .srow{display:flex;gap:.5rem;margin:0 2rem .55rem 0}
+#sq{flex:1;font:inherit;font-size:1rem;padding:.6rem .7rem;border:1px solid var(--line);
+  border-radius:10px;background:var(--bg);color:var(--text);min-width:0}
+#sgo{font:inherit;padding:.6rem .9rem;border-radius:10px;border:1px solid var(--line);
+  background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+#sclose,#setclose{position:absolute;top:.45rem;right:.55rem;background:#0001;border:0;border-radius:50%;
+  width:1.9rem;height:1.9rem;font-size:1.2rem;line-height:1;color:var(--text);cursor:pointer}
+#sstat{color:var(--dim);font-size:.78rem;padding:0 0 .55rem}
+.card .nostream{color:var(--bad);font-size:.62rem;font-weight:600}
+#ov{position:fixed;inset:0;background:#000a;backdrop-filter:blur(3px);display:none;
+  align-items:center;justify-content:center;z-index:60;padding:1rem}
+#ov.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:16px;max-width:760px;width:100%;
+  max-height:88vh;overflow:auto;box-shadow:0 20px 60px #0007;position:relative}
+.mhero{position:relative;aspect-ratio:16/7;background:#0004;overflow:hidden}
+.mhero img{width:100%;height:100%;object-fit:cover;display:block;opacity:.85}
+.mhero .fade{position:absolute;inset:0;background:linear-gradient(to top,var(--card),transparent 65%)}
+.mbody{padding:0 1.25rem 1.25rem;margin-top:-2.5rem;position:relative}
+.mtitle{font-size:1.4rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
+.mtag{color:var(--dim);font-style:italic;font-size:.85rem;margin-top:.2rem}
+.mrow{display:flex;flex-wrap:wrap;gap:.4rem;margin:.7rem 0}
+.chip{font-size:.72rem;border:1px solid var(--line);border-radius:999px;padding:.18rem .55rem;color:var(--dim)}
+.mover{font-size:.88rem;line-height:1.55;color:var(--text);margin:.6rem 0 .9rem}
+.mstream{font-size:.8rem;color:var(--bad)}
+.mstream:not(:empty){background:#8881;border-radius:10px;padding:.7rem .8rem;margin-bottom:.9rem}
+.mstream b{font-weight:600}
+.spill{font-size:.75rem;border:1px solid var(--line);border-radius:999px;padding:.25rem .7rem;
+  color:var(--text);background:var(--card);cursor:pointer;font-weight:600}
+.spill.sel{background:var(--accent);color:#fff;border-color:transparent}
+#mepisodes{max-height:14rem;overflow:auto;border:1px solid var(--line);border-radius:10px;margin-bottom:.7rem}
+.eprow{display:flex;align-items:center;gap:.5rem;padding:.5rem .55rem;border-bottom:1px solid var(--line);
+  cursor:pointer;font-size:.82rem}
+.eprow:last-child{border-bottom:none}
+.eprow:hover,.eprow.sel{background:#8881}
+.eprow .en{font-weight:700;color:var(--dim);min-width:1.5rem}
+.eprow .et{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eprow .er{color:var(--dim);font-size:.72rem;white-space:nowrap;flex:none}
+.mauto{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--dim);margin:.1rem 0 .8rem}
+.mauto input{accent-color:var(--accent);margin:0}
+.mact{display:flex;gap:.5rem}
+.mact button{padding:.6rem .9rem;font-size:.85rem}
+#mclose{position:absolute;top:.6rem;right:.6rem;z-index:2;background:#000a;color:#fff;border:none;
+  border-radius:999px;width:2rem;height:2rem;font-size:1rem;line-height:1}
+/* ---- provider settings / setup ---- */
+#setup{padding:.5rem 0 2rem}
+#setup h2{font-size:1.05rem;font-weight:600;margin:0 0 1rem;line-height:1.35}
+#setpanel{max-width:640px}
+#setpanel h2{font-size:1.1rem;margin:0 0 1rem;padding-right:2rem}
+.psec{margin-bottom:1.3rem}
+.psec h3{font-size:.88rem;font-weight:700;margin:0 0 .6rem;color:var(--text)}
+.pf{margin-bottom:.6rem;display:flex;flex-direction:column;gap:.25rem}
+.pf label{font-size:.76rem;font-weight:600;color:var(--dim)}
+.pf input,.pf select{font:inherit;font-size:.85rem;padding:.45rem .6rem;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg);color:var(--text);min-width:0}
+.pf input[type=checkbox]{width:auto;accent-color:var(--accent)}
+.pfhelp{font-size:.7rem;color:var(--dim)}
+.msgline{font-size:.8rem;margin:.4rem 0;min-height:1em}
+.msgline.err{color:var(--bad)}
+.msgline.ok{color:var(--ok)}
+.pcard{border:1px solid var(--line);border-radius:10px;padding:.7rem .8rem;margin-top:.5rem;background:var(--bg)}
+.pitem{border:1px solid var(--line);border-radius:10px;padding:.7rem .8rem;margin-bottom:.6rem;background:var(--card)}
+.prow{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
+.pact{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.55rem}
+.pact button{font-size:.72rem;padding:.35rem .55rem}
+.pdetail:not(:empty){margin-top:.6rem;border-top:1px solid var(--line);padding-top:.6rem}
+.pbadge{font-size:.66rem;font-weight:700;padding:.15rem .55rem;border-radius:999px;
+  border:1px solid var(--line);white-space:nowrap;color:var(--dim)}
+.pbadge.ready{color:var(--ok);border-color:var(--ok)}
+.pbadge.needs_config{color:var(--warn);border-color:var(--warn)}
+.pbadge.test_failed{color:var(--bad);border-color:var(--bad)}
+.secretrow{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.secretrow input{flex:1;min-width:8rem}
+</style></head><body>
+<header><div class="hwrap">
+  <div class="brand">
+    <h1>Cinematica</h1>
+  </div>
+  <div class="kwrap"><button id="kmovie" class="on">Movies</button><button id="ktv">Series</button></div>
+  <div class="controls">
+    <button id="qbtn" title="Search">&#128269;<span class="wide"> Search</span></button>
+    <button id="nbtn" title="Assess the connection">&#9889;</button>
+    <button id="setbtn" title="Provider settings" hidden>&#9881;</button>
+    <div class="gwrap">
+      <button id="sbtn"><span class="wide">Sort: </span><span id="slabel">Top rated</span><span class="wide"> &#9662;</span></button>
+      <div id="smenu"></div>
+    </div>
+    <div class="gwrap gg">
+      <button id="gbtn">Genres <span id="gcount"></span><span class="wide">&#9662;</span></button>
+      <div id="gmenu"></div>
+    </div>
+  </div>
+</div></header>
+<main>
+  <div id="setup" hidden>
+    <h2>Add a catalogue provider and a stream provider to get started.</h2>
+    <div id="setupbody"></div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div id="sentinel" style="height:1px"></div>
+  <div id="loadmore" style="text-align:center;color:var(--dim);font-size:.78rem;padding:1.1rem 0 .5rem">Finding movies&hellip;</div>
+</main>
+<div id="cal"><div class="calbox">
+  <div class="spin"></div>
+  <div id="caltitle">Calibrating internet connection</div>
+  <div class="calbar indet" id="calbar"><i></i></div>
+  <div id="calstep"></div>
+</div></div>
+<div id="sov"><div class="smodal">
+  <button id="sclose" title="Close">&times;</button>
+  <div class="srow">
+    <input id="sq" type="search" placeholder="Search for a movie&hellip;" autocomplete="off" enterkeyhint="search">
+    <button id="sgo">Go</button>
+  </div>
+  <div id="sstat"></div>
+  <div class="grid" id="sgrid"></div>
+</div></div>
+<div id="setov"><div class="smodal" id="setpanel">
+  <button id="setclose" title="Close">&times;</button>
+  <h2>Settings</h2>
+  <div id="setbody"></div>
+</div></div>
+<div id="ov"><div class="modal">
+  <button id="mclose" title="Close">&times;</button>
+  <div class="mhero"><img id="mimg" alt=""><div class="fade"></div></div>
+  <div class="mbody">
+    <div class="mtitle" id="mtitle"></div>
+    <div class="mtag" id="mtag"></div>
+    <div class="mrow" id="mchips"></div>
+    <div class="mover" id="mover"></div>
+    <div class="mrow" id="mseasons" hidden></div>
+    <div id="mepisodes" hidden></div>
+    <label class="mauto" id="mautowrap" hidden><input type="checkbox" id="mautoplay">Autoplay next episode</label>
+    <div class="mstream" id="mstream"></div>
+    <div class="prog" id="mprog"><i></i></div>
+    <div class="mact"><button class="play" id="mplay">Send to TV</button></div>
+  </div></div></div>
+<div class="toasts" id="toasts"></div>
+<div class="bar"><div class="bwrap"><div class="pwrap">
+    <div class="np" id="np"><span class="npdot" id="npdot"></span><span id="nptext">Idle</span></div>
+    <div class="msg" id="msg">Tap a poster to see details.</div>
+    <div class="prog" id="bprog"><i></i></div></div>
+  <button id="reconnect">Reconnect</button>
+  <button id="stop">Stop</button></div></div>
+<script>
+const grid=document.getElementById('grid'), msg=document.getElementById('msg');
+// Provider titles and genre names go through innerHTML below. A '&' or '<' in a
+// title rendered as markup; escaping also means hostile provider data could not
+// execute. (mtitle/mover/mtag already use textContent and need nothing.)
+const ESCS={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>ESCS[c]);
+// Artwork arrives as complete http(s) URLs. contract.py's _url() guarantees it
+// -- a provider returns whole URLs, and a bare "/abc.jpg" is dropped rather than
+// pasted onto a base core guessed. This page used to prepend one metadata
+// service's image CDN, which was right only while the server emitted that one
+// service's bare path fragments; once any provider could supply artwork it
+// produced "<cdn base><full provider url>" and every poster on the page failed
+// to load. The TV app had the same assumption baked in and lost it; this is the
+// same removal, here. Escaped because the value is provider-supplied and lands
+// in an attribute.
+let movies=[];
+
+function render(list, append){
+  if(!append) grid.innerHTML='';
+  (list||movies).forEach(m=>{
+    const c=document.createElement('div'); c.className='card';
+    const rate = m.imdb ? `<span class="rate">${m.imdb.rating.toFixed(1)}${m.boost?`<span class="bo"> +${m.boost.toFixed(1)}</span>`:''}</span>` : '';
+    const tv = m.kind==='tv' ? '<span class="badge tvbadge">TV</span>' : '';
+    c.innerHTML=`<div class="poster">${m.poster?`<img loading="lazy" src="${esc(m.poster)}" alt="">`:''}
+        <span class="badge" id="b${m.id}" hidden></span>${tv}${rate}</div>
+      <div class="meta"><div class="t">${esc(m.title)}</div>
+        <div class="y">${esc(m.year||'')}</div>
+        <div class="s" id="s${m.id}"></div>
+        <div class="prog" id="pr${m.id}"><i></i></div></div>`;
+    c.onclick=()=>openModal(m);
+    grid.appendChild(c);
+    paint(m);
+  });
+}
+
+
+let allGenres=[], streamCache={};
+const GKEY='cinematica.genres', SKEY='cinematica.sort', XKEY='cinematica.exclude', KKEY='cinematica.kind';
+const SORTS=[
+  ['top','Top rated','Best IMDb score, all time'],
+  ['balanced','Balanced','Rating plus a recency boost'],
+  ['recent','Recent','Last 5 years, best rated first']];
+let sortMode=(()=>{ try{ return localStorage.getItem(SKEY)||'top'; }catch(e){ return 'top'; } })();
+let kind=(()=>{ try{ return localStorage.getItem(KKEY)||'movie'; }catch(e){ return 'movie'; } })();
+// genre include/exclude selections are kept per kind, so switching tabs doesn't
+// carry a film genre filter over onto series (and back)
+function gkey(){ return kind==='tv' ? GKEY+'.tv' : GKEY; }
+function xkey(){ return kind==='tv' ? XKEY+'.tv' : XKEY; }
+function loadGenreSel(){
+  picked=new Set((()=>{ try{ return JSON.parse(localStorage.getItem(gkey()))||[]; }catch(e){ return []; } })());
+  // Recent/Balanced surface a lot of animation because recent animated films rate
+  // very highly. Including a genre was possible; excluding one was not.
+  banned=new Set((()=>{ try{ return JSON.parse(localStorage.getItem(xkey()))||[]; }catch(e){ return []; } })());
+}
+let picked=new Set(), banned=new Set();
+loadGenreSel();
+let offset=0, loading=false, exhausted=false;
+const ROWS_AHEAD=3;   // how many rows to keep buffered beyond what is on screen
+let reconnecting=false;
+
+const gbtn=document.getElementById('gbtn'), gmenu=document.getElementById('gmenu'),
+      gcount=document.getElementById('gcount');
+const sbtn=document.getElementById('sbtn'), smenu=document.getElementById('smenu');
+const kmovie=document.getElementById('kmovie'), ktv=document.getElementById('ktv');
+const npdot=document.getElementById('npdot'), nptext=document.getElementById('nptext');
+
+// The bar carried no state at all, so there was no way to tell what the TV was
+// actually doing. Green = playing, amber = paused, grey = idle.
+async function pollNowPlaying(){
+  try{
+    lastNp = await (await fetch('/api/nowplaying')).json();
+    paintStatus();
+  }catch(e){ lastNp=null; paintStatus(); }
+}
+setInterval(pollNowPlaying, 6000);
+
+/* every film in the list is already known-playable, so paint from its data */
+function paint(m){
+  const d = m.stream ? {pick:m.stream.pick, count:m.stream.count, url:m.stream.url}
+                     : streamCache[m.id];
+  const s=document.getElementById('s'+m.id), b=document.getElementById('b'+m.id);
+  if(!d || !d.pick){ if(s){ s.className='s bad'; s.textContent='no stream'; } return; }
+  streamCache[m.id]=d;
+  const p=d.pick;
+  // No size: the picker already chose the best available release, so the figure
+  // was plumbing from a decision you never make. Bitrate is the one thing it
+  // cannot infer from the tag, so say something only when the pick is a heavy
+  // re-encode that will not look like its badge.
+  if(s){
+    s.className = p.thin ? 's thin' : 's ok';
+    s.textContent = p.thin ? 'low bitrate' : '';
+  }
+  if(b){ b.hidden=false; b.textContent=p.is4k?'4K':(p.tag||'HD'); if(p.is4k) b.classList.add('k4'); }
+}
+
+function renderGenres(){
+  // three states per genre: off, then included [tick], then excluded [cross]
+  gmenu.innerHTML = allGenres.map(g=>{
+    const id=String(g.id);
+    const st = picked.has(id) ? 'inc' : (banned.has(id) ? 'exc' : 'off');
+    const mark = st==='inc' ? '✓' : (st==='exc' ? '✕' : '');
+    return `<button class="gopt ${st}" data-g="${id}"><span class="gmark">${mark}</span>${esc(g.name)}</button>`;
+  }).join('') +
+  `<div class="gfoot"><button id="gclear">Clear</button><button id="gapply" class="play">Apply</button></div>`;
+  gmenu.querySelector('#gclear').onclick=()=>{ picked.clear(); banned.clear(); saveGenres(); renderGenres(); applyGenres(); };
+  gmenu.querySelector('#gapply').onclick=()=>{ gmenu.classList.remove('open'); applyGenres(); };
+  gmenu.querySelectorAll('.gopt').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const id=b.dataset.g;
+    if(picked.has(id)){ picked.delete(id); banned.add(id); }
+    else if(banned.has(id)){ banned.delete(id); }
+    else { picked.add(id); }
+    saveGenres(); renderGenres();
+  });
+  const n = picked.size + banned.size;
+  gcount.textContent = n ? `(${n})` : '';
+}
+
+let loadGen=0;                     // bumped whenever the view changes
+let pending=[];                    // fetched but not yet placed on the grid
+
+// Fetched a row at a time, a few rows ahead of the scroll, so the list grows
+// continuously instead of arriving in blocks. A row is whatever the grid is
+// currently showing per line: 3 on a phone, 5 or 7 on wider screens.
+function cols(){
+  const t=getComputedStyle(grid).gridTemplateColumns;
+  return Math.max(1, t.split(' ').filter(Boolean).length);
+}
+
+async function fetchRow(){
+  if(loading || exhausted) return;
+  loading=true;
+  const gen=loadGen;
+  // The first request on a cold view resolves real torrents and can take ~30s.
+  // Say so: the old loader set this and the rewrite dropped it, which left the
+  // page blank and silent on first load.
+  const lm0=document.getElementById('loadmore');
+  if(!movies.length && !pending.length){
+    lm0.textContent=(kind==='tv'?'Finding series':'Finding movies')+'\u2026 (checking what is actually streamable)';
+  }
+  const q = new URLSearchParams({offset:String(offset), limit:String(cols()), sort:sortMode});
+  if(kind==='tv') q.set('kind','tv');
+  if(picked.size) q.set('genres',[...picked].join(','));
+  if(banned.size) q.set('exclude',[...banned].join(','));
+  try{
+    const d = await (await fetch('/api/movies?'+q)).json();
+    // A sort/genre change while this was in flight means this response describes
+    // the view we just left: rendering it painted the old films into the fresh
+    // grid and advanced offset past the new view's real first page.
+    if(gen!==loadGen) return;
+    const got = d.movies||[];
+    pending.push(...got);
+    offset += got.length;
+    exhausted = !d.more || got.length===0;
+  }catch(e){
+    if(gen===loadGen) document.getElementById('loadmore').textContent='Failed to load more.';
+  }
+  finally{ if(gen===loadGen) loading=false; }   // a stale page must not clear
+}                                               // the live request's flag
+
+function drip(){
+  const c=cols();
+  // Hold back a short row unless the list is genuinely finished. Requests ask
+  // for exactly one row, but the server can return fewer, and the column count
+  // changes on resize -- either would otherwise leave a ragged gap mid-list.
+  if(pending.length < c && !exhausted) return false;
+  const n=Math.min(c, pending.length);
+  if(!n) return false;
+  const row=pending.splice(0,n);
+  const first = movies.length===0;
+  movies = movies.concat(row);
+  render(row, !first);
+  const sn=(SORTS.find(x=>x[0]===sortMode)||[])[1]||'Top rated';
+  msg.textContent = `${sn} · ${movies.length} ${kind==='tv'?'series':'movies'}`;
+  return true;
+}
+
+function pump(){
+  const sentinel=document.getElementById('sentinel');
+  const lm=document.getElementById('loadmore');
+  let guard=0;
+  // keep roughly a screen and a half of grid below the fold
+  while(pending.length && guard++ < 80){
+    if(sentinel.getBoundingClientRect().top > innerHeight*1.6) break;
+    if(!drip()) break;          // holding back a partial row: stop spinning
+  }
+  // top the buffer up long before it runs dry, then place whatever arrived
+  if(!exhausted && !loading && pending.length < cols()*ROWS_AHEAD)
+    fetchRow().then(()=>{ if(pending.length) pump(); });
+  lm.textContent = (exhausted && !pending.length)
+    ? (movies.length ? `End of the list · ${movies.length} ${kind==='tv'?'series':'movies'}`
+                     : 'Nothing playable found — try a different sort or fewer genres.')
+    : (movies.length ? '' : (kind==='tv'?'Finding series…':'Finding movies…'));
+}
+
+let pumpQueued=false;
+addEventListener('scroll', ()=>{
+  if(pumpQueued) return;
+  pumpQueued=true;
+  requestAnimationFrame(()=>{ pumpQueued=false; pump(); });
+}, {passive:true});
+addEventListener('resize', pump, {passive:true});
+
+function renderSorts(){
+  smenu.innerHTML=SORTS.map(([k,n,d])=>
+    `<button data-k="${k}" class="${k===sortMode?'sel':''}">${n}<span class="d">${d}</span></button>`).join('');
+  smenu.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    sortMode=b.dataset.k;
+    try{ localStorage.setItem(SKEY,sortMode); }catch(e){}
+    document.getElementById('slabel').textContent=(SORTS.find(x=>x[0]===sortMode)||[])[1]||'Top rated';
+    smenu.classList.remove('open'); renderSorts(); applyGenres();
+  });
+  document.getElementById('slabel').textContent=(SORTS.find(x=>x[0]===sortMode)||[])[1]||'Top rated';
+}
+sbtn.onclick=e=>{ e.stopPropagation(); smenu.classList.toggle('open'); };
+document.addEventListener('click', e=>{ if(!smenu.contains(e.target)&&e.target!==sbtn) smenu.classList.remove('open'); });
+
+function saveGenres(){
+  try{ localStorage.setItem(gkey(), JSON.stringify([...picked]));
+       localStorage.setItem(xkey(), JSON.stringify([...banned])); }catch(e){}
+}
+gbtn.onclick=e=>{ e.stopPropagation(); gmenu.classList.toggle('open'); };
+document.addEventListener('click', e=>{ if(!gmenu.contains(e.target)) gmenu.classList.remove('open'); });
+
+async function applyGenres(){
+  loadGen++;        // anything in flight belongs to the old view
+  loading=false;    // ...and must not block this one from starting
+  const names = allGenres.filter(g=>picked.has(String(g.id))).map(g=>g.name);
+  const nots  = allGenres.filter(g=>banned.has(String(g.id))).map(g=>g.name);
+  msg.textContent = 'Loading…';
+  grid.innerHTML=''; movies=[]; pending=[]; offset=0; exhausted=false; streamCache={};
+  document.getElementById('loadmore').textContent = kind==='tv' ? 'Finding series…' : 'Finding movies…';
+  await fetchRow(); pump();
+}
+
+function withTimeout(ms){ return (typeof AbortSignal!=='undefined' && AbortSignal.timeout)
+  ? {signal: AbortSignal.timeout(ms)} : {}; }
+function loadGenres(){
+  const q = kind==='tv' ? '?kind=tv' : '';
+  fetch('/api/genres'+q, withTimeout(20000))
+    .then(r=>r.json())
+    .then(d=>{ allGenres=d.genres||[]; renderGenres(); })
+    .catch(()=>{ /* menu stays empty; the grid does not depend on it */ });
+}
+
+/* ---------- Movies / Series toggle ---------- */
+function syncKindUI(){
+  kmovie.classList.toggle('on', kind==='movie');
+  ktv.classList.toggle('on', kind==='tv');
+}
+function setKind(k){
+  if(k===kind) return;
+  kind=k;
+  try{ localStorage.setItem(KKEY,kind); }catch(e){}
+  syncKindUI();
+  loadGenreSel();
+  allGenres=[]; renderGenres();
+  loadGen++; loading=false;
+  grid.innerHTML=''; movies=[]; pending=[]; offset=0; exhausted=false; streamCache={};
+  document.getElementById('loadmore').textContent = kind==='tv' ? 'Finding series…' : 'Finding movies…';
+  loadGenres();
+  fetchRow().then(pump);
+}
+kmovie.onclick=()=>setKind('movie');
+ktv.onclick=()=>setKind('tv');
+syncKindUI();
+if(kind==='tv') document.getElementById('loadmore').textContent='Finding series…';
+
+/* ---------- link assessment ---------- */
+const nbtn=document.getElementById('nbtn');
+const calOv=document.getElementById('cal'), calBar=document.getElementById('calbar'),
+      calFill=calBar.firstElementChild, calStep=document.getElementById('calstep');
+function showCal(on, d){
+  const was=calOv.classList.contains('open');
+  calOv.classList.toggle('open', !!on);
+  if(on && d){
+    if(d.calibrating && d.cal_want){
+      calBar.classList.remove('indet');
+      calFill.style.width = Math.round((d.cal_done/d.cal_want)*100)+'%';
+      calStep.textContent = d.cal_done+' of '+d.cal_want+' streams measured';
+    } else {
+      calBar.classList.add('indet');     // speed probe: no countable steps
+      calFill.style.width='';
+      calStep.textContent = 'Testing connection speed';
+    }
+  }
+  // Calibration finishing over an empty grid would otherwise sit there: nothing
+  // else re-triggers a load once the page's initial fetch is done with.
+  if(was && !on && !movies.length && !loading){
+    document.getElementById('loadmore').textContent=(kind==='tv'?'Finding series':'Finding movies')+'\u2026';
+    fetchRow().then(pump);
+  }
+}
+async function refreshNet(){
+  try{
+    const d=await (await fetch('/api/netcheck')).json();
+    if(d.calibrating || d.busy){
+      // A first run measures real swarms before sizing anything, which takes
+      // minutes. Say what it is doing and how far along, rather than leaving
+      // the page looking merely slow.
+      const prog = d.calibrating && d.cal_want
+        ? ' '+d.cal_done+'/'+d.cal_want : '';
+      showCal(true, d);
+      nbtn.dataset.was='1';
+      nbtn.textContent='\u26a1 Optimising\u2026'+prog;
+      nbtn.title=(d.cal_msg||'Testing internet quality\u2026')
+        +'\nMeasuring real download speeds so the first movie is sized correctly.';
+      if(d.calibrating)
+        msg.textContent='Optimising your connection \u2014 '
+          +(d.cal_msg||'measuring\u2026')+' (one time only)';
+      else if(d.first_run) msg.textContent='Testing internet quality\u2026';
+      setTimeout(refreshNet, 2000);
+      return;
+    }
+    showCal(false);
+    if(nbtn.dataset.was && !d.calibrating && !d.busy){
+      delete nbtn.dataset.was;
+      notify('Link '+(d.http_mbps ?? '?')+' Mbps \u00b7 budget '+(d.mbps ?? '?')
+             +' Mbps ('+(d.source||'?')+') \u00b7 '+(d.conns ?? '?')+' connections');
+    }
+    nbtn.textContent='\u26a1 '+(d.sustain_live ?? '?')+' Mbps';
+    nbtn.title='Stream budget '+(d.mbps ?? '?')+' Mbps ('+(d.source||'default')+')'
+      +' \u00b7 '+(d.conns ?? '?')+' peer connections'
+      +(d.http_mbps?' \u00b7 link tested at '+d.http_mbps+' Mbps':'')
+      +(d.n_ordinary?' \u00b7 '+d.n_ordinary+' ordinary swarms measured':'')
+      +(d.needs?' \u00b7 '+d.needs+' more needed before it stops estimating':'')
+      +(d.age_h!=null?' \u00b7 '+d.age_h+'h ago':'')
+      +'\nTap to re-test (needs the link to itself, so stop playback first).';
+  }catch(e){
+    // A failed poll must never end the chain. The overlay is only dismissed by
+    // a successful read, so giving up here left the spinner on screen for good
+    // -- and a poll failing is likeliest exactly when it matters, because
+    // calibration saturates the very link it is polled over.
+    if(calOv.classList.contains('open')) setTimeout(refreshNet, 2000);
+  }
+}
+nbtn.onclick=async()=>{
+  const old=nbtn.textContent;
+  nbtn.disabled=true; nbtn.textContent='Testing\u2026';
+  try{
+    const d=await (await fetch('/api/netcheck',{method:'POST'})).json();
+    if(!d.ok){ notify(d.msg||'Link test failed', true); nbtn.textContent=old; }
+    else{
+      // it runs in the background and can take minutes; refreshNet() polls and
+      // shows the progress, then reports the result when it lands
+      notify('Optimising your connection\u2026 measuring real download speeds.');
+      refreshNet();
+    }
+  }catch(e){ notify('Link test failed: '+e, true); nbtn.textContent=old; }
+  nbtn.disabled=false;
+};
+
+/* ---------- search ---------- */
+const sov=document.getElementById('sov'), sq=document.getElementById('sq'),
+      sgrid=document.getElementById('sgrid'), sstat=document.getElementById('sstat');
+
+// Built inline rather than through render(): those cards key their badge and
+// stream text off element ids, which would collide with the same film already
+// sitting on the grid behind this overlay.
+function searchCard(m){
+  const c=document.createElement('div'); c.className='card';
+  const p=m.stream&&m.stream.pick;
+  const rate=m.imdb?`<span class="rate">${m.imdb.rating.toFixed(1)}</span>`:'';   // imdb can be null
+  const badge=p?`<span class="badge${p.is4k?' k4':''}">${esc(p.is4k?'4K':(p.tag||'HD'))}</span>`:'';
+  const tv=m.kind==='tv'?'<span class="badge tvbadge">TV</span>':'';
+  c.innerHTML=`<div class="poster">${m.poster?`<img loading="lazy" src="${esc(m.poster)}" alt="">`:''}${badge}${tv}${rate}</div>
+    <div class="meta"><div class="t">${esc(m.title)}</div>
+      <div class="y">${esc(m.year||'')}</div>
+      <div class="s${p&&p.thin?' thin':''}">${p&&p.thin?'low bitrate':''}</div></div>`;
+  c.onclick=()=>{
+    if(m.stream) streamCache[m.id]=m.stream;   // so Send to TV is live immediately
+    closeSearch(); openModal(m);
+  };
+  return c;
+}
+function openSearch(){
+  sov.classList.add('open'); sq.value=''; sgrid.innerHTML='';
+  sq.placeholder = kind==='tv' ? 'Search for a series\u2026' : 'Search for a movie\u2026';
+  sstat.textContent='Search a title, a franchise (\u201cjames bond\u201d), or a person.';
+  setTimeout(()=>sq.focus(),50);
+}
+function closeSearch(){ stopSearch(); sov.classList.remove('open'); }
+let searchGen=0, es=null;
+function stopSearch(){ if(es){ es.close(); es=null; } }
+function doSearch(){
+  const q=sq.value.trim(); if(!q) return;
+  const gen=++searchGen;
+  stopSearch();
+  sgrid.innerHTML=''; sstat.textContent='Searching\u2026';
+  let shown=0, found=0, finished=false;
+  // Results are streamed in as each one resolves: a cold franchise search
+  // checks ~60 candidates through the stream provider and takes ~25s, but the first
+  // playable film lands in about one.
+  es=new EventSource('/api/search/stream?q='+encodeURIComponent(q)+'&limit=30'+(kind==='tv'?'&kind=tv':''));
+  const stale=()=>gen!==searchGen;
+  es.addEventListener('found',e=>{
+    if(stale()) return;
+    found=JSON.parse(e.data).found;
+    sstat.textContent='Checking '+found+' candidate'+(found===1?'':'s')+'\u2026';
+  });
+  es.addEventListener('movie',e=>{
+    if(stale()) return;
+    sgrid.appendChild(searchCard(JSON.parse(e.data)));
+    shown++;
+    sstat.textContent=shown+' found so far\u2026';
+  });
+  es.addEventListener('done',e=>{
+    if(stale()) return;
+    const d=JSON.parse(e.data);
+    finished=true; stopSearch();
+    sstat.textContent = shown
+      ? shown+' playable result'+(shown===1?'':'s')
+        +(d.checked>shown?' \u00b7 checked '+d.checked+' of '+d.found:'')
+      : (d.found
+          ? 'Found '+d.found+' title'+(d.found===1?'':'s')+' for \u201c'+q+'\u201d, but none have a playable stream.'
+          : 'Nothing found for \u201c'+q+'\u201d.');
+  });
+  es.addEventListener('fail',e=>{
+    if(stale()) return;
+    finished=true; stopSearch(); sstat.textContent='Search failed.';
+  });
+  // EventSource retries automatically, which would silently re-run the whole
+  // search; close it instead. A normal end-of-stream also lands here, after
+  // 'done' has set finished.
+  es.onerror=()=>{
+    if(stale()||finished) { stopSearch(); return; }
+    stopSearch();
+    if(!shown) sstat.textContent='Search failed.';
+  };
+}
+document.getElementById('qbtn').onclick=openSearch;
+document.getElementById('sclose').onclick=closeSearch;
+document.getElementById('sgo').onclick=doSearch;
+sov.onclick=e=>{ if(e.target===sov) closeSearch(); };
+sq.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); doSearch(); }});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&sov.classList.contains('open')) closeSearch(); });
+
+/* ---------- info modal ---------- */
+const ov=document.getElementById('ov');
+const mseasons=document.getElementById('mseasons'), mepisodes=document.getElementById('mepisodes'),
+      mautowrap=document.getElementById('mautowrap'), mautoplay=document.getElementById('mautoplay');
+let modalMovie=null, modalTv=null, modalSeason=null, modalEp=null;
+const AKEY='cinematica.autoplay';
+mautoplay.checked = (()=>{ try{ const v=localStorage.getItem(AKEY); return v===null ? true : v==='1'; }catch(e){ return true; } })();
+mautoplay.onchange=()=>{ try{ localStorage.setItem(AKEY, mautoplay.checked?'1':'0'); }catch(e){} };
+
+let playGen=0;
+function closeModal(){
+  ov.classList.remove('open');
+  // Closing the popup abandons anything it started: stop polling, clear the
+  // bars, and tell the server to stand the job down rather than leaving it to
+  // buffer on and eventually take over the TV.
+  if(playWatching){
+    playGen++;
+    playWatching=false;
+    setProg(['bprog','mprog'].concat(modalMovie?['pr'+modalMovie.id]:[]), 0, false);
+    msg.textContent='Cancelled.';
+    fetch('/api/cancel',{method:'POST'}).catch(()=>{});
+  }
+}
+let playWatching=false;
+document.getElementById('mclose').onclick=closeModal;
+ov.onclick=e=>{ if(e.target===ov) closeModal(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+
+async function openModal(m){
+  modalMovie=m; modalTv=null; modalSeason=null; modalEp=null;
+  ov.classList.add('open');
+  document.getElementById('mtitle').textContent=m.title;
+  document.getElementById('mtag').textContent='';
+  document.getElementById('mover').textContent=m.overview||'';
+  document.getElementById('mimg').src = m.backdrop || m.poster || '';
+  document.getElementById('mchips').innerHTML =
+    [m.year, m.vote?'★ '+m.vote.toFixed(1)+(m.votes?` (${m.votes})`:''):''].filter(Boolean)
+    .map(t=>`<span class="chip">${esc(t)}</span>`).join('');
+  mseasons.hidden=true; mseasons.innerHTML='';
+  mepisodes.hidden=true; mepisodes.innerHTML='';
+  mautowrap.hidden = m.kind!=='tv';
+  const sd=document.getElementById('mstream');
+  const mp=document.getElementById('mplay');
+
+  if(m.kind==='tv'){
+    sd.innerHTML=''; mp.disabled=true; mp.onclick=null;
+    try{
+      const d=await (await fetch('/api/tv/'+m.id)).json();
+      if(!modalMovie || modalMovie.id!==m.id || modalMovie.kind!==m.kind) return;   // closed / switched mid-fetch
+      modalTv=d;
+      document.getElementById('mtag').textContent=d.tagline||'';
+      if(d.overview) document.getElementById('mover').textContent=d.overview;
+      const fy=d.first_air?d.first_air.slice(0,4):'', ly=d.last_air?d.last_air.slice(0,4):'';
+      const years = fy ? (ly && ly!==fy ? fy+'–'+ly : fy) : '';
+      const chips=[years, d.status, d.runtime?d.runtime+' min':'',
+                   d.vote?'★ '+d.vote.toFixed(1)+(d.votes?` (${d.votes})`:''):'',
+                   ...(d.genres||[])].filter(Boolean);
+      document.getElementById('mchips').innerHTML=chips.map(t=>`<span class="chip">${esc(t)}</span>`).join('');
+      renderSeasons(d.seasons||[]);
+    }catch(e){
+      document.getElementById('mover').textContent = m.overview || 'Could not load series details.';
+    }
+    return;
+  }
+
+  const cached=streamCache[m.id];
+  sd.innerHTML = cached ? streamHtml(cached) : '';
+  mp.disabled = !(cached && cached.pick);
+  mp.onclick=()=>{ play('/api/play/'+m.id, String(m.id), m.title, mp); };
+
+  try{
+    const d=await (await fetch('/api/movie/'+m.id)).json();
+    document.getElementById('mtag').textContent=d.tagline||'';
+    if(d.overview) document.getElementById('mover').textContent=d.overview;
+    const chips=[d.release?d.release.slice(0,4):m.year,
+                 d.runtime?d.runtime+' min':'',
+                 d.vote?'★ '+d.vote.toFixed(1)+(d.votes?` (${d.votes})`:''):'',
+                 ...(d.genres||[])].filter(Boolean);
+    document.getElementById('mchips').innerHTML=chips.map(t=>`<span class="chip">${esc(t)}</span>`).join('');
+  }catch(e){}
+
+  if(!cached){
+    try{
+      const d=await (await fetch('/api/stream/'+m.id)).json();
+      streamCache[m.id]=d;
+      if(modalMovie && modalMovie.id===m.id){
+        sd.innerHTML=streamHtml(d);
+        mp.disabled=!d.pick;
+      }
+    }catch(e){ sd.innerHTML='<b>Could not check this one.</b>'; }
+  }
+}
+
+let seasonGen=0;
+function renderSeasons(seasons){
+  mseasons.innerHTML = seasons.map(s=>
+    `<button class="spill" data-n="${s.n}">${esc(s.name||('Season '+s.n))}${s.episodes?` (${s.episodes})`:''}</button>`
+  ).join('');
+  mseasons.hidden = !seasons.length;
+  mseasons.querySelectorAll('.spill').forEach(b=>b.onclick=()=>selectSeason(Number(b.dataset.n)));
+  if(seasons.length) selectSeason(seasons[0].n);
+}
+
+async function selectSeason(n){
+  if(!modalTv) return;
+  modalSeason=n; modalEp=null;
+  mseasons.querySelectorAll('.spill').forEach(b=>b.classList.toggle('sel', Number(b.dataset.n)===n));
+  const sd=document.getElementById('mstream'), mp=document.getElementById('mplay');
+  sd.innerHTML=''; mp.disabled=true; mp.onclick=null;
+  mepisodes.hidden=false;
+  mepisodes.innerHTML='<div style="padding:.6rem;color:var(--dim);font-size:.8rem">Loading episodes…</div>';
+  const gen=++seasonGen, tvId=modalTv.id;
+  try{
+    const d=await (await fetch('/api/tv/'+tvId+'/season/'+n)).json();
+    if(gen!==seasonGen || !modalTv || modalTv.id!==tvId) return;
+    const eps=d.episodes||[];
+    mepisodes.innerHTML = eps.map(e=>
+      `<div class="eprow" data-s="${e.season}" data-e="${e.episode}">
+         <span class="en">${e.episode}</span>
+         <span class="et">${esc(e.name||('Episode '+e.episode))}</span>
+         <span class="er">${e.runtime?e.runtime+' min':''}</span>
+       </div>`).join('') || '<div style="padding:.6rem;color:var(--dim);font-size:.8rem">No episodes listed.</div>';
+    mepisodes.querySelectorAll('.eprow').forEach(row=>{
+      const e=eps.find(x=>String(x.episode)===row.dataset.e);
+      if(e) row.onclick=()=>selectEpisode(e);
+    });
+  }catch(e){
+    if(gen===seasonGen) mepisodes.innerHTML='<div style="padding:.6rem;color:var(--bad);font-size:.8rem">Could not load episodes.</div>';
+  }
+}
+
+async function selectEpisode(ep){
+  if(!modalTv) return;
+  modalEp=ep;
+  mepisodes.querySelectorAll('.eprow').forEach(row=>
+    row.classList.toggle('sel', Number(row.dataset.s)===ep.season && Number(row.dataset.e)===ep.episode));
+  const sd=document.getElementById('mstream'), mp=document.getElementById('mplay');
+  sd.innerHTML=''; mp.disabled=true; mp.onclick=null;
+  const tvId=modalTv.id;
+  const key='tv:'+tvId+':'+ep.season+':'+ep.episode;
+  try{
+    const d=await (await fetch('/api/stream/tv/'+tvId+'/'+ep.season+'/'+ep.episode)).json();
+    if(!modalTv || modalTv.id!==tvId || modalEp!==ep) return;
+    streamCache[key]=d;
+    sd.innerHTML=streamHtml(d);
+    mp.disabled=!d.pick;
+    mp.onclick=()=>{
+      const autoplay = mautoplay.checked ? '1' : '0';
+      const sN=String(ep.season).padStart(2,'0'), eN=String(ep.episode).padStart(2,'0');
+      const title = modalTv.title+' · S'+sN+'E'+eN+' · '+(ep.name||'');
+      play('/api/play/tv/'+tvId+'/'+ep.season+'/'+ep.episode+'?autoplay='+autoplay, key, title, mp);
+    };
+  }catch(e){ sd.innerHTML='<b>Could not check this one.</b>'; }
+}
+
+function streamHtml(d){
+  // deliberately terse: the stream details are plumbing, not something to read
+  return d.pick ? '' : '<b>No playable stream for this one.</b>';
+}
+
+
+// One status line. The bottom bar shows what the TV is doing when nothing is
+// playing, and what is playing when something is -- rather than a separate
+// "TV connected" up top permanently duplicating half of it.
+let tvState={ok:null, text:'checking\u2026'}, lastNp=null;
+function setStatus(ok,text){ tvState={ok,text}; paintStatus(); }
+// mm:ss, or h:mm:ss once it needs the hour — only the TV app reports a position
+function hms(s){
+  s=Math.max(0,Math.floor(s));
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), x=s%60, p=v=>String(v).padStart(2,'0');
+  return h ? h+':'+p(m)+':'+p(x) : m+':'+p(x);
+}
+function paintStatus(){
+  const n=lastNp;
+  const onFilm = n && n.live && n.title;
+  npdot.classList.remove('on','pause','bad');
+  if(n && n.live){
+    npdot.classList.add(n.paused?'pause':'on');
+    // adb can only say playing/paused; the app knows where it actually is
+    const pos = (n.source==='app' && n.position_s!=null)
+      ? hms(n.position_s)+(n.duration_s ? '/'+hms(n.duration_s) : '') : null;
+    if(onFilm){
+      const bits=[n.title];
+      if(n.tag) bits.push(n.tag);
+      // the size ACTUALLY playing: a too-slow candidate is skipped silently
+      if(n.gb) bits.push(n.gb+'GB');
+      if(n.audio && n.audio!=='?') bits.push(n.audio.toUpperCase()+(n.transcoded?'\u2192AC3':''));
+      if(pos) bits.push(pos);
+      nptext.textContent=bits.join(' \u00b7 ');
+    } else {
+      nptext.textContent = (n.paused ? 'Paused' : 'Playing')   // TV busy, title unknown
+                           + (pos ? ' \u00b7 '+pos : '');
+    }
+    return;
+  }
+  // nothing playing: this line carries the TV connection state instead
+  if(tvState.ok===false) npdot.classList.add('bad');
+  nptext.textContent = tvState.ok===true ? 'Idle \u00b7 '+tvState.text : tvState.text;
+}
+
+/* the bar's status text is deliberately invisible, so anything the user actually
+   needs to notice — errors, "go accept the prompt on the TV" — surfaces as a toast instead */
+let toastTimer=null;
+function notify(text, isError, urgent){
+  const wrap=document.getElementById('toasts');
+  wrap.innerHTML='';                 // one at a time — stacked toasts just become noise on a phone
+  const t=document.createElement('div');
+  t.className='toast'+(isError?' err':'');
+  t.textContent=text;
+  t.onclick=()=>t.remove();          // tappable to dismiss early
+  wrap.appendChild(t);
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.remove(), urgent?10000:5000);   // action-needed messages linger longer
+}
+
+async function reconnect(reason){
+  if(reconnecting) return false;
+  reconnecting=true;
+  setStatus(false,'reconnecting to TV…');
+  if(reason) msg.textContent=reason+' — reconnecting…';
+  try{
+    const d=await (await fetch('/api/reconnect',{method:'POST'})).json();
+    setStatus(d.ok, d.ok?'TV connected':'TV offline — '+d.msg);
+    if(reason) notify(d.ok ? 'TV reconnected.' : 'Could not reach the TV: '+d.msg, !d.ok);
+    return d.ok;
+  }catch(e){ setStatus(false,'TV offline'); return false; }
+  finally{ reconnecting=false; }
+}
+
+let lastTvState=null;   // so the USB-debugging toast doesn't re-fire on every 15s poll
+async function pollHealth(){
+  try{
+    const h=await (await fetch('/api/health')).json();
+    // the tagline element was removed; nothing to update here any more
+    const adbOn = !!(h.adb && h.adb.enabled);
+    if(h.tv && h.app){ setStatus(true,'TV app connected'); }
+    else if(h.tv){ setStatus(true,'TV connected'); }
+    else if(!adbOn){
+      // no app, and no phone remote to fall back on. Nothing to reconnect TO:
+      // the app dials the server, not the other way round.
+      setStatus(false,'no TV app connected');
+    }
+    else if(h.tv_state==='unauthorized'){
+      // do NOT cycle adb here — that just re-issues the prompt
+      setStatus(false,'accept the prompt on the TV');
+      if(lastTvState!=='unauthorized')   // don't re-toast every 15s poll while it's still pending
+        notify('The TV is showing a USB-debugging prompt — accept it (tick “Always allow”).', true, true);
+    } else {
+      setStatus(false,'TV offline — reconnecting…');
+      await reconnect(null);                 // genuinely dropped: bring it back
+    }
+    lastTvState = h.tv ? null : h.tv_state;
+  }catch(e){}
+}
+
+
+/* ---------- playback ---------- */
+function setProg(ids,pct,on){
+  ids.forEach(id=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.classList.toggle('on',!!on);
+    if(el.firstElementChild) el.firstElementChild.style.width=(pct||0)+'%';
+  });
+}
+
+async function play(playPath,jobId,title,btn){
+  btn = btn || document.getElementById('mplay');
+  btn.disabled=true; const old=btn.textContent; btn.textContent='Buffering…';
+  const pg=++playGen; playWatching=true;
+  const bars=['bprog','pr'+jobId,'mprog'];
+  setProg(bars,0,true);
+  msg.textContent='Starting '+title+'…';
+  try{
+    let r=await fetch(playPath,{method:'POST'}), d=await r.json();
+    if(d.job) jobId=d.job;
+    if(!d.ok && /not reachable|adb|device|offline|closed|prompt/i.test(d.msg||'')){
+      if(await reconnect('TV not responding')){
+        btn.textContent='Retrying…';
+        r=await fetch(playPath,{method:'POST'}); d=await r.json();
+        if(d.job) jobId=d.job;
+      }
+    }
+    if(!d.ok){
+      notify('Failed: '+d.msg, true); setProg(bars,0,false);
+      btn.textContent=old; btn.disabled=false; return;
+    }
+    // poll the server's probe/buffer job until the player actually starts.
+    // Bounded by both wall-clock time and consecutive bad polls, so a server restart
+    // partway through — progress then comes back empty — or a flaky network can't spin this forever.
+    const deadline = Date.now() + 5*60*1000;   // 4K buffering is slow; still not infinite
+    let misses = 0;
+    for(;;){
+      if(pg!==playGen) return;                  // popup closed: abandon quietly
+      if(Date.now() > deadline || misses >= 10){
+        notify('Lost track of playback progress — the server may have restarted.', true);
+        setProg(bars,0,false);
+        break;
+      }
+      await new Promise(res=>setTimeout(res,700));
+      let j;
+      try{ j=await (await fetch('/api/progress/'+jobId)).json(); }catch(e){ misses++; continue; }
+      if(!j || !j.stage){ misses++; continue; }   // job unknown to the server — count it as a miss too
+      misses=0;
+      setProg(bars, j.pct||0, true);
+      msg.textContent = j.msg || 'Buffering…';
+      // The audio conversion burst is part of the wait before playback, so it
+      // drives the same bar rather than looking like nothing is happening.
+      btn.textContent = j.stage==='buffering' ? `Buffering ${j.pct||0}%`
+          : j.stage==='encoding'  ? `Converting ${j.pct||0}%`
+          : j.stage==='launching' ? 'Starting…'
+          : btn.textContent;
+      if(j.stage==='playing'){
+        playWatching=false;              // finished, not cancelled
+        msg.textContent=`▶ ${title}`;
+        setStatus(true,'TV connected');
+        setProg(bars,100,true); setTimeout(()=>setProg(bars,0,false),1500);
+        closeModal();
+        break;
+      }
+      if(j.stage==='error'){
+        playWatching=false;
+        notify('Failed: '+(j.msg||'unknown'), true); setProg(bars,0,false); break;
+      }
+    }
+  }catch(e){ notify('Failed: '+e, true); setProg(bars,0,false); }
+  playWatching=false;
+  btn.textContent=old; btn.disabled=false;
+}
+
+/* ---------- provider settings / setup ---------- */
+// apiSession holds the CSRF token in memory only (never localStorage) --
+// the admin cookie itself is HttpOnly and travels with same-origin fetches
+// on its own. setupConfigured drives whether the grid or the setup view
+// is what main shows; apiClaimed drives claim-form vs login-form.
+let apiSession=null, apiClaimed=null, setupConfigured=null, settingsRoot=null;
+const ROLES=['catalogue','metadata','streams'];
+const ROLE_LABEL={catalogue:'Catalogue',metadata:'Metadata',streams:'Streams'};
+const STATUS_LABEL={ready:'Ready',needs_config:'Needs configuration',disabled:'Disabled',test_failed:'Test failed'};
+const CSRF_HEADER='X-Cinematica-CSRF';
+
+async function adminFetch(path,opts){
+  opts=opts||{};
+  opts.headers=Object.assign({},opts.headers);
+  if((opts.method||'GET').toUpperCase()!=='GET' && apiSession) opts.headers[CSRF_HEADER]=apiSession;
+  const r=await fetch(path,opts);
+  if(r.status===401){ const e=new Error('admin required'); e.authFail=true; throw e; }
+  return r;
+}
+async function adminJSON(path,opts){
+  const r=await adminFetch(path,opts);
+  let d={}; try{ d=await r.json(); }catch(e){}
+  return {r,d};
+}
+
+function mountSettings(root){ settingsRoot=root; paintSettings(); }
+
+async function paintSettings(){
+  const root=settingsRoot; if(!root) return;
+  if(apiSession){
+    try{
+      const {d}=await adminJSON('/api/providers');
+      renderProviderDash(root,d);
+    }catch(e){
+      if(e.authFail){ apiSession=null; return paintSettings(); }
+      root.innerHTML='<p class="msgline err">Could not load providers: '+esc(String(e.message||e))+'</p>';
+    }
+    return;
+  }
+  if(apiClaimed===null){
+    try{ const d=await (await fetch('/api/setup/state')).json(); apiClaimed=!!d.claimed; }
+    catch(e){ apiClaimed=false; }
+  }
+  if(!apiClaimed) renderClaimForm(root); else renderLoginForm(root);
+}
+
+async function refreshProviders(){
+  if(!settingsRoot) return;
+  try{
+    const {d}=await adminJSON('/api/providers');
+    renderProviderDash(settingsRoot,d);
+  }catch(e){
+    if(e.authFail){ apiSession=null; return paintSettings(); }
+  }
+  checkSetupGate();
+}
+
+function renderClaimForm(root){
+  root.innerHTML=
+    '<p style="color:var(--dim);font-size:.85rem">Enter the bootstrap token printed in the server log, and choose an admin password.</p>'
+    +'<div class="pf"><label>Bootstrap token</label><input id="claimtok" type="text" autocomplete="off"></div>'
+    +'<div class="pf"><label>New password (8+ characters)</label><input id="claimpw" type="password" autocomplete="new-password"></div>'
+    +'<div class="msgline" id="claimmsg"></div>'
+    +'<button id="claimgo" class="play">Claim admin access</button>';
+  const m=root.querySelector('#claimmsg');
+  root.querySelector('#claimgo').onclick=async()=>{
+    const tok=root.querySelector('#claimtok').value.trim();
+    const pw=root.querySelector('#claimpw').value;
+    m.textContent=''; m.className='msgline';
+    if(!tok || pw.length<8){ m.textContent='Token and an 8+ character password are required.'; m.className='msgline err'; return; }
+    try{
+      const r=await fetch('/api/setup/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok,password:pw})});
+      const d=await r.json();
+      if(!d.ok){ m.textContent=d.err||'Could not claim.'; m.className='msgline err'; return; }
+      apiClaimed=true;
+      const lr=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+      const ld=await lr.json();
+      if(ld.ok){ apiSession=ld.csrf; paintSettings(); } else { renderLoginForm(root); }
+    }catch(e){ m.textContent='Request failed: '+e; m.className='msgline err'; }
+  };
+}
+
+function renderLoginForm(root){
+  root.innerHTML=
+    '<div class="pf"><label>Admin password</label><input id="loginpw" type="password" autocomplete="current-password"></div>'
+    +'<div class="msgline" id="loginmsg"></div>'
+    +'<button id="logingo" class="play">Log in</button>';
+  const m=root.querySelector('#loginmsg');
+  const go=async()=>{
+    const pw=root.querySelector('#loginpw').value;
+    m.textContent=''; m.className='msgline';
+    try{
+      const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+      const d=await r.json();
+      if(!d.ok){ m.textContent=d.err||'Incorrect password.'; m.className='msgline err'; return; }
+      apiSession=d.csrf; paintSettings();
+    }catch(e){ m.textContent='Request failed: '+e; m.className='msgline err'; }
+  };
+  root.querySelector('#logingo').onclick=go;
+  root.querySelector('#loginpw').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); }});
+}
+
+function fieldInputHtml(f,curVal){
+  const req=f.required?' <span style="color:var(--bad)">*</span>':'';
+  const help=f.help?'<div class="pfhelp">'+esc(f.help)+'</div>':'';
+  if(f.type==='bool'){
+    const checked=curVal===true?' checked':'';
+    return '<div class="pf"><label style="display:flex;align-items:center;gap:.4rem;flex-direction:row">'
+      +'<input type="checkbox" data-field="'+esc(f.key)+'"'+checked+'> '+esc(f.label)+req+'</label>'+help+'</div>';
+  }
+  if(f.type==='choice'){
+    const chosen=curVal!=null?String(curVal):(f.default!=null?String(f.default):'');
+    const opts=(f.choices||[]).map(c=>'<option value="'+esc(c.value)+'"'+(c.value===chosen?' selected':'')+'>'+esc(c.label)+'</option>').join('');
+    return '<div class="pf"><label>'+esc(f.label)+req+'</label><select data-field="'+esc(f.key)+'">'+opts+'</select>'+help+'</div>';
+  }
+  if(f.type==='secret'){
+    if(curVal && curVal.set){
+      return '<div class="pf"><label>'+esc(f.label)+req+'</label>'
+        +'<div class="secretrow" data-field="'+esc(f.key)+'">'
+        +'<span style="color:var(--dim);font-size:.82rem">Set ('+esc(curVal.hint)+')</span>'
+        +'<button type="button" data-secret-act="replace">Replace</button>'
+        +'<button type="button" data-secret-act="clear">Clear</button>'
+        +'<input type="password" hidden autocomplete="new-password"></div>'+help+'</div>';
+    }
+    return '<div class="pf"><label>'+esc(f.label)+req+'</label>'
+      +'<input type="password" data-field="'+esc(f.key)+'" autocomplete="new-password" placeholder="'+esc(f.placeholder)+'">'+help+'</div>';
+  }
+  const itype=f.type==='number'?'number':(f.type==='url'?'url':'text');
+  const extra=f.type==='number'?((f.min!=null?' min="'+esc(f.min)+'"':'')+(f.max!=null?' max="'+esc(f.max)+'"':'')):'';
+  const val=curVal==null?(f.default==null?'':f.default):curVal;
+  return '<div class="pf"><label>'+esc(f.label)+req+'</label>'
+    +'<input type="'+itype+'" data-field="'+esc(f.key)+'" value="'+esc(val)+'" placeholder="'+esc(f.placeholder)+'"'+extra+'>'+help+'</div>';
+}
+
+function renderConfigureForm(detail,prov){
+  const fields=prov.config_fields||[], cfg=prov.config||{};
+  detail.innerHTML=(fields.length?fields.map(f=>fieldInputHtml(f,cfg[f.key])).join(''):'<p style="color:var(--dim);font-size:.82rem">This provider has no configuration.</p>')
+    +'<div class="msgline"></div>'
+    +(fields.length?'<button data-act="cfgsave" class="play">Save configuration</button>':'');
+  detail.querySelectorAll('.secretrow').forEach(row=>{
+    const inp=row.querySelector('input'), span=row.querySelector('span');
+    row.querySelector('[data-secret-act=replace]').onclick=()=>{ delete row.dataset.cleared; inp.hidden=false; inp.focus(); span.textContent='Set ('+span.textContent.replace(/^Set \(|Will be cleared on save\.$/,'').replace(/\)$/,'')+')'; };
+    row.querySelector('[data-secret-act=clear]').onclick=()=>{ row.dataset.cleared='1'; inp.hidden=true; inp.value=''; span.textContent='Will be cleared on save.'; };
+  });
+  const saveBtn=detail.querySelector('[data-act=cfgsave]');
+  if(!saveBtn) return;
+  saveBtn.onclick=async()=>{
+    const values={}, clear=[];
+    fields.forEach(f=>{
+      if(f.type==='secret'){
+        const row=detail.querySelector('.secretrow[data-field="'+f.key+'"]');
+        if(row){ if(row.dataset.cleared==='1') clear.push(f.key); else { const inp=row.querySelector('input'); if(!inp.hidden && inp.value) values[f.key]=inp.value; } return; }
+        const inp=detail.querySelector('input[data-field="'+f.key+'"]');
+        if(inp && inp.value) values[f.key]=inp.value;
+        return;
+      }
+      if(f.type==='bool'){ values[f.key]=detail.querySelector('input[data-field="'+f.key+'"]').checked; return; }
+      const el=detail.querySelector('[data-field="'+f.key+'"]');
+      if(!el) return;
+      values[f.key]=f.type==='number'?(el.value===''?null:Number(el.value)):el.value;
+    });
+    const m=detail.querySelector('.msgline');
+    m.textContent=''; m.className='msgline';
+    try{
+      const {r,d}=await adminJSON('/api/providers/'+encodeURIComponent(prov.id)+'/config',
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({values,clear})});
+      if(!r.ok){ m.textContent=d.err||'Could not save.'; m.className='msgline err'; return; }
+      m.textContent='Saved.'; m.className='msgline ok';
+      await refreshProviders();
+    }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } m.textContent='Request failed: '+e; m.className='msgline err'; }
+  };
+}
+
+function renderUpdateForm(detail,prov){
+  const uid='upd-'+prov.id;
+  detail.innerHTML=
+    '<div class="pf"><label>New manifest URL</label><input type="url" id="'+uid+'-url"></div>'
+    +'<button data-act="updgo">Update from URL</button>'
+    +'<div class="pf" style="margin-top:.6rem"><label>Or upload a new package (.tar.gz)</label>'
+    +'<input type="file" id="'+uid+'-file" accept=".tar.gz,.gz,.tgz"></div>'
+    +'<div class="msgline"></div>';
+  const m=detail.querySelector('.msgline');
+  const doUpdate=async(opts)=>{
+    try{
+      const {r,d}=await adminJSON('/api/providers/'+encodeURIComponent(prov.id)+'/update',opts);
+      if(!r.ok){ m.textContent=d.message||d.err||'Update failed.'; m.className='msgline err'; return; }
+      m.textContent='Updated to v'+esc(d.version)+'.'; m.className='msgline ok';
+      await refreshProviders();
+    }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } m.textContent='Request failed: '+e; m.className='msgline err'; }
+  };
+  detail.querySelector('[data-act=updgo]').onclick=()=>{
+    const url=detail.querySelector('#'+uid+'-url').value.trim();
+    m.textContent=''; m.className='msgline';
+    if(!url){ m.textContent='Enter a manifest URL.'; m.className='msgline err'; return; }
+    doUpdate({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  };
+  detail.querySelector('#'+uid+'-file').onchange=async(ev)=>{
+    const f=ev.target.files[0]; if(!f) return;
+    m.textContent='Uploading…'; m.className='msgline';
+    const buf=await f.arrayBuffer();
+    doUpdate({method:'POST',headers:{'Content-Type':'application/gzip'},body:buf});
+  };
+}
+
+function renderProviderDash(root,data){
+  const provs=data.providers||[], active=data.active||{};
+  root.innerHTML=
+    '<div class="psec"><h3>Add a provider</h3>'
+    +'<div class="pf"><label>Add-on manifest URL</label><input id="addurl" type="url" placeholder="https://…/manifest.json"></div>'
+    +'<button id="addpreview">Preview</button>'
+    +'<div id="addpreviewbox"></div>'
+    +'<div class="pf" style="margin-top:.7rem"><label>Or upload a package (.tar.gz)</label>'
+    +'<input id="addfile" type="file" accept=".tar.gz,.gz,.tgz"></div>'
+    +'<div class="msgline" id="addmsg"></div></div>'
+    +'<div class="psec"><h3>Active provider per role</h3><div id="activerow"></div>'
+    +'<div class="msgline" id="activemsg"></div></div>'
+    +'<div class="psec"><h3>Installed providers</h3><div id="provlist">'
+    +(provs.length?'':'<p style="color:var(--dim)">No providers installed yet.</p>')+'</div></div>'
+    +'<button id="setlogout">Log out</button>';
+
+  const activerow=root.querySelector('#activerow');
+  activerow.innerHTML=ROLES.map(role=>{
+    const opts=provs.filter(p=>(p.capabilities||[]).includes(role));
+    const cur=active[role]||'';
+    return '<div class="pf"><label>'+ROLE_LABEL[role]+'</label><select data-role="'+role+'">'
+      +'<option value=""'+(cur?'':' selected')+'>None</option>'
+      +opts.map(p=>'<option value="'+esc(p.id)+'"'+(p.id===cur?' selected':'')+'>'+esc(p.name)+'</option>').join('')
+      +'</select></div>';
+  }).join('')+'<button id="activesave" class="play">Save</button>';
+  activerow.querySelector('#activesave').onclick=async()=>{
+    const m=root.querySelector('#activemsg'); m.textContent=''; m.className='msgline';
+    try{
+      for(const s of activerow.querySelectorAll('select')){
+        const role=s.dataset.role, pid=s.value||null;
+        if((active[role]||null)===pid) continue;
+        const {r,d}=await adminJSON('/api/providers/active',
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,provider_id:pid})});
+        if(!r.ok){ m.textContent=d.err||'Could not save.'; m.className='msgline err'; return; }
+      }
+      m.textContent='Saved.'; m.className='msgline ok';
+      await refreshProviders();
+    }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } m.textContent='Request failed: '+e; m.className='msgline err'; }
+  };
+
+  const addurl=root.querySelector('#addurl'), addpreview=root.querySelector('#addpreview'),
+        addbox=root.querySelector('#addpreviewbox'), addmsg=root.querySelector('#addmsg'),
+        addfile=root.querySelector('#addfile');
+  addpreview.onclick=async()=>{
+    const url=addurl.value.trim();
+    addmsg.textContent=''; addmsg.className='msgline'; addbox.innerHTML='';
+    if(!url){ addmsg.textContent='Enter a manifest URL.'; addmsg.className='msgline err'; return; }
+    addpreview.disabled=true; const old=addpreview.textContent; addpreview.textContent='Checking…';
+    try{
+      const {r,d}=await adminJSON('/api/providers/preview',
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+      if(!r.ok){ addmsg.textContent=d.message||d.err||'Could not read that manifest.'; addmsg.className='msgline err'; return; }
+      addbox.innerHTML='<div class="pcard"><div><b>'+esc(d.name)+'</b> <span style="color:var(--dim)">v'+esc(d.version)+'</span></div>'
+        +'<div class="mrow">'+(d.capabilities||[]).map(c=>'<span class="chip">'+esc(ROLE_LABEL[c]||c)+'</span>').join('')+'</div>'
+        +((d.config&&d.config.length)?'<div class="pfhelp" style="margin-top:.3rem">Will ask for: '+d.config.map(f=>esc(f.label)).join(', ')+'</div>':'')
+        +'<button id="addconfirm" class="play" style="margin-top:.6rem">Install '+esc(d.name)+'</button></div>';
+      addbox.querySelector('#addconfirm').onclick=async()=>{
+        const cbtn=addbox.querySelector('#addconfirm'); cbtn.disabled=true;
+        try{
+          const {r:r2,d:d2}=await adminJSON('/api/providers/install',
+            {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+          if(!r2.ok){ addmsg.textContent=d2.message||d2.err||'Install failed.'; addmsg.className='msgline err'; cbtn.disabled=false; return; }
+          addmsg.textContent='Installed '+esc(d2.name)+'.'; addmsg.className='msgline ok';
+          addbox.innerHTML=''; addurl.value='';
+          await refreshProviders();
+        }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } addmsg.textContent='Request failed: '+e; addmsg.className='msgline err'; cbtn.disabled=false; }
+      };
+    }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } addmsg.textContent='Request failed: '+e; addmsg.className='msgline err'; }
+    finally{ addpreview.disabled=false; addpreview.textContent=old; }
+  };
+  addfile.onchange=async()=>{
+    const f=addfile.files[0]; if(!f) return;
+    addmsg.textContent='Uploading…'; addmsg.className='msgline';
+    try{
+      const buf=await f.arrayBuffer();
+      const {r,d}=await adminJSON('/api/providers/install',{method:'POST',headers:{'Content-Type':'application/gzip'},body:buf});
+      if(!r.ok){ addmsg.textContent=d.message||d.err||'Install failed.'; addmsg.className='msgline err'; return; }
+      addmsg.textContent='Installed '+esc(d.name)+'.'; addmsg.className='msgline ok';
+      addfile.value=''; await refreshProviders();
+    }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } addmsg.textContent='Upload failed: '+e; addmsg.className='msgline err'; }
+  };
+
+  const provlist=root.querySelector('#provlist');
+  provlist.innerHTML=provs.map(p=>
+    '<div class="pitem" data-id="'+esc(p.id)+'"><div class="prow">'
+    +'<div><b>'+esc(p.name)+'</b> <span style="color:var(--dim)">v'+esc(p.version)+'</span></div>'
+    +'<span class="pbadge '+esc(p.status)+'">'+esc(STATUS_LABEL[p.status]||p.status)+'</span></div>'
+    +'<div class="mrow">'+(p.capabilities||[]).map(c=>'<span class="chip">'+esc(ROLE_LABEL[c]||c)+'</span>').join('')+'</div>'
+    +(p.status!=='ready'&&p.message?'<div class="msgline err">'+esc(p.message)+'</div>':'')
+    +'<div class="pact">'
+    +'<button data-act="configure">Configure</button>'
+    +'<button data-act="test">Test</button>'
+    +'<button data-act="toggle">'+(p.enabled?'Disable':'Enable')+'</button>'
+    +'<button data-act="update">Update</button>'
+    +'<button data-act="remove">Remove</button></div>'
+    +'<div class="pdetail"></div></div>'
+  ).join('');
+  provlist.querySelectorAll('.pitem').forEach(item=>{
+    const pid=item.dataset.id, prov=provs.find(x=>x.id===pid), detail=item.querySelector('.pdetail');
+    item.querySelector('[data-act=configure]').onclick=()=>{
+      if(detail.dataset.open==='configure'){ detail.dataset.open=''; detail.innerHTML=''; return; }
+      detail.dataset.open='configure'; renderConfigureForm(detail,prov);
+    };
+    item.querySelector('[data-act=update]').onclick=()=>{
+      if(detail.dataset.open==='update'){ detail.dataset.open=''; detail.innerHTML=''; return; }
+      detail.dataset.open='update'; renderUpdateForm(detail,prov);
+    };
+    item.querySelector('[data-act=test]').onclick=async(e)=>{
+      const btn=e.target; btn.disabled=true; const old=btn.textContent; btn.textContent='Testing…';
+      detail.dataset.open='test';
+      try{
+        const {d}=await adminJSON('/api/providers/'+encodeURIComponent(pid)+'/test',
+          {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        detail.innerHTML = d.ok
+          ? '<div class="msgline ok">Test passed'+(d.result&&d.result.name?' — '+esc(d.result.name):'')
+            +(d.result&&d.result.resources?' · '+d.result.resources.map(x=>esc(x)).join(', '):'')+'</div>'
+          : '<div class="msgline err">'+esc(d.message||'Test failed.')+'</div>';
+      }catch(e2){ if(e2.authFail){ apiSession=null; paintSettings(); return; } detail.innerHTML='<div class="msgline err">Request failed: '+esc(String(e2))+'</div>'; }
+      finally{ btn.disabled=false; btn.textContent=old; }
+    };
+    item.querySelector('[data-act=toggle]').onclick=async(e)=>{
+      const btn=e.target; btn.disabled=true;
+      try{
+        const {r,d}=await adminJSON('/api/providers/'+encodeURIComponent(pid)+'/enable',
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!prov.enabled})});
+        if(!r.ok){ notify(d.err||'Could not update.', true); btn.disabled=false; return; }
+        await refreshProviders();
+      }catch(e2){ if(e2.authFail){ apiSession=null; paintSettings(); return; } notify('Request failed: '+e2, true); btn.disabled=false; }
+    };
+    item.querySelector('[data-act=remove]').onclick=async(e)=>{
+      if(!confirm('Remove '+prov.name+'? This cannot be undone.')) return;
+      const btn=e.target; btn.disabled=true;
+      try{
+        const {r,d}=await adminJSON('/api/providers/'+encodeURIComponent(pid)+'/remove',
+          {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        if(!r.ok || !d.ok){ notify('Could not remove provider.', true); btn.disabled=false; return; }
+        await refreshProviders();
+      }catch(e2){ if(e2.authFail){ apiSession=null; paintSettings(); return; } notify('Request failed: '+e2, true); btn.disabled=false; }
+    };
+  });
+
+  root.querySelector('#setlogout').onclick=async()=>{
+    try{ await adminJSON('/api/admin/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); }catch(e){}
+    apiSession=null; paintSettings();
+  };
+}
+
+function enterSetupMode(){
+  document.getElementById('setup').hidden=false;
+  document.querySelector('.kwrap').hidden=true;
+  document.querySelector('.controls').hidden=true;
+  grid.hidden=true;
+  document.getElementById('sentinel').hidden=true;
+  document.getElementById('loadmore').hidden=true;
+  document.getElementById('setbtn').hidden=true;
+  mountSettings(document.getElementById('setupbody'));
+}
+function exitSetupMode(){
+  document.getElementById('setup').hidden=true;
+  document.querySelector('.kwrap').hidden=false;
+  document.querySelector('.controls').hidden=false;
+  grid.hidden=false;
+  document.getElementById('sentinel').hidden=false;
+  document.getElementById('loadmore').hidden=false;
+  document.getElementById('setbtn').hidden=false;
+  if(!movies.length){ loadGenres(); fetchRow().then(pump); }
+}
+async function checkSetupGate(){
+  try{
+    const d=await (await fetch('/api/setup/state')).json();
+    apiClaimed=!!d.claimed;
+    const nowConfigured=!!d.configured;
+    if(nowConfigured && !setupConfigured){ setupConfigured=true; exitSetupMode(); }
+    else setupConfigured=nowConfigured;
+    document.getElementById('setbtn').hidden=!setupConfigured;
+  }catch(e){}
+}
+async function checkSetup(){
+  try{
+    const d=await (await fetch('/api/setup/state')).json();
+    apiClaimed=!!d.claimed;
+    setupConfigured=!!d.configured;
+  }catch(e){ setupConfigured=true; return; }   // a hiccup here must not block the whole app
+  if(!setupConfigured) enterSetupMode();
+  else document.getElementById('setbtn').hidden=false;
+}
+
+const setov=document.getElementById('setov'), setbtn=document.getElementById('setbtn');
+setbtn.onclick=()=>{ setov.classList.add('open'); mountSettings(document.getElementById('setbody')); };
+document.getElementById('setclose').onclick=()=>setov.classList.remove('open');
+setov.onclick=e=>{ if(e.target===setov) setov.classList.remove('open'); };
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && setov.classList.contains('open')) setov.classList.remove('open'); });
+
+document.getElementById('stop').onclick=async()=>{
+  try{
+    const d=await (await fetch('/api/stop',{method:'POST'})).json();
+    if(d.ok) msg.textContent='Stopped playback on the TV.';
+    else notify('Stop failed: '+d.msg, true);
+  }catch(e){ notify('Stop failed: '+e, true); }
+};
+
+document.getElementById('reconnect').onclick=()=>reconnect('Manual reconnect');
+setInterval(pollHealth, 15000);
+
+(async()=>{
+  // Purely local rendering first, and nothing below it awaits the network.
+  // A hanging /api/genres used to freeze the whole init: the await never
+  // resolved so the catch never fired, and the sort menu and the link button --
+  // neither of which needs the server at all -- were never drawn.
+  renderSorts();
+  const setupCheck = checkSetup();   // cheap and local on the server; still awaited
+  refreshNet();                      // below, so the grid never appears half-working
+  pollHealth();
+  pollNowPlaying();
+  await setupCheck;
+  if(setupConfigured){
+    loadGenres();
+    await fetchRow(); pump();                    // honours any saved genre selection
+  }
+  new IntersectionObserver(es=>{
+    if(es.some(e=>e.isIntersecting)) pump();
+  }, {rootMargin:'1200px'}).observe(document.getElementById('sentinel'));
+})();
+</script></body></html>

@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# post-receive hook for the bare repo $HOME/cinematica.git on this box.
+#
+# Installed by server/deploy/install-hook.sh. On every push to refs/heads/main
+# this checks out the monorepo into $HOME/cinematica-src and, IF the push
+# touched server/, sanity-checks the Python, rsyncs the server/ subtree into the
+# live service directory $HOME/cinematica (without touching runtime state)
+# and restarts the systemd service.
+set -euo pipefail
+
+REPO_DIR="$HOME/cinematica.git"
+SRC_DIR="$HOME/cinematica-src"
+LIVE_DIR="$HOME/cinematica"
+SERVICE="cinematica"
+UNIT_DST="/etc/systemd/system/cinematica.service"
+API="localhost:8090"
+
+# Sendspin hifi-audio bridge: a second unit, running server/sendspin_bridge.py
+# under its own Python 3.12 venv (server/deploy/install-sendspin.sh) because
+# aiosendspin needs >=3.12 and the rest of the server runs on the system's
+# 3.11. Optional -- if the venv was never installed on this box, the bridge
+# is skipped below and only $SERVICE is deployed.
+SENDSPIN_SERVICE="cinematica-sendspin"
+SENDSPIN_UNIT_DST="/etc/systemd/system/cinematica-sendspin.service"
+SENDSPIN_VENV="${VENV:-$HOME/cinematica-venv312}"
+SENDSPIN_VENV_PY="$SENDSPIN_VENV/bin/python"
+
+main_updated=0
+old_sha=""
+new_sha=""
+
+# The unit-file install and service restart below need passwordless sudo.
+# Without it, on a box missing the sudoers rule this hook used to rsync new
+# code into place and only then hit the sudo calls and abort -- leaving the
+# old process running on top of new files. Check up front, before touching
+# anything on disk.
+#
+# Required sudoers rule (add via visudo, replacing <user> with the account
+# this hook runs as):
+#   <user> ALL=(root) NOPASSWD: /bin/systemctl restart cinematica, /bin/systemctl daemon-reload, /usr/bin/install -m 644 * /etc/systemd/system/cinematica.service
+# `sudo -l <command>` asks whether that exact command is permitted without
+# running it, so this passes under the narrow rule above as well as a blanket
+# NOPASSWD, and fails where `sudo -n true` would have been refused by the rule.
+if ! sudo -n -l /bin/systemctl restart cinematica >/dev/null 2>&1; then
+    echo "post-receive: needs passwordless sudo for 'systemctl restart cinematica' (see the sudoers rule in this hook)" >&2
+    exit 1
+fi
+
+while read -r old_sha_in new_sha_in ref_name; do
+    if [ "$ref_name" = "refs/heads/main" ]; then
+        main_updated=1
+        old_sha="$old_sha_in"
+        new_sha="$new_sha_in"
+    fi
+done
+
+if [ "$main_updated" -ne 1 ]; then
+    echo "post-receive: refs/heads/main not updated, nothing to do"
+    exit 0
+fi
+
+short_sha="$(printf '%s' "$new_sha" | cut -c1-7)"
+
+echo "post-receive: deploying ${new_sha} to ${LIVE_DIR}"
+
+mkdir -p "$SRC_DIR"
+
+# Check out the full monorepo at main into the plain work tree.
+GIT_DIR="$REPO_DIR" GIT_WORK_TREE="$SRC_DIR" git checkout -f main
+# Remove anything left over from a previous checkout that is no longer
+# tracked, so the work tree exactly mirrors the main branch (this matters
+# for rsync --delete below to correctly reflect files removed upstream).
+GIT_DIR="$REPO_DIR" GIT_WORK_TREE="$SRC_DIR" git clean -fdx
+
+if [ ! -d "${SRC_DIR}/server" ]; then
+    echo "post-receive: FAILED - ${SRC_DIR}/server does not exist after checkout" >&2
+    exit 1
+fi
+
+# The monorepo also carries tv/ and docs, and a push that only touches those has
+# no business bouncing the service -- a restart kills a transcode and drops
+# whatever is on screen. Stripping all the zeros out of old_sha leaves nothing
+# only for the all-zero "this ref did not exist" of a first push, which has no
+# diff base and therefore counts as changed.
+server_changed=1
+if [ -n "${old_sha//0/}" ]; then
+    if GIT_DIR="$REPO_DIR" git diff --quiet "$old_sha" "$new_sha" -- server; then
+        server_changed=0
+    fi
+fi
+
+if [ "$server_changed" -ne 1 ]; then
+    echo "post-receive: no server/ changes in ${short_sha}, service left alone"
+    exit 0
+fi
+
+# Sanity-check the Python BEFORE anything is synced. Compiling the live copy
+# after the rsync was too late to be a check at all: a broken file was already
+# in place, and the only thing the failure prevented was the restart that would
+# have exposed it -- so the next unrelated restart, days later, was the one that
+# fell over. This is the same bytes rsync is about to copy.
+if ! python3 -m py_compile "${SRC_DIR}/server/server.py"; then
+    echo "post-receive: FAILED - ${SRC_DIR}/server/server.py does not compile, nothing synced" >&2
+    exit 1
+fi
+
+# Same check for the sendspin bridge. It targets Python 3.12 (the venv above)
+# but must stay byte-compilable on the system's 3.11 too (that's the fallback
+# below, and what CI checks) -- it is never imported by server.py itself.
+if [ -x "$SENDSPIN_VENV_PY" ]; then
+    SENDSPIN_COMPILE_PY="$SENDSPIN_VENV_PY"
+else
+    echo "post-receive: WARNING - $SENDSPIN_VENV_PY not found, compiling sendspin_bridge.py with python3 instead" >&2
+    SENDSPIN_COMPILE_PY="python3"
+fi
+if [ -f "${SRC_DIR}/server/sendspin_bridge.py" ] \
+    && ! "$SENDSPIN_COMPILE_PY" -m py_compile "${SRC_DIR}/server/sendspin_bridge.py"; then
+    echo "post-receive: FAILED - ${SRC_DIR}/server/sendspin_bridge.py does not compile, nothing synced" >&2
+    exit 1
+fi
+
+# Sync server/ onto the live directory, but never touch runtime state that
+# lives only on the Pi.
+rsync -a --delete \
+    --exclude='.env' \
+    --exclude='netprofile.json' \
+    --exclude='nowplaying.json' \
+    --exclude='imdb-ratings.tsv.gz' \
+    --exclude='transcode/' \
+    --exclude='transcode' \
+    --exclude='sendspin_identity.json' \
+    --exclude='sendspin_pairing.json' \
+    --exclude='__pycache__/' \
+    --exclude='*.bak-*' \
+    --exclude='.git/' \
+    --exclude='.git' \
+    --exclude='.git.pre-monorepo/' \
+    --exclude='.git.pre-monorepo' \
+    "${SRC_DIR}/server/" "${LIVE_DIR}/"
+
+# The unit file lives in the repo but systemd only reads its own copy, so a
+# change to it used to need a hand-run install nobody remembered. Do it here;
+# the restart below is what picks it up.
+UNIT_SRC="${SRC_DIR}/server/deploy/cinematica.service"
+if [ -f "$UNIT_SRC" ] && ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+    if sudo -n install -m 644 "$UNIT_SRC" "$UNIT_DST" && sudo -n systemctl daemon-reload; then
+        echo "post-receive: unit file changed - installed ${UNIT_DST} and ran daemon-reload"
+    else
+        echo "post-receive: WARNING - could not install ${UNIT_DST}, service stays on the old unit" >&2
+    fi
+fi
+
+# Sendspin bridge unit: rendered from the .in template (it has no fixed,
+# pre-rendered committed copy the way cinematica.service does), the same
+# @DIR@/@USER@ this Pi's cinematica.service was rendered with, plus @VENV@
+# for the separate 3.12 interpreter. Skipped entirely if install-sendspin.sh
+# was never run on this box (no venv, so nothing could run the unit anyway).
+sendspin_restart_needed=0
+SENDSPIN_UNIT_SRC="${SRC_DIR}/server/deploy/cinematica-sendspin.service.in"
+if [ -x "$SENDSPIN_VENV_PY" ] && [ -f "$SENDSPIN_UNIT_SRC" ]; then
+    sendspin_svc_user="$(sed -n 's/^User=//p' "$UNIT_DST" 2>/dev/null | head -1)"
+    [ -n "$sendspin_svc_user" ] || sendspin_svc_user="$(id -un)"
+    tmp_sendspin_unit="$(mktemp)"
+    sed -e "s|@DIR@|$LIVE_DIR|g" \
+        -e "s|@USER@|$sendspin_svc_user|g" \
+        -e "s|@VENV@|$SENDSPIN_VENV|g" \
+        "$SENDSPIN_UNIT_SRC" > "$tmp_sendspin_unit"
+    if ! cmp -s "$tmp_sendspin_unit" "$SENDSPIN_UNIT_DST" 2>/dev/null; then
+        if sudo -n install -m 644 "$tmp_sendspin_unit" "$SENDSPIN_UNIT_DST" \
+            && sudo -n systemctl daemon-reload; then
+            echo "post-receive: sendspin unit file changed - installed ${SENDSPIN_UNIT_DST} and ran daemon-reload"
+            sendspin_restart_needed=1
+        else
+            echo "post-receive: WARNING - could not install ${SENDSPIN_UNIT_DST}, bridge stays on the old unit" >&2
+        fi
+    fi
+    rm -f "$tmp_sendspin_unit"
+
+    # Restart only if the bridge's own code or unit template moved -- unlike
+    # $SERVICE, a bridge restart is not implied by every server/ push.
+    if [ "$sendspin_restart_needed" -eq 0 ] && [ -n "${old_sha//0/}" ]; then
+        if ! GIT_DIR="$REPO_DIR" git diff --quiet "$old_sha" "$new_sha" -- \
+            server/sendspin_bridge.py server/deploy/cinematica-sendspin.service.in; then
+            sendspin_restart_needed=1
+        fi
+    elif [ "$sendspin_restart_needed" -eq 0 ]; then
+        sendspin_restart_needed=1
+    fi
+
+    if [ "$sendspin_restart_needed" -eq 1 ]; then
+        if sudo -n systemctl restart "$SENDSPIN_SERVICE" 2>/dev/null; then
+            echo "post-receive: restarted ${SENDSPIN_SERVICE}"
+        else
+            echo "post-receive: WARNING - could not restart ${SENDSPIN_SERVICE} (missing sudoers rule, or not enabled yet)" >&2
+        fi
+    fi
+else
+    echo "post-receive: sendspin venv not found at ${SENDSPIN_VENV} - skipping the bridge unit"
+fi
+
+# A restart is not free while a film is on: it kills the ffmpeg conversion and
+# the player loses the stream mid-scene. Not a refusal -- whoever pushed knows
+# what they are doing -- but it must not happen silently either.
+# Captured first rather than piped into grep: with `set -o pipefail` a grep -q
+# that matches and exits early can SIGPIPE curl, and the pipeline then reports
+# failure for the one case this check exists to catch.
+now_json="$(curl -s -m 3 "${API}/api/nowplaying" || true)"
+if grep -q '"live"[[:space:]]*:[[:space:]]*true' <<<"$now_json"; then
+    echo "post-receive: ############################################################" >&2
+    echo "post-receive: WARNING - A FILM IS PLAYING RIGHT NOW." >&2
+    echo "post-receive: Restarting ${SERVICE} will interrupt a transcoded stream." >&2
+    echo "post-receive: Restarting anyway - you pushed." >&2
+    echo "post-receive: ############################################################" >&2
+fi
+
+sudo -n systemctl restart "$SERVICE"
+sleep 2
+
+status="$(systemctl is-active "$SERVICE" || true)"
+
+echo "post-receive: last 8 lines of journalctl for ${SERVICE}:"
+journalctl -u "$SERVICE" --no-pager -n 8 || true
+
+if [ "$status" = "active" ]; then
+    echo "deployed ${short_sha} to ${LIVE_DIR}, service active"
+    exit 0
+else
+    echo "post-receive: FAILED - service ${SERVICE} is not active after restart (status: ${status})" >&2
+    exit 1
+fi

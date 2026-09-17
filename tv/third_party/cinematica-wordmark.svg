@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400" viewBox="0 0 1600 400">
+<style>
+@font-face { font-family:'Fontdiner Swanky'; src:url('fonts/FontdinerSwanky-Regular.ttf') format('truetype'); }
+@font-face { font-family:'Pacifico'; src:url('fonts/Pacifico-Regular.ttf') format('truetype'); }
+@font-face { font-family:'Alfa Slab One'; src:url('fonts/AlfaSlabOne-Regular.ttf') format('truetype'); }
+@font-face { font-family:'Oswald'; src:url('fonts/Oswald-Variable.ttf') format('truetype'); }
+@font-face { font-family:'Special Elite'; src:url('fonts/SpecialElite-Regular.ttf') format('truetype'); }
+</style>
+<!-- transparent canvas: no background rect. Notch/perforation holes are filled with the app's fixed near-black chrome colour (see NOTES.md) rather than a real cut; use wordmark.png where true alpha transparency is needed. -->
+<path d="M354.6000000000001,30.0 H1245.4 A30.599999999999998,30.599999999999998 0 0 1 1276.0,60.599999999999994 V339.4 A30.599999999999998,30.599999999999998 0 0 1 1245.4,370.0 H354.6000000000001 A30.599999999999998,30.599999999999998 0 0 1 324.00000000000006,339.4 V60.599999999999994 A30.599999999999998,30.599999999999998 0 0 1 354.6000000000001,30.0 Z" fill="rgb(200,56,43)"/>
+<path d="M354.6000000000001,30.0 H590.5600000000001 V370.0 H354.6000000000001 A30.599999999999998,30.599999999999998 0 0 1 324.00000000000006,339.4 V60.599999999999994 A30.599999999999998,30.599999999999998 0 0 1 354.6000000000001,30.0 Z" fill="rgb(243,230,200)"/>
+<circle cx="324.0" cy="57.9" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="97.0" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="136.1" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="175.2" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="214.3" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="253.4" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="292.5" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="324.0" cy="331.6" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="57.9" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="97.0" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="136.1" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="175.2" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="214.3" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="253.4" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="292.5" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="1276.0" cy="331.6" r="9.5" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="52.4" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="73.5" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="94.6" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="115.7" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="136.8" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="157.8" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="178.9" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="200.0" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="221.1" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="242.2" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="263.2" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="284.3" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="305.4" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="326.5" r="5.4" fill="rgb(16,16,20)"/>
+<circle cx="590.6" cy="347.6" r="5.4" fill="rgb(16,16,20)"/>
+<path d="M614.3600000000001,47.0 H1245.4 A13.599999999999998,13.599999999999998 0 0 1 1259.0,60.599999999999994 V339.4 A13.599999999999998,13.599999999999998 0 0 1 1245.4,353.0 H614.3600000000001 A13.599999999999998,13.599999999999998 0 0 1 600.7600000000001,339.4 V60.599999999999994 A13.599999999999998,13.599999999999998 0 0 1 614.3600000000001,47.0 Z" fill="none" stroke="rgb(245,239,217)" stroke-width="3"/>
+<path d="M609.9000000000001,58.900000000000006 H1245.1 A2,2 0 0 1 1247.1,60.900000000000006 V339.1 A2,2 0 0 1 1245.1,341.1 H609.9000000000001 A2,2 0 0 1 607.9000000000001,339.1 V60.900000000000006 A2,2 0 0 1 609.9000000000001,58.900000000000006 Z" fill="none" stroke="rgb(245,239,217)" stroke-width="3"/>
+<path d="M354.6000000000001,47.0 H580.3600000000001 V353.0 H354.6000000000001 A13.599999999999998,13.599999999999998 0 0 1 341.00000000000006,339.4 V60.599999999999994 A13.599999999999998,13.599999999999998 0 0 1 354.6000000000001,47.0 Z" fill="none" stroke="rgb(20,17,14)" stroke-width="3"/>
+<text x="457.3" y="166.0" text-anchor="middle" font-family="Oswald" font-size="39.1" font-weight="600" fill="rgb(20,17,14)" style="letter-spacing:4.8px;">ADMIT</text>
+<text x="457.3" y="220.4" text-anchor="middle" font-family="Oswald" font-size="39.1" font-weight="600" fill="rgb(20,17,14)" style="letter-spacing:4.8px;">ONE</text>
+<text x="457.3" y="302.0" text-anchor="middle" font-family="Special Elite" font-size="26.5" font-weight="400" fill="rgb(20,17,14)" style="">NO. 0412</text>
+<text x="943.5" y="94.6" text-anchor="middle" font-family="Oswald" font-size="24.5" font-weight="550" fill="rgb(245,239,217)" style="letter-spacing:6.8px;">TONIGHT'S FEATURE</text>
+<text x="943.5" y="224.0" text-anchor="middle" font-family="Alfa Slab One" font-size="75.0" font-weight="400" fill="rgb(245,239,217)" style="">CINEMATICA</text>
+<line x1="740.5" y1="153.5" x2="1146.5" y2="153.5" stroke="rgb(245,239,217)" stroke-width="3"/>
+<line x1="740.5" y1="246.5" x2="1146.5" y2="246.5" stroke="rgb(245,239,217)" stroke-width="3"/>
+<text x="943.5" y="320.7" text-anchor="middle" font-family="Oswald" font-size="24.5" font-weight="550" fill="rgb(245,239,217)" style="letter-spacing:6.8px;">TOP-RATED 4K FILMS</text>
+<text x="1242.0" y="354.7" text-anchor="end" font-family="Special Elite" font-size="17.0" font-weight="400" fill="rgb(245,239,217)" style="">NO. 0412</text>
+</svg>
