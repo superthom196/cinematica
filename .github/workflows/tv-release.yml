@@ -110,13 +110,17 @@ jobs:
       - name: Verify the APK's versionCode is above every published build
         working-directory: tv
         # Android compares versionCode, not versionName, and refuses to install
-        # a build below the one already there. 141 went out on the 1.0.0
-        # release and is installed on real TVs, so anything published from here
-        # has to be above it -- a release built with a stale or unread
-        # version.properties (the commit-count scheme answered 1) would install
-        # nowhere.
+        # a build below the one already on the device. PUBLISHED_FLOOR is the
+        # highest versionCode this repository has ever released; anything
+        # published from here has to be above it, or it installs nowhere.
+        #
+        # It is 0 because nothing has been released from this repository yet,
+        # so there is no install in the field to stay above and numbering
+        # starts at 1. Raise it in the same commit that raises
+        # tv/version.properties -- the two move together, and this one is what
+        # catches the other being stale or unread.
         env:
-          PUBLISHED_FLOOR: '141'
+          PUBLISHED_FLOOR: '0'
         run: |
           aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
           apk_code=$("$aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
