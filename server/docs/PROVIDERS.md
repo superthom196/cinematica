@@ -181,14 +181,92 @@ Packages contain a `manifest.json` and a Python entry file. The manifest declare
 capabilities and configuration fields. The host loads the package in a separate
 process and passes requests through the provider contract.
 
-The implementation references are:
+### A worked example
+
+[`example-provider/`](example-provider/) is a complete package that fills all
+three roles from a JSON list of films you host yourself. Copy the directory,
+replace the library, keep the shapes. It is exercised by the server's test suite,
+so it matches the contract the server actually enforces.
+
+    example-provider/
+      manifest.json           id, version, roles, configuration fields
+      provider.py             the entry file: one function per operation
+      library.example.json    the sample data it reads
+
+The manifest is the smaller half:
+
+```json
+{
+  "id": "example-library",
+  "version": "1.0.0",
+  "contract": 1,
+  "capabilities": ["catalogue", "metadata", "streams"],
+  "entry": "provider.py",
+  "kinds": ["movie"],
+  "config": [
+    { "key": "base_url", "type": "url", "label": "Base URL", "required": true }
+  ]
+}
+```
+
+The host launches `python3 -m providers.host <package dir>` and sends it one JSON
+request per line. It calls the function named after the operation with the dots
+replaced by underscores, so `catalogue.browse` calls `catalogue_browse`. A
+module-level `handle(op, config, params)` receives everything instead, if you
+prefer a single entry point. An operation with neither is answered as
+unsupported.
+
+```python
+from providers import contract
+
+def catalogue_browse(config, params):
+    """One page. params: kind, page (1-based), page_size, sort, filters."""
+    page = max(1, int(params.get("page") or 1))
+    size = max(1, int(params.get("page_size") or 20))
+    rows = _library(config)[(page - 1) * size:page * size]
+    # Only "id" and "kind" are required; every other field is optional.
+    return {"items": [{"id": r["id"], "kind": "movie", "title": r["title"]} for r in rows],
+            "has_more": page * size < len(_library(config))}
+
+def streams_lookup(config, params):
+    """Playable sources. params["identity"] carries local_id, title and external_ids."""
+    row = _find(_library(config), params["identity"]["local_id"])
+    return {"candidates": [{"transport": "http",
+                            "url": "%s/%s" % (config["base_url"], row["path"]),
+                            "source": "Example Library"}]}
+
+def config_test(config, params):
+    """The interface's test button. Make your smallest authenticated call here."""
+    if not config.get("base_url"):
+        raise contract.ProviderError(contract.E_CONFIG, "Base URL is not set.")
+    return {"ok": True, "titles": len(_library(config))}
+```
+
+Operations a role obliges the package to answer are listed in `contract.py`'s
+`ROLE_OPS`; `provider.describe` and `config.test` are required of every package.
+Return plain dicts and lists. Every reply is normalised before the rest of the
+server sees it, so unknown keys are dropped, types are coerced, and a shape that
+cannot be made sense of is reported as an error against your provider rather than
+raising somewhere else. Configuration arrives with each request, including
+secrets; do not keep it in a module global.
+
+Failures should be `contract.ProviderError(code, message)`. The code decides what
+the interface shows and whether the answer is cached: `E_CONFIG` for something the
+operator has not filled in, `E_NOTFOUND` for an id that does not exist there,
+`E_UPSTREAM` for a service that failed, `E_UNSUPPORTED` for an operation the
+package does not implement. Anything else raised becomes an internal error, which
+is accurate but tells the operator nothing. Use `contract.redact()` on any message
+quoting an exception, a URL or a configured value.
+
+### Implementation references
 
 - [`contract.py`](../providers/contract.py): manifest validation, operations and result formats.
 - [`host.py`](../providers/host.py): entry loading and operation dispatch.
 - [`runner.py`](../providers/runner.py): process lifecycle and request handling.
 
 Together, `host.py` and the manifest schema in `contract.py` are the complete
-specification a package has to satisfy; no example package is distributed.
+specification a package has to satisfy. The example above is a starting point,
+not a second specification: where the two disagree, the code decides.
 
 The runner uses timeouts and error handling to contain routine provider failures.
 It does not restrict the package's filesystem or network access.

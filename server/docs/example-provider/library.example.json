@@ -1,0 +1,41 @@
+{
+  "titles": [
+    {
+      "id": "harbour-lights",
+      "title": "Harbour Lights",
+      "year": 1961,
+      "overview": "Invented, like the other two. The rows are here to show which fields a catalogue entry may carry, not to be watched.",
+      "genres": ["Drama"],
+      "path": "harbour-lights/harbour-lights.mp4",
+      "quality": "1080p",
+      "codec": "H264",
+      "size_gb": 2.1,
+      "languages": ["en"]
+    },
+    {
+      "id": "the-salt-flats",
+      "title": "The Salt Flats",
+      "year": 1974,
+      "overview": "A second row, so paging and search have something to do.",
+      "genres": ["Drama", "Documentary"],
+      "path": "the-salt-flats/the-salt-flats.mkv",
+      "quality": "2160p",
+      "codec": "HEVC",
+      "size_gb": 14.8,
+      "languages": ["en", "fr"]
+    },
+    {
+      "id": "night-signal",
+      "title": "Night Signal",
+      "year": 1998,
+      "overview": "A third row with an IMDb id in external_ids, which is how a title stays recognisable to a different provider.",
+      "genres": ["Thriller"],
+      "path": "night-signal/night-signal.mp4",
+      "quality": "720p",
+      "codec": "H264",
+      "size_gb": 1.4,
+      "languages": ["en"],
+      "external_ids": {"imdb": "tt0000000"}
+    }
+  ]
+}

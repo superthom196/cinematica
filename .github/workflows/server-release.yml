@@ -50,6 +50,10 @@ jobs:
           done
 
       - name: Shellcheck
+        # server-check.yml runs this same command on every push to server/**,
+        # so a finding here should be impossible by the time a tag exists. It
+        # stays as the last word before publishing, not as the first place the
+        # scripts are ever checked -- which is what it was when v1.0.0 failed.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck

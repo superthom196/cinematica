@@ -41,6 +41,12 @@ COMPOSE_PROJECT="cinematica"
 APT=0
 COMPOSE=""
 SS_WARNED=0
+# What the health poll found, and whether this run can honestly call itself a
+# success. The summary box at the bottom reads both, and the exit status is
+# INSTALL_FAILED: an installer that prints "installed and running" after the
+# server never answered is worse than useless to anything scripting it.
+HEALTH_STATE="not-checked"   # not-checked | ok | silent | unreadable
+INSTALL_FAILED=0
 
 if [ -t 1 ]; then
     B=$'\033[1m'; N=$'\033[0m'; DIM=$'\033[2m'
@@ -715,6 +721,8 @@ if [ "$SKIP_SYSTEMD" = 0 ] && [ "$DRY" = 0 ]; then
         sleep 1
     done
     if [ -z "$body" ]; then
+        HEALTH_STATE="silent"
+        INSTALL_FAILED=1
         warn "the server did not answer on :8090 within 60 seconds."
         warn "Look at:  journalctl -u cinematica -n 50 --no-pager"
     else
@@ -726,8 +734,12 @@ msg = (prov.get("message") or "").replace("\t", " ")
 print("%s\t%s\t%s" % ("yes" if prov.get("configured") else "no", msg, d.get("movies")))
 ' 2>/dev/null || true)"
         if [ -z "$vals" ]; then
-            info "health answered but could not be parsed: $body"
+            # It answered, so the service is up; only the shape of the reply is
+            # wrong. Not a failed install, but not a clean one either.
+            HEALTH_STATE="unreadable"
+            warn "health answered but could not be parsed: $body"
         else
+            HEALTH_STATE="ok"
             h_configured="$(printf '%s' "$vals" | cut -f1)"
             h_message="$(printf '%s' "$vals" | cut -f2)"
             h_movies="$(printf '%s' "$vals" | cut -f3)"
@@ -750,20 +762,59 @@ fi
 # still be starting, and this must never itself create or activate a
 # provider) as $SVC_USER, so admin.json ends up owned the same way the
 # running service will need it to be.
+#
+# Three outcomes, and they are NOT interchangeable: a token, an account that
+# somebody already claimed, or a fetch that failed. This used to collapse the
+# last two -- any empty output at all was reported as "already claimed", so a
+# permission error or a broken interpreter told the reader their admin account
+# existed when nothing of the sort had happened, and nobody could log in.
+# store.bootstrap_token() returns None only for a claimed account, so the
+# provider process says which case it is in words, and the exit status
+# separates "answered" from "did not run".
 SETUP_URL="http://$HOST:8090/"
 BOOTSTRAP_TOKEN=""
 ALREADY_CLAIMED=0
+TOKEN_ERROR=0
+TOKEN_MESSAGE=""
 if [ "$DRY" = 1 ]; then
     plan "fetch/create the one-time setup token from $STATE_DIR (providers/store.py)"
 else
-    BOOTSTRAP_TOKEN="$(cd "$DIR" && sudo -u "$SVC_USER" env CINEMATICA_STATE="$STATE_DIR" python3 -c '
+    # $DIR is passed as an argument rather than cd'd into: `cd X && cmd` inside
+    # a command substitution that also ends in `|| true` is the A && B || C
+    # shape, which reads as if the fallback covered the cd, and shellcheck
+    # (SC2015) fails the release build over it. The python side puts $DIR on
+    # sys.path itself, which is all the cd was ever for.
+    token_rc=0
+    token_out="$(sudo -u "$SVC_USER" env CINEMATICA_STATE="$STATE_DIR" python3 -c '
 import sys
-sys.path.insert(0, ".")
+sys.path.insert(0, sys.argv[1])
 from providers import store
-print(store.bootstrap_token() or "")
-' 2>/dev/null || true)"
-    if [ -z "$BOOTSTRAP_TOKEN" ]; then
+token = store.bootstrap_token()
+print(("TOKEN %s" % token) if token else "CLAIMED")
+' "$DIR" 2>&1)" || token_rc=$?
+    if [ "$token_rc" != 0 ]; then
+        TOKEN_ERROR=1
+        INSTALL_FAILED=1
+        # Last non-empty line: the traceback's final line names the failure,
+        # and the box has room for one line, not twenty.
+        TOKEN_MESSAGE="$(printf '%s\n' "$token_out" | grep -v '^[[:space:]]*$' | tail -n 1)"
+        if [ -z "$TOKEN_MESSAGE" ]; then
+            TOKEN_MESSAGE="providers/store.py exited $token_rc without saying why"
+        fi
+        warn "could not read the one-time setup token: $TOKEN_MESSAGE"
+    elif [ "$token_out" = "CLAIMED" ]; then
         ALREADY_CLAIMED=1
+    else
+        BOOTSTRAP_TOKEN="${token_out#TOKEN }"
+        if [ "$BOOTSTRAP_TOKEN" = "$token_out" ] || [ -z "$BOOTSTRAP_TOKEN" ]; then
+            # It exited 0 and said something else entirely: report that, rather
+            # than handing the reader whatever it printed as a token.
+            TOKEN_ERROR=1
+            INSTALL_FAILED=1
+            BOOTSTRAP_TOKEN=""
+            TOKEN_MESSAGE="unexpected reply from providers/store.py: $(printf '%s' "$token_out" | tr '\n' ' ' | cut -c1-120)"
+            warn "could not read the one-time setup token: $TOKEN_MESSAGE"
+        fi
     fi
 fi
 
@@ -782,8 +833,23 @@ box() {
 }
 
 {
+    # The first line is the one a reader believes, so it says what actually
+    # happened. "Installed and running" is reserved for a server that answered
+    # its own health endpoint.
     if [ "$DRY" = 1 ]; then
         echo "DRY RUN. Nothing above was done. This is what a real run would leave:"
+    elif [ "$HEALTH_STATE" = "silent" ]; then
+        echo "Cinematica is INSTALLED BUT NOT RUNNING: the server never answered"
+        echo "on :8090. Nothing below can be set up until it does -- start with"
+        echo "the log line at the end of this box."
+    elif [ "$HEALTH_STATE" = "unreadable" ]; then
+        echo "Cinematica is installed and answering on :8090, but its health reply"
+        echo "could not be read (see above). No film source is set up yet."
+    elif [ "$HEALTH_STATE" = "not-checked" ]; then
+        # --skip-systemd: nothing was started, so nothing is running, and this
+        # run has no idea whether it would.
+        echo "Cinematica is installed. The service was not started, so its health"
+        echo "was not checked."
     else
         echo "Cinematica is installed and running. No film source is set up yet."
     fi
@@ -798,8 +864,18 @@ box() {
     elif [ "$ALREADY_CLAIMED" = 1 ]; then
         echo "  The admin account is already claimed -- log in there to manage"
         echo "  providers, or to add one for the first time."
-    else
+    elif [ "$TOKEN_ERROR" = 1 ]; then
+        echo "  The one-time setup token could NOT be read. This does not mean the"
+        echo "  admin account is claimed -- it means the token could not be asked"
+        echo "  for at all, and until that is fixed nobody can claim the account."
+        echo "  What it said:"
+        echo "    $TOKEN_MESSAGE"
+        echo "  Fix that and run this installer again; re-running is safe."
+    elif [ "$DRY" = 1 ]; then
         echo "  (setup token not fetched in a dry run)"
+    else
+        echo "  No setup token was fetched. Open the URL above; if it asks for a"
+        echo "  token, run this installer again to print one."
     fi
     echo ""
     echo "  Point the TV app at    $HOST:8090"
@@ -823,3 +899,10 @@ box() {
     echo "  INSTALL.md has the troubleshooting and the caveats worth knowing."
 } | box
 printf '\n'
+
+# An install that did not work exits non-zero. The box above says what went
+# wrong in words; this is the same fact in the only form a script running
+# `./install.sh && ...` can see.
+if [ "$INSTALL_FAILED" = 1 ]; then
+    exit 1
+fi

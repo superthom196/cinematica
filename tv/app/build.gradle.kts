@@ -6,15 +6,29 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// The Gradle root is tv/, one level below the repo root, but versioning reads the whole
-// project's git history so every installed build says exactly what it is (see the root
-// AGENTS.md-style convention shared with the server). Run git against the repo root explicitly
-// rather than relying on cwd.
+// The Gradle root is tv/, one level below the repo root, but the development version NAME
+// reads the whole project's git history so every installed build says exactly what it is.
+// Run git against the repo root explicitly rather than relying on cwd. (The version CODE
+// reads no git at all any more -- see version.properties immediately below.)
 val repoRoot = rootDir.parentFile
-val gitCommitCount = providers.exec {
-    workingDir = repoRoot
-    commandLine("git", "-C", repoRoot.path, "rev-list", "--count", "HEAD")
-}.standardOutput.asText.map { it.trim().toIntOrNull() ?: 1 }
+// The versionCode is read from tv/version.properties and derived from nothing.
+// Android compares it to decide that one build is newer than another and refuses
+// an APK whose code is below the installed one, so it has to survive the
+// repository's history being rewritten. The commit count it used to be did not:
+// the rebuilt public repository counts 1, and the published 1.0.0 APK is 141, so
+// every update built from that repository would have been rejected as a
+// downgrade. Bump the file when cutting a release; version.properties says how.
+val versionCodeFile = rootProject.file("version.properties")
+val declaredVersionCode: Int = run {
+    if (!versionCodeFile.exists()) {
+        error("tv/version.properties is missing; it is where the release versionCode lives.")
+    }
+    val props = Properties()
+    versionCodeFile.inputStream().use { stream -> props.load(stream) }
+    val raw = props.getProperty("versionCode")?.trim().orEmpty()
+    raw.toIntOrNull()?.takeIf { it > 0 }
+        ?: error("tv/version.properties: versionCode must be a positive integer, found \"$raw\".")
+}
 val gitDirty = providers.exec {
     workingDir = repoRoot
     commandLine("git", "-C", repoRoot.path, "status", "--porcelain", "--untracked-files=no", "--", "tv")
@@ -108,12 +122,11 @@ android {
         // development version, with "-dirty" appended when tv/ has uncommitted changes.
         // See gitDescribe above.
         //
-        // versionCode stays the whole repo's commit count regardless. It is what Android
-        // compares to decide one build is newer than another, so it has to keep rising
-        // across releases AND across the development builds between them; a released
-        // version number cannot do that job, and 1.0.1 would sort below the dev builds
-        // that preceded it.
-        versionCode = gitCommitCount.get()
+        // versionCode is the hand-kept number in tv/version.properties, unrelated to
+        // versionName: Android's upgrade check reads only the code, and a released
+        // x.y.z cannot fill that role (1.0.1 sorts below 1.0.0's build in no useful
+        // way at all, and neither is an integer). Raise it when cutting a release.
+        versionCode = declaredVersionCode
         versionName = gitDescribe.get()
 
         // The Bravia (and every target TV) is 32-bit ARM; the libvlc-all AAR ships four ABIs and

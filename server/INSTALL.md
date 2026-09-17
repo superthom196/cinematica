@@ -37,6 +37,13 @@ and sets up the server and network audio services. Downloads can take several mi
 At the end, it prints a setup address and a one-time token. Keep these for the next step.
 To preview the installation without making changes, run `./install.sh --dry-run`.
 
+Read the last box before going on. It says which of three things happened: the
+server answered its own health check and is running, it was installed but never
+answered, or it was installed with the service left to you (`--skip-systemd`).
+The installer exits non-zero when the server did not come up, or when the
+one-time token could not be read -- an empty token is not the same as a claimed
+account, and the box distinguishes them. Re-running the installer is safe.
+
 ### Installer options
 
 | Option | Use |
