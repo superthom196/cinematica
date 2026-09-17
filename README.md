@@ -1,8 +1,8 @@
 # Cinematica
 
-Cinematica is an Android TV app for watching films and TV shows. It works with a
-server on your home network that finds and prepares streams from providers you
-choose in the browser settings.
+Cinematica watches films and TV shows on your own network. A server finds and
+prepares streams from providers you choose, and plays them either through the
+Android TV app or straight in a browser on a phone, tablet or laptop.
 
 Audio can play through your TV or through your hi-fi using a Sendspin player.
 
@@ -14,10 +14,12 @@ Audio can play through your TV or through your hi-fi using a Sendspin player.
 
 - **A server:** a computer or Raspberry Pi running 64-bit Debian 12+, Ubuntu 24.04+,
   or Raspberry Pi OS Bookworm+, with systemd. Both x86-64 and arm64 are supported.
-- **An Android TV or Google TV device:** Android 9 or newer, with support for
-  32-bit ARM apps. The current TV build contains 32-bit ARM libraries.
-- **A home network:** the server and TV need to reach each other. Ethernet is
-  recommended for high-bitrate video.
+- **Something to watch on:** a browser is enough — a phone, tablet or laptop
+  plays films directly. For the television, an Android TV or Google TV device
+  running Android 9 or newer, with support for 32-bit ARM apps; the current TV
+  build contains 32-bit ARM libraries.
+- **A home network:** the server and whatever you watch on need to reach each
+  other. Ethernet is recommended for high-bitrate video.
 - **Providers:** a catalogue to browse and a source of playable streams.
 
 The server needs Python 3.11 or newer and Docker. The installer checks these and
@@ -28,11 +30,11 @@ can install missing dependencies. A Sendspin player is optional.
 ### 1. Install the server
 
 Download the server archive and its checksum from
-[Releases](https://github.com/superthom196/cinematica/releases). For version 1.0.0:
+[Releases](https://github.com/superthom196/cinematica/releases). For version 1.1.0:
 
 ```bash
-sha256sum -c cinematica-server-1.0.0.tar.gz.sha256
-tar xzf cinematica-server-1.0.0.tar.gz
+sha256sum -c cinematica-server-1.1.0.tar.gz.sha256
+tar xzf cinematica-server-1.1.0.tar.gz
 cd cinematica-server
 sudo ./install.sh
 ```
@@ -70,7 +72,10 @@ it supplies. Check the [provider guide](server/docs/PROVIDERS.md) when choosing 
 combination. Python packages run code on your server, so only install packages
 from authors you trust.
 
-### 3. Connect your TV
+You can start watching at this point: open a film in the browser you just set
+up in, on any device on your network. The TV app below is optional.
+
+### 3. Connect your TV (optional)
 
 Install the Cinematica TV APK on your Android TV or Google TV device. The
 [TV app guide](tv/README.md) covers sideloading and building from source.
