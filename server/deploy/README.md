@@ -32,7 +32,8 @@ settings to your host. The release installer uses a template instead.
 
 Configure sudo permissions for the service restarts, unit-file installation and
 `systemctl daemon-reload` used by the hook. Include the Sendspin service operations
-if you use network audio. The hook checks permission to restart Cinematica before
+if you use network audio: its restart, and `systemctl enable cinematica-sendspin`,
+which the hook runs once so the bridge comes back after a reboot. The hook checks permission to restart Cinematica before
 deploying; that check does not verify every later command.
 
 ## Install the hook

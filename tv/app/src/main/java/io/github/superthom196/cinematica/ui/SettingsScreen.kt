@@ -23,6 +23,7 @@ import androidx.tv.material3.Text
 import io.github.superthom196.cinematica.AppViewModel
 import io.github.superthom196.cinematica.BuildConfig
 import io.github.superthom196.cinematica.UiState
+import io.github.superthom196.cinematica.api.HifiPlayer
 import io.github.superthom196.cinematica.data.PIN_LENGTH
 import io.github.superthom196.cinematica.player.displayLanguage
 
@@ -81,14 +82,7 @@ fun SettingsScreen(vm: AppViewModel, ui: UiState) {
             SettingRow("Verbose VLC log", if (verboseVlc) "On" else "Off") { vm.toggleVerboseVlc() }
             SettingRow("Network audio", if (hifiAudio) "On" else "Off") { vm.toggleHifiAudio() }
             if (hifiAudio) {
-                val label = when {
-                    hifiPlayerUrl != null && hifiPlayers.any { it.url == hifiPlayerUrl } ->
-                        hifiPlayers.first { it.url == hifiPlayerUrl }.name
-                    hifiPlayerUrl == null && hifiPlayers.isEmpty() -> "None found"
-                    hifiPlayerUrl == null -> "Server default"
-                    else -> runCatching { java.net.URI(hifiPlayerUrl).host }.getOrNull() ?: hifiPlayerUrl!!
-                }
-                SettingRow("Network audio player", label) { vm.cycleHifiPlayer() }
+                SettingRow("Network audio player", hifiPlayerLabel(hifiPlayerUrl, hifiPlayers)) { vm.cycleHifiPlayer() }
                 // Left/right trims by 25 ms; OK steps up. Positive = the sound plays later.
                 SettingRow(
                     "Lip sync (audio delay)",
@@ -131,4 +125,16 @@ fun SettingsScreen(vm: AppViewModel, ui: UiState) {
             VSpace(24.dp)
         }
     }
+}
+
+/**
+ * What the "Network audio player" row says. Never the saved player's address:
+ * an empty list means the server found nobody to play to (or its audio bridge
+ * is down), and the host of a url nobody answers at reads as a chosen, working
+ * player when it is neither.
+ */
+internal fun hifiPlayerLabel(savedUrl: String?, players: List<HifiPlayer>): String = when {
+    players.isEmpty() -> "No Sendspin players found..."
+    savedUrl == null -> "Server default"
+    else -> players.firstOrNull { it.url == savedUrl }?.name ?: "Saved player not found"
 }

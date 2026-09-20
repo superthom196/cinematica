@@ -580,7 +580,13 @@ else
         systemctl daemon-reload
         systemctl enable cinematica >/dev/null 2>&1 || true
         systemctl restart cinematica
-        info "cinematica.service enabled and started"
+        # A unit that is started but not enabled works until the first reboot.
+        if [ "$(systemctl is-enabled cinematica 2>/dev/null || true)" = "enabled" ]; then
+            info "cinematica.service enabled and started"
+        else
+            warn "cinematica.service started but NOT enabled — it will not come back after a reboot."
+            warn "Then:  systemctl enable cinematica"
+        fi
     fi
 fi
 
@@ -696,8 +702,16 @@ else
     sleep 5
     ss_state="$(systemctl is-active cinematica-sendspin 2>/dev/null || true)"
     ss_restarts="$(systemctl show -p NRestarts --value cinematica-sendspin 2>/dev/null || echo 0)"
+    ss_enabled="$(systemctl is-enabled cinematica-sendspin 2>/dev/null || true)"
     if [ "$ss_state" = "active" ] && [ "${ss_restarts:-0}" = "0" ]; then
-        info "cinematica-sendspin.service enabled and running"
+        if [ "$ss_enabled" = "enabled" ]; then
+            info "cinematica-sendspin.service enabled and running"
+        else
+            # Running now, gone after the next reboot, and nothing in the
+            # journal then: systemd was simply never asked to start it.
+            warn "cinematica-sendspin is running but NOT enabled — network audio will stop at the next reboot."
+            warn "Then:  systemctl enable cinematica-sendspin"
+        fi
         if ! grep -qE '^SENDSPIN_CLIENT_URL=.+' "$ENV_DST" 2>/dev/null; then
             info "SENDSPIN_CLIENT_URL is empty in $ENV_DST — network audio stays off until it's set, then: systemctl restart cinematica-sendspin"
         fi

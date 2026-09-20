@@ -176,6 +176,18 @@ if [ -x "$SENDSPIN_VENV_PY" ] && [ -f "$SENDSPIN_UNIT_SRC" ]; then
     fi
     rm -f "$tmp_sendspin_unit"
 
+    # A restart starts the bridge for this boot only. This hook used to stop
+    # there, so a unit it had installed itself ran until the host's next
+    # reboot and then stayed down with nothing in the journal to say why --
+    # systemd was never asked to start it. Enabling is idempotent; ask once.
+    if [ "$(systemctl is-enabled "$SENDSPIN_SERVICE" 2>/dev/null || true)" != "enabled" ]; then
+        if sudo -n systemctl enable "$SENDSPIN_SERVICE" >/dev/null 2>&1; then
+            echo "post-receive: enabled ${SENDSPIN_SERVICE} - it now starts at boot"
+        else
+            echo "post-receive: WARNING - ${SENDSPIN_SERVICE} is not enabled and will not survive a reboot: sudo systemctl enable ${SENDSPIN_SERVICE}" >&2
+        fi
+    fi
+
     # Restart only if the bridge's own code or unit template moved -- unlike
     # $SERVICE, a bridge restart is not implied by every server/ push.
     if [ "$sendspin_restart_needed" -eq 0 ] && [ -n "${old_sha//0/}" ]; then
