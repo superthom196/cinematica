@@ -119,6 +119,13 @@ AUDIO_FORMAT = AudioFormat(48000, 16, 2)
 CACHE_DIR = Path(cfg("SENDSPIN_CACHE_DIR", str(SCRIPT_DIR / "transcode")))
 DECODE_LEAD_S = float(cfg("SENDSPIN_DECODE_LEAD_S", "180"))
 DECODE_READ_BYTES = CHUNK_BYTES * 4  # 200 ms per read off ffmpeg
+# The stereo downmix. Left alone, ffmpeg scales the matrix so that every
+# channel at full scale at once still cannot clip: FL + 0.707 FC + 0.707 SL
+# sums to 2.414, so a 5.1 track comes out 7.7 dB down, and real tracks never
+# use that room (measured: true peak -7.4 dBFS over a 5.1 episode). This is
+# the sum the matrix is scaled to instead; 2.0 gives 6.0 dB of it back. It is
+# not a gain stage: a stereo source is not rematrixed and comes through as is.
+DOWNMIX_MAXVAL = float(cfg("SENDSPIN_DOWNMIX_MAXVAL", "2.0"))
 # A /start further past the decoded range than this restarts the decoder at
 # the new position rather than waiting for it to get there.
 CACHE_WAIT_S = 20.0
@@ -586,6 +593,9 @@ async def _ensure_decoder(src, aidx, start_s):
         "-ss", str(start_s),
         "-i", src,
         "-map", "0:a:%d" % aidx,
+        # aformat right behind it makes this aresample the one that downmixes,
+        # not one ffmpeg inserts for "-ac 2" without the option.
+        "-af", "aresample=rematrix_maxval=%g,aformat=channel_layouts=stereo" % DOWNMIX_MAXVAL,
         "-vn", "-ac", "2", "-ar", "48000",
         # Ignored by the raw muxer; it exists so `pkill -f <marker>` inside
         # the container hits exactly this ffmpeg.

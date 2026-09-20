@@ -210,6 +210,9 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(resp.data["prepared"])
         dec = await self.wait_cache(0.5)
         self.assertIn("comment=" + dec.marker, self.ffmpeg_args)
+        # The downmix keeps ffmpeg's matrix but not its 7.7 dB clip-proof scaling.
+        af = self.ffmpeg_args[self.ffmpeg_args.index("-af") + 1]
+        self.assertEqual(af, "aresample=rematrix_maxval=2,aformat=channel_layouts=stereo")
         self.assertTrue(os.path.exists(dec.path))
         await asyncio.sleep(0.4)
         # Bounded: no more than the lead plus one read beyond the play head (still at 0).
