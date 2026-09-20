@@ -326,6 +326,11 @@ HIFI_START_TIMEOUT_S = 45.0
 HIFI_CONNECT_TIMEOUT_S = 25.0
 HIFI_CALL_TIMEOUT_S = 30.0
 HIFI_AUDIO_DELAY_MS = int(os.environ.get("HIFI_AUDIO_DELAY_MS", "0"))
+# How close to the end of the decoded track counts as the end of it. The last
+# seconds of a film are the one place a stopped stream is not a fault, and a
+# start this close to the end could not land anyway: the player will not take
+# a first chunk less than its send-ahead floor (~1 s) from now.
+HIFI_TRACK_END_S = 2.0
 
 # No service credentials here any more. A catalogue key or a stream-index
 # config string belongs to the provider that needs it, is entered in the
@@ -2205,7 +2210,11 @@ _hifi = {"on": False, "gen": int(time.time()), "t0_us": None, "clock_offset_us":
          "supply": None, "cache": None,
          # The job whose audio src is: a heartbeat for any other job (the
          # previous film still on screen while this one buffers) starts nothing.
-         "job": None}
+         "job": None,
+         # This film's audio has played out: the track is over, the player has
+         # been let go, and the last frames on screen are not a reason to start
+         # anything. Cleared by the next timeline -- see _hifi_track_over().
+         "done": False}
 
 
 def _hifi_invalidate():
@@ -2215,6 +2224,9 @@ def _hifi_invalidate():
     _hifi["streaming"] = False
     _hifi["pending_since"] = 0.0
     _hifi["err_s"] = None
+    # Every caller is starting a timeline over: a seek, a new film, a stream
+    # that died. Whatever finished before does not speak for this one.
+    _hifi["done"] = False
 
 
 def _hifi_release():
@@ -2232,6 +2244,28 @@ def _hifi_release():
         _hifi["cache"] = None
         _hifi["supply"] = None
     _ss_q.put(("release",))
+
+
+def _hifi_track_over(position_s):
+    """Whether this film's audio has run out: the bridge holds the whole track
+    and the picture is at or past the end of it. Called under _lock.
+
+    The end of a film reaches the state machine as a stream that stopped with
+    its decoder finished, which is indistinguishable from an audio failure
+    until you look at the cache. Read as a failure it starts the audio again,
+    at a position with no audio behind it, and the bridge answers that by
+    creating a stream for it -- which puts the player back into PLAYING for a
+    push that ends with nothing sent. The player keeps that state: this is the
+    Sendspin client still playing in Music Assistant after Fight Club ended on
+    2026-09-17, where a stop mid-film always released it cleanly.
+
+    Only ever true in the last DECODE_LEAD_S of a film: `complete` means
+    ffmpeg reached the end of the track, which it cannot do earlier."""
+    cache = _hifi["cache"] or {}
+    if not cache.get("complete") or cache.get("src") != _hifi["src"]:
+        return False
+    end_s = cache.get("end_s")
+    return end_s is not None and position_s >= end_s - HIFI_TRACK_END_S
 
 
 def _hifi_fail(msg):
@@ -2315,11 +2349,22 @@ def _hifi_apply_status(body):
                 _hifi["t0_us"] = t0
             return
         if live:
-            why = "player disconnected" if not body.get("connected") else "decoder ended"
-            print("sendspin: stream gen=%d stopped (%s), audio will restart"
-                  % (_hifi["gen"], why), flush=True)
-            _hifi_invalidate()
-            _hifi["last_error"] = why
+            cache = body.get("cache") or {}
+            if body.get("connected") and cache.get("complete") and not cache.get("error"):
+                # The push ran off the end of a track the bridge had decoded
+                # in full: the film's audio is over, not broken. Retired, but
+                # not recorded as a failure and not restarted -- the next
+                # playing heartbeat reads the same cache through
+                # _hifi_track_over() and lets the player go.
+                print("sendspin: stream gen=%d reached the end of the track at %.1fs"
+                      % (_hifi["gen"], cache.get("end_s") or 0.0), flush=True)
+                _hifi_invalidate()
+            else:
+                why = "player disconnected" if not body.get("connected") else "decoder ended"
+                print("sendspin: stream gen=%d stopped (%s), audio will restart"
+                      % (_hifi["gen"], why), flush=True)
+                _hifi_invalidate()
+                _hifi["last_error"] = why
         elif pending and not body.get("pending"):
             print("sendspin: start gen=%d died before any audio, will retry"
                   % _hifi["gen"], flush=True)
@@ -2579,7 +2624,22 @@ def app_heartbeat(d):
                 _hifi_fail("no audio within %.0f s" % HIFI_START_TIMEOUT_S)
                 pending = False
             if not pending and (not _hifi["streaming"] or _hifi["t0_us"] is None):
-                if viewer_seek or now - _hifi["last_restart"] > _hifi_restart_gap_s():
+                if _hifi["done"]:
+                    # The audio is over and the player has been let go. The
+                    # film still on screen is its last frames, not a reason to
+                    # take the player again.
+                    pass
+                elif _hifi_track_over(position_s):
+                    print("hifi: audio track finished at %.1fs, releasing the player"
+                          % position_s, flush=True)
+                    _hifi_invalidate()
+                    _hifi["done"] = True
+                    _hifi["connected"] = False
+                    # src and job stay: the film is still on screen, and
+                    # clearing them would put "no audio source for this film"
+                    # over its last seconds.
+                    _ss_q.put(("release",))
+                elif viewer_seek or now - _hifi["last_restart"] > _hifi_restart_gap_s():
                     _hifi_invalidate()
                     _hifi["last_restart"] = now
                     _hifi["pending_since"] = now
@@ -2607,6 +2667,10 @@ def app_heartbeat(d):
             if sync is not None:
                 hst = "live"
             elif state != "playing":
+                hst = "stopped"
+            elif _hifi["done"]:
+                # The track ended before the picture did. Stopped, not failed:
+                # nothing went wrong and there is nothing to wait for.
                 hst = "stopped"
             elif _hifi["pending_since"] > 0:
                 hst = "starting"

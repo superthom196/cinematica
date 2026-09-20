@@ -225,6 +225,37 @@ class HifiSyncTest(unittest.TestCase):
         self.assertEqual(drain(), [])
         self.assertEqual(r["hifi_status"]["state"], "failed")
 
+    def test_a_track_that_plays_out_releases_the_player_instead_of_restarting(self):
+        """Seen on 2026-09-17, at the end of Fight Club: the audio ran out
+        before the picture did, the stopped stream read as a failure, and the
+        restart put the player back into PLAYING for a stream with nothing in
+        it. Music Assistant kept showing it playing until the bridge was
+        restarted; stopping the film mid-way always released it cleanly."""
+        gen = self.go_live(8340.0)
+        cache = {"src": server._hifi["src"], "aidx": 0, "start_s": 0.0,
+                 "end_s": 8348.4, "complete": True, "error": None}
+        server._hifi_apply_status({"connected": True, "streaming": False, "pending": False,
+                                   "gen": gen, "t0_us": None, "ffmpeg_alive": False,
+                                   "clock_offset_us": 0, "cache": cache})
+        self.assertEqual(drain(), [], "the end of a track is not a failure to retry")
+        self.assertIsNone(server._hifi["last_error"], "nothing went wrong")
+        r = self.beat("playing", 8348.25)
+        self.assertEqual([a[0] for a in drain()], ["release"])
+        self.assertTrue(server._hifi["done"])
+        self.assertFalse(server._hifi["connected"])
+        self.assertEqual(r["hifi_status"], {"state": "stopped", "msg": None})
+        # The film's last frames keep arriving: the player stays let go, and
+        # the overlay says stopped rather than blaming a failure.
+        r = self.beat("playing", 8349.5)
+        self.assertEqual(drain(), [], "one release per film")
+        self.assertEqual(r["hifi_status"]["state"], "stopped")
+        self.beat("ended", 8349.9)
+        self.assertEqual(drain(), [], "and the end of the film has nothing left to release")
+        # A viewer who rewinds out of the credits gets the audio back.
+        self.beat("playing", 7000.0, seek_seq=1)
+        self.assertEqual([a[0] for a in drain()], ["start"])
+        self.assertFalse(server._hifi["done"])
+
     def test_the_previous_film_on_screen_does_not_start_the_next_films_audio(self):
         # run_play_job has committed to the next film: src/job moved on, timeline retired.
         server._hifi["src"] = "http://127.0.0.1:11470/next/0"

@@ -443,11 +443,19 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         resp = await self.start(4, start_s=0.0, pos_at_us=time.monotonic_ns() // 1000 - 800_000)
         # 0.8 s already shown of a 0.15 s track: nothing left to play.
         self.assertEqual(resp.status, 503, resp.data)
+        # And the player is not left holding the stream that start created.
+        # Refusing while the group still says PLAYING is how a film that ran
+        # out left the Sendspin client playing in Music Assistant.
+        self.assertTrue(self.client.group.streams[-1].stopped)
+        self.assertEqual(self.client.group.stops, 1)
         resp = await self.start(5, start_s=0.0, pos_at_us=time.monotonic_ns() // 1000 + 5_000_000)
         self.assertEqual(resp.status, 200, resp.data)
         p = bridge.STATE["pusher"]
         await self.wait_pusher_done(p)
         self.assertEqual(p.chunks, 3)
+        # The push ended by itself, so nobody else will end the stream: the
+        # player is told here or not at all.
+        self.assertTrue(p.stream.stopped, "the track running out ends the stream")
         snap = bridge.status_snapshot()
         self.assertFalse(snap["streaming"])
         self.assertFalse(snap["pending"])

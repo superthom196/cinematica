@@ -149,6 +149,11 @@ START_TIMEOUT_S = 2.0
 # caller's HTTP timeouts are set from this number, not guessed.
 TEARDOWN_TIMEOUT_S = 5.0
 TEARDOWN_MAX_S = 2 * TEARDOWN_TIMEOUT_S + 1.0
+# stream/end and the group update that follow it are QUEUED on the client's
+# writer task, not written by the call that sends them, and disconnecting
+# cancels the connection that owns that writer. One turn of the loop between
+# the two is what gets the last word out to the player.
+TEARDOWN_FLUSH_S = 0.1
 # `docker exec` hands us a client process, not ffmpeg: killing the client
 # leaves ffmpeg decoding into a dead pipe inside the container. So each ffmpeg
 # carries a unique marker in its own argument list (an ignored -metadata) and
@@ -512,6 +517,9 @@ async def _disconnect_active(keep_cache=False):
         if client is not None:
             await _stop_group(client)
         if SERVER is not None and ACTIVE_URL is not None:
+            # Let the stop above reach the player before the connection that
+            # would carry it is cancelled: see TEARDOWN_FLUSH_S.
+            await asyncio.sleep(TEARDOWN_FLUSH_S)
             with contextlib.suppress(Exception):
                 SERVER.disconnect_from_client(ACTIVE_URL)
         CLIENT_ID = None
@@ -682,6 +690,17 @@ async def _push_loop(p, live_future):
         fh.close()
         if STATE["pusher"] is p:
             STATE["pusher"] = None
+            # A push that nobody asked to end -- the track ran out, or it
+            # failed. _stop_pusher(), which is where /stop and /release end a
+            # stream, reads STATE["pusher"], and it has just been cleared, so
+            # this is the last chance to tell the player the stream is over.
+            # Without it the player keeps the last state it was given, which
+            # after a film that played to its end is "playing": that is the
+            # Sendspin client left running in Music Assistant when Fight Club
+            # ran out on 2026-09-17. A stop never showed it, because a stop
+            # tears the stream down while the push is still alive.
+            with contextlib.suppress(Exception):
+                stream.stop()
         print("bridge: gen=%s push ended at %.1fs after %d chunks (%d waits, %d decoder stalls)"
               % (p.gen, p.pos_s, p.chunks, p.waits, dec.stalls))
         if not live_future.done():
@@ -887,6 +906,19 @@ async def handle_start(request):
         )
     except Exception as exc:  # noqa: BLE001
         print("bridge: start gen=%s failed: %s" % (gen, exc))
+        # start_stream() put the group into PLAYING for a stream that turned
+        # out to have nothing in it -- the usual case being a start asked for
+        # past the end of a track that has already played out. The push loop
+        # has ended that stream, but the group's own state is only cleared by
+        # stopping it, and a player left in PLAYING is a player that never
+        # comes back to Music Assistant. Only ours: a start that has since
+        # been superseded belongs to whoever replaced it.
+        async with _lock:
+            if STATE["gen"] == gen:
+                await _stop_pusher()
+                client = _get_client()
+                if client is not None:
+                    await _stop_group(client)
         return web.json_response({"error": "start failed: %s" % exc}, status=503)
 
     return web.json_response({"gen": gen, "t0_us": t0_us, "clock_offset_us": _clock_offset_us()})
