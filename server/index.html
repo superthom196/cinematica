@@ -73,6 +73,12 @@ main{max-width:1180px;margin:0 auto}
 .card:active{transform:scale(.97)}
 .poster{position:relative;aspect-ratio:2/3;background:#0003}
 .poster img{width:100%;height:100%;object-fit:cover;display:block}
+/* watched dims the poster only -- title text below stays readable -- and
+   un-dims on hover/focus so a quick glance can still confirm what it is */
+.poster.watched img{opacity:.4;transition:opacity .15s}
+.card:hover .poster.watched img,.card:focus-within .poster.watched img{opacity:1}
+.poster .pbar{position:absolute;left:0;right:0;bottom:0;height:3px;background:#0004}
+.poster .pbar i{display:block;height:100%;background:var(--accent);width:0}
 .badge{position:absolute;top:.25rem;left:.25rem;background:#000c;color:#fff;font-size:.58rem;
        padding:.1rem .28rem;border-radius:4px;font-weight:700;letter-spacing:.02em}
 .badge.k4{background:#7c3aede6}
@@ -220,14 +226,19 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 .spill.sel{background:var(--accent);color:#fff;border-color:transparent}
 #mepisodes{max-height:14rem;overflow:auto;border:1px solid var(--line);border-radius:10px;margin-bottom:.7rem}
 .eprow{display:flex;align-items:center;gap:.5rem;padding:.5rem .55rem;border-bottom:1px solid var(--line);
-  cursor:pointer;font-size:.82rem}
+  cursor:pointer;font-size:.82rem;position:relative}
 .eprow:last-child{border-bottom:none}
 .eprow:hover,.eprow.sel{background:#8881}
+.eprow.watched{opacity:.45}
+.eprow .ebar{position:absolute;left:0;bottom:0;height:2px;background:var(--accent)}
 .eprow .en{font-weight:700;color:var(--dim);min-width:1.5rem}
 .eprow .et{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .eprow .er{color:var(--dim);font-size:.72rem;white-space:nowrap;flex:none}
 .mact{display:flex;gap:.5rem}
 .mact button{padding:.6rem .9rem;font-size:.85rem}
+#mfav{font-size:1.05rem;line-height:1}
+#mfav.on{background:var(--accent);color:#fff;border-color:transparent}
+#mstart{color:var(--dim);background:transparent}
 #mclose{position:absolute;top:.6rem;right:.6rem;z-index:2;background:#000a;color:#fff;border:none;
   border-radius:999px;width:2rem;height:2rem;font-size:1rem;line-height:1}
 /* ---- provider settings / setup ---- */
@@ -277,12 +288,12 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
   flex-direction:column;align-items:center;justify-content:center;gap:.7rem;padding:1.5rem;text-align:center}
 #perr:not([hidden]){display:flex}
 #perrtext{color:var(--bad);font-size:.9rem;max-width:26rem;margin:0}
-#pnext{position:absolute;inset:0;background:color-mix(in srgb,var(--bg) 94%,transparent);
+#pnext,#pstop{position:absolute;inset:0;background:color-mix(in srgb,var(--bg) 94%,transparent);
   flex-direction:column;align-items:center;justify-content:center;gap:.9rem;padding:1.5rem;text-align:center}
-#pnext:not([hidden]){display:flex}
-#pnexttext{font-size:1rem;max-width:26rem;margin:0}
+#pnext:not([hidden]),#pstop:not([hidden]){display:flex}
+#pnexttext,#pstoptext{font-size:1rem;max-width:26rem;margin:0}
 .pnextrow{display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center}
-#pnextgo{background:var(--accent);color:#fff;border-color:transparent}
+#pnextgo,#pkeep{background:var(--accent);color:#fff;border-color:transparent}
 #pclose{position:absolute;top:calc(.6rem + env(safe-area-inset-top));right:calc(.6rem + env(safe-area-inset-right));
   z-index:2;background:#000a;color:#fff;border:none;border-radius:999px;width:2.2rem;height:2.2rem;font-size:1.15rem;line-height:1}
 @media(prefers-reduced-motion:reduce){#pstate .prog>i{transition:none}}
@@ -291,7 +302,8 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
   <div class="brand">
     <h1>Cinematica</h1>
   </div>
-  <div class="kwrap"><button id="kmovie" class="on">Movies</button><button id="ktv">Series</button></div>
+  <div class="kwrap"><button id="kmovie" class="on">Movies</button><button id="ktv">Series</button>
+    <button id="kfav" title="Favourites" aria-label="Favourites">&#9829;</button></div>
   <div class="controls">
     <button id="qbtn" title="Search">&#128269;<span class="wide"> Search</span></button>
     <button id="nbtn" title="Assess the connection">&#9889;</button>
@@ -346,7 +358,9 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <div class="mrow" id="mseasons" hidden></div>
     <div id="mepisodes" hidden></div>
     <div class="mstream" id="mstream"></div>
-    <div class="mact"><button class="play" id="mplay">Play</button></div>
+    <div class="mact"><button class="play" id="mplay">Play</button>
+      <button id="mfav" title="Favourite">&#9829;</button>
+      <button id="mstart" hidden>From the start</button></div>
   </div></div></div>
 <div id="pov"><div class="pwrap">
   <!-- playsinline + webkit-playsinline are mandatory: without them iPhone Safari
@@ -361,6 +375,10 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <div class="pnextrow">
       <button id="pnextgo">Play now</button>
       <button id="pnextstop">Cancel</button></div></div>
+  <div id="pstop" hidden><p id="pstoptext">Keep your place, or done with this one?</p>
+    <div class="pnextrow">
+      <button id="pkeep">Keep my place</button>
+      <button id="pdone">Done with this</button></div></div>
   <button id="pclose" title="Close">&times;</button>
 </div></div>
 <div class="toasts" id="toasts"></div>
@@ -384,7 +402,40 @@ const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>ESCS[c]);
 // to load. The TV app had the same assumption baked in and lost it; this is the
 // same removal, here. Escaped because the value is provider-supplied and lands
 // in an attribute.
+// Mirrors server/shelf.py -- see shelf-contract.md. The client only needs the
+// two boundaries that decide what the stop prompt shows.
+const PIN_FROM = 0.20, DONE_AT = 0.90;
+
 let movies=[];
+let seenIds = new Set();     // every id already placed on (or queued for) the wall this view --
+                              // covers both the pinned-prepend dedupe and ordinary paging dedupe
+const tiles = new Map();     // id -> {el, poster, m} for in-place tile updates (watched/progress/fav)
+
+function paintPosterShelf(posterEl, shelf){
+  posterEl.classList.toggle('watched', !!(shelf&&shelf.watched));
+  let bar=posterEl.querySelector('.pbar');
+  if(shelf && shelf.progress!=null){
+    if(!bar){ bar=document.createElement('div'); bar.className='pbar'; bar.innerHTML='<i></i>'; posterEl.appendChild(bar); }
+    bar.firstElementChild.style.width=Math.round(shelf.progress*100)+'%';
+  } else if(bar) bar.remove();
+}
+// Updates the one wall tile in place -- used after a watched/fav toggle, and
+// after the player closes, so the bar/pin/dim appears without a reload.
+function applyShelf(id, shelf){
+  const t=tiles.get(String(id));
+  if(t){ t.m.shelf=shelf; paintPosterShelf(t.poster, shelf); }
+  const idx=movies.findIndex(x=>String(x.id)===String(id));
+  if(idx>=0) movies[idx].shelf=shelf;
+}
+async function toggleWatched(m){
+  const on = !(m.shelf && m.shelf.watched);
+  try{
+    const r=await fetch('/api/shelf/watched',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:m.id, on})});
+    const d=await r.json();
+    if(d && d.ok && d.shelf) applyShelf(m.id, d.shelf);
+  }catch(e){ /* old server / network hiccup: tile just stays as it was */ }
+}
 
 function render(list, append){
   if(!append) grid.innerHTML='';
@@ -397,9 +448,19 @@ function render(list, append){
       <div class="meta"><div class="t">${esc(m.title)}</div>
         <div class="y">${esc(m.year||'')}</div>
         <div class="s" id="s${m.id}"></div></div>`;
-    c.onclick=()=>openModal(m);
+    // Right-click or a ~550ms touch-hold toggles watched, in place, with no menu.
+    let held=false, holdTimer=null;
+    const startHold=()=>{ held=false; holdTimer=setTimeout(()=>{ held=true; toggleWatched(m); },550); };
+    const cancelHold=()=>clearTimeout(holdTimer);
+    c.addEventListener('touchstart', startHold, {passive:true});
+    ['touchend','touchmove','touchcancel'].forEach(ev=>c.addEventListener(ev, cancelHold));
+    c.oncontextmenu=e=>{ e.preventDefault(); toggleWatched(m); };
+    c.onclick=()=>{ if(held){ held=false; return; } openModal(m); };
     grid.appendChild(c);
+    const poster=c.querySelector('.poster');
+    tiles.set(String(m.id), {el:c, poster, m});
     paint(m);
+    paintPosterShelf(poster, m.shelf);
   });
 }
 
@@ -430,7 +491,7 @@ const ROWS_AHEAD=3;   // how many rows to keep buffered beyond what is on screen
 const gbtn=document.getElementById('gbtn'), gmenu=document.getElementById('gmenu'),
       gcount=document.getElementById('gcount');
 const sbtn=document.getElementById('sbtn'), smenu=document.getElementById('smenu');
-const kmovie=document.getElementById('kmovie'), ktv=document.getElementById('ktv');
+const kmovie=document.getElementById('kmovie'), ktv=document.getElementById('ktv'), kfav=document.getElementById('kfav');
 const npdot=document.getElementById('npdot'), nptext=document.getElementById('nptext');
 
 // The bar carried no state at all, so there was no way to tell what the TV was
@@ -448,7 +509,12 @@ function paint(m){
   const d = m.stream ? {pick:m.stream.pick, count:m.stream.count, url:m.stream.url}
                      : streamCache[m.id];
   const s=document.getElementById('s'+m.id), b=document.getElementById('b'+m.id);
-  if(!d || !d.pick){ if(s){ s.className='s bad'; s.textContent='no stream'; } return; }
+  if(!d || !d.pick){
+    // Pinned/favourite items are built from a stored snapshot and may lack
+    // stream data entirely -- that is "unknown", never "no stream".
+    if(s){ if(m._snap){ s.className='s'; s.textContent=''; } else { s.className='s bad'; s.textContent='no stream'; } }
+    return;
+  }
   streamCache[m.id]=d;
   const p=d.pick;
   // No size: the picker already chose the best available release, so the figure
@@ -500,6 +566,7 @@ async function fetchRow(){
   if(loading || exhausted) return;
   loading=true;
   const gen=loadGen;
+  const wasOffsetZero = offset===0;
   // The first request on a cold view resolves real torrents and can take ~30s.
   // Say so: the old loader set this and the rewrite dropped it, which left the
   // page blank and silent on first load.
@@ -517,15 +584,45 @@ async function fetchRow(){
     // the view we just left: rendering it painted the old films into the fresh
     // grid and advanced offset past the new view's real first page.
     if(gen!==loadGen) return;
-    const got = d.movies||[];
-    pending.push(...got);
-    offset += got.length;
-    exhausted = !d.more || got.length===0;
+    const raw = d.movies||[];
+    // Pinned/offset math is untouched: it counts the real catalogue page,
+    // never the top-level `pinned` array (that's a separate, unpaginated list).
+    offset += raw.length;
+    exhausted = !d.more || raw.length===0;
+    const got = raw.filter(x=>!seenIds.has(x.id));
+    if(wasOffsetZero && Array.isArray(d.pinned) && d.pinned.length){
+      const pins = d.pinned.filter(x=>!seenIds.has(x.id));
+      pins.forEach(x=>{ x._snap=true; seenIds.add(x.id); });
+      got.forEach(x=>seenIds.add(x.id));
+      pending.push(...pins, ...got);
+    } else {
+      got.forEach(x=>seenIds.add(x.id));
+      pending.push(...got);
+    }
   }catch(e){
     if(gen===loadGen) document.getElementById('loadmore').textContent='Failed to load more.';
   }
   finally{ if(gen===loadGen) loading=false; }   // a stale page must not clear
 }                                               // the live request's flag
+
+// The favourites tab: no paging, just the one list, prepended/deduped the
+// same way pinned items are on the ordinary wall.
+async function loadFavourites(){
+  const lm=document.getElementById('loadmore');
+  exhausted=true;
+  const gen=loadGen;
+  try{
+    const d=await (await fetch('/api/shelf')).json();
+    if(gen!==loadGen) return;
+    const items=(d.items||[]).map(x=>{ x._snap=true; return x; });
+    movies=items; items.forEach(x=>seenIds.add(x.id));
+    if(items.length){ render(items,false); lm.textContent=''; }
+    else lm.textContent='Nothing here yet \u2014 open a title and press \u2665';
+  }catch(e){
+    // old server / no route yet: identical to "nothing favourited", never an error
+    if(gen===loadGen) lm.textContent='Nothing here yet \u2014 open a title and press \u2665';
+  }
+}
 
 function drip(){
   const c=cols();
@@ -598,6 +695,7 @@ async function applyGenres(){
   const nots  = allGenres.filter(g=>banned.has(String(g.id))).map(g=>g.name);
   msg.textContent = 'Loading…';
   grid.innerHTML=''; movies=[]; pending=[]; offset=0; exhausted=false; streamCache={};
+  seenIds=new Set(); tiles.clear();
   document.getElementById('loadmore').textContent = kind==='tv' ? 'Finding series…' : 'Finding movies…';
   await fetchRow(); pump();
 }
@@ -612,10 +710,15 @@ function loadGenres(){
     .catch(()=>{ /* menu stays empty; the grid does not depend on it */ });
 }
 
-/* ---------- Movies / Series toggle ---------- */
+/* ---------- Movies / Series / Favourites toggle ---------- */
 function syncKindUI(){
   kmovie.classList.toggle('on', kind==='movie');
   ktv.classList.toggle('on', kind==='tv');
+  kfav.classList.toggle('on', kind==='fav');
+  // Sort/Genres make no sense against the favourites list -- disabling (rather
+  // than a new dimmed-but-clickable style) reuses the existing button:disabled
+  // look and, for free, stops the menus from opening at all.
+  sbtn.disabled = gbtn.disabled = (kind==='fav');
 }
 function setKind(k){
   if(k===kind) return;
@@ -626,14 +729,23 @@ function setKind(k){
   allGenres=[]; renderGenres();
   loadGen++; loading=false;
   grid.innerHTML=''; movies=[]; pending=[]; offset=0; exhausted=false; streamCache={};
+  seenIds=new Set(); tiles.clear();
+  if(k==='fav'){
+    smenu.classList.remove('open'); gmenu.classList.remove('open');
+    document.getElementById('loadmore').textContent='Loading your favourites…';
+    loadFavourites();
+    return;
+  }
   document.getElementById('loadmore').textContent = kind==='tv' ? 'Finding series…' : 'Finding movies…';
   loadGenres();
   fetchRow().then(pump);
 }
 kmovie.onclick=()=>setKind('movie');
 ktv.onclick=()=>setKind('tv');
+kfav.onclick=()=>setKind('fav');
 syncKindUI();
 if(kind==='tv') document.getElementById('loadmore').textContent='Finding series…';
+else if(kind==='fav') document.getElementById('loadmore').textContent='Loading your favourites…';
 
 /* ---------- link assessment ---------- */
 const nbtn=document.getElementById('nbtn');
@@ -807,7 +919,35 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&sov.classList.cont
 /* ---------- info modal ---------- */
 const ov=document.getElementById('ov');
 const mseasons=document.getElementById('mseasons'), mepisodes=document.getElementById('mepisodes');
-let modalMovie=null, modalTv=null, modalSeason=null, modalEp=null;
+const mfav=document.getElementById('mfav'), mstart=document.getElementById('mstart');
+let modalMovie=null, modalTv=null, modalMovieDetail=null, modalSeason=null, modalEp=null;
+let pendingNextEp=null;   // {s,e} from shelf.next, consumed once on modal open
+
+function paintFavButton(shelf){ mfav.classList.toggle('on', !!(shelf&&shelf.fav)); }
+// The snap the server stores for a favourite so it can show something even if
+// the title later vanishes from the catalogue. Wall-list items keep the IMDb
+// id nested at m.imdb.id (see server.py's get_page()); the detail endpoints
+// return it as a top-level imdb_id -- prefer that once it has loaded.
+function currentSnap(){
+  const isTv=!!modalTv, wall=modalMovie, det=isTv?modalTv:modalMovieDetail;
+  const imdbId=(det && det.imdb_id) || (wall && wall.imdb && wall.imdb.id) || null;
+  const year = isTv
+    ? ((modalTv.first_air ? modalTv.first_air.slice(0,4) : null) || (wall&&wall.year) || null)
+    : (wall&&wall.year) || null;
+  return {kind: isTv?'tv':'movie', title:(wall&&wall.title)||(det&&det.title)||'',
+          year, poster:(wall&&wall.poster)||(det&&det.poster)||null, imdb_id:imdbId};
+}
+async function toggleFav(){
+  const m=modalMovie; if(!m) return;
+  const on = !(m.shelf && m.shelf.fav);
+  try{
+    const r=await fetch('/api/shelf/fav',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:m.id, on, snap:currentSnap()})});
+    const d=await r.json();
+    if(d && d.ok && d.shelf){ m.shelf=d.shelf; applyShelf(m.id, d.shelf); paintFavButton(d.shelf); }
+  }catch(e){ /* old server / network hiccup: button just stays as it was */ }
+}
+mfav.onclick=toggleFav;
 
 let playGen=0;
 function closeModal(){
@@ -828,7 +968,7 @@ ov.onclick=e=>{ if(e.target===ov) closeModal(); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape' && !pov.classList.contains('open')) closeModal(); });
 
 async function openModal(m){
-  modalMovie=m; modalTv=null; modalSeason=null; modalEp=null;
+  modalMovie=m; modalTv=null; modalMovieDetail=null; modalSeason=null; modalEp=null;
   ov.classList.add('open');
   document.getElementById('mtitle').textContent=m.title;
   document.getElementById('mtag').textContent='';
@@ -841,6 +981,8 @@ async function openModal(m){
   mepisodes.hidden=true; mepisodes.innerHTML='';
   const sd=document.getElementById('mstream');
   const mp=document.getElementById('mplay');
+  paintFavButton(m.shelf);
+  mstart.hidden=true; mstart.onclick=null;   // reset each open; series never shows it
 
   if(m.kind==='tv'){
     sd.innerHTML=''; mp.disabled=true; mp.onclick=null;
@@ -848,6 +990,9 @@ async function openModal(m){
       const d=await (await fetch('/api/tv/'+m.id)).json();
       if(!modalMovie || modalMovie.id!==m.id || modalMovie.kind!==m.kind) return;   // closed / switched mid-fetch
       modalTv=d;
+      // The wall copy of shelf may be stale -- this detail response is fresh.
+      if(d.shelf){ m.shelf=d.shelf; applyShelf(m.id, d.shelf); }
+      paintFavButton(m.shelf);
       document.getElementById('mtag').textContent=d.tagline||'';
       if(d.overview) document.getElementById('mover').textContent=d.overview;
       const fy=d.first_air?d.first_air.slice(0,4):'', ly=d.last_air?d.last_air.slice(0,4):'';
@@ -856,20 +1001,39 @@ async function openModal(m){
                    d.vote?'★ '+d.vote.toFixed(1)+(d.votes?` (${d.votes})`:''):'',
                    ...(d.genres||[])].filter(Boolean);
       document.getElementById('mchips').innerHTML=chips.map(t=>`<span class="chip">${esc(t)}</span>`).join('');
-      renderSeasons(d.seasons||[]);
+      renderSeasons(d.seasons||[], m.shelf && m.shelf.next);
     }catch(e){
       document.getElementById('mover').textContent = m.overview || 'Could not load series details.';
     }
     return;
   }
 
+  function applyFilmResumeUI(){
+    const resumeS = modalMovie && modalMovie.shelf && modalMovie.shelf.resume_s;
+    if(resumeS){
+      mp.textContent='Resume '+hms(resumeS);
+      mp.onclick=()=>{ playHere('movie', m.id, null, null, m.title, false, resumeS); };
+      mstart.hidden=false;
+      mstart.onclick=()=>{ playHere('movie', m.id, null, null, m.title, false, null); };
+    } else {
+      mp.textContent='Play';
+      mp.onclick=()=>{ playHere('movie', m.id, null, null, m.title); };
+      mstart.hidden=true; mstart.onclick=null;
+    }
+  }
+
   const cached=streamCache[m.id];
   sd.innerHTML = cached ? streamHtml(cached) : '';
   mp.disabled = !(cached && cached.pick);
-  mp.onclick=()=>{ playHere('movie', m.id, null, null, m.title); };
+  applyFilmResumeUI();
 
   try{
     const d=await (await fetch('/api/movie/'+m.id)).json();
+    if(!modalMovie || modalMovie.id!==m.id || modalMovie.kind==='tv') return;   // closed / switched mid-fetch
+    modalMovieDetail=d;
+    if(d.shelf){ m.shelf=d.shelf; applyShelf(m.id, d.shelf); }
+    paintFavButton(m.shelf);
+    applyFilmResumeUI();
     document.getElementById('mtag').textContent=d.tagline||'';
     if(d.overview) document.getElementById('mover').textContent=d.overview;
     const chips=[d.release?d.release.slice(0,4):m.year,
@@ -886,19 +1050,24 @@ async function openModal(m){
       if(modalMovie && modalMovie.id===m.id){
         sd.innerHTML=streamHtml(d);
         mp.disabled=!d.pick;
+        applyFilmResumeUI();   // the stream check above just replaced mp's handlers
       }
     }catch(e){ sd.innerHTML='<b>Could not check this one.</b>'; }
   }
 }
 
 let seasonGen=0;
-function renderSeasons(seasons){
+function renderSeasons(seasons, nextEp){
+  pendingNextEp = nextEp || null;   // shelf.next -- consumed once, by the matching selectSeason() below
   mseasons.innerHTML = seasons.map(s=>
     `<button class="spill" data-n="${s.n}">${esc(s.name||('Season '+s.n))}${s.episodes?` (${s.episodes})`:''}</button>`
   ).join('');
   mseasons.hidden = !seasons.length;
   mseasons.querySelectorAll('.spill').forEach(b=>b.onclick=()=>selectSeason(Number(b.dataset.n)));
-  if(seasons.length) selectSeason(seasons[0].n);
+  if(seasons.length){
+    const start = (pendingNextEp && seasons.some(s=>s.n===pendingNextEp.s)) ? pendingNextEp.s : seasons[0].n;
+    selectSeason(start);
+  }
 }
 
 async function selectSeason(n){
@@ -922,11 +1091,50 @@ async function selectSeason(n){
        </div>`).join('') || '<div style="padding:.6rem;color:var(--dim);font-size:.8rem">No episodes listed.</div>';
     mepisodes.querySelectorAll('.eprow').forEach(row=>{
       const e=eps.find(x=>String(x.episode)===row.dataset.e);
-      if(e) row.onclick=()=>selectEpisode(e);
+      if(!e) return;
+      paintEpRow(row, e);
+      // Right-click or a ~550ms touch-hold toggles that episode's watched state.
+      let held=false, holdTimer=null;
+      const startHold=()=>{ held=false; holdTimer=setTimeout(()=>{ held=true; toggleEpisodeWatched(tvId,e,row); },550); };
+      const cancelHold=()=>clearTimeout(holdTimer);
+      row.addEventListener('touchstart', startHold, {passive:true});
+      ['touchend','touchmove','touchcancel'].forEach(ev=>row.addEventListener(ev, cancelHold));
+      row.oncontextmenu=ev=>{ ev.preventDefault(); toggleEpisodeWatched(tvId,e,row); };
+      row.onclick=()=>{ if(held){ held=false; return; } selectEpisode(e); };
     });
+    if(pendingNextEp && pendingNextEp.s===n){
+      const match=eps.find(x=>x.episode===pendingNextEp.e);
+      pendingNextEp=null;
+      if(match) selectEpisode(match);
+    }
   }catch(e){
     if(gen===seasonGen) mepisodes.innerHTML='<div style="padding:.6rem;color:var(--bad);font-size:.8rem">Could not load episodes.</div>';
   }
+}
+
+function paintEpRow(row, e){
+  row.classList.toggle('watched', !!e.watched);
+  let bar=row.querySelector('.ebar');
+  if(e.progress!=null && !e.watched){
+    if(!bar){ bar=document.createElement('div'); bar.className='ebar'; row.appendChild(bar); }
+    bar.style.width=Math.round(e.progress*100)+'%';
+  } else if(bar) bar.remove();
+}
+async function toggleEpisodeWatched(tvId, ep, row){
+  const on = !ep.watched;
+  try{
+    const r=await fetch('/api/shelf/watched',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:tvId, on, s:ep.season, e:ep.episode})});
+    const d=await r.json();
+    if(!d || !d.ok) return;
+    // The response only echoes the title's own shelf, not per-episode fields --
+    // the row itself is updated optimistically from the toggle we just sent.
+    ep.watched=on; if(on) ep.progress=null;
+    paintEpRow(row, ep);
+    if(d.shelf && modalMovie && modalMovie.id===tvId){
+      modalMovie.shelf=d.shelf; applyShelf(tvId, d.shelf); paintFavButton(d.shelf);
+    }
+  }catch(e){ /* degrade silently */ }
 }
 
 async function selectEpisode(ep){
@@ -947,8 +1155,9 @@ async function selectEpisode(ep){
     mp.onclick=()=>{
       const sN=String(ep.season).padStart(2,'0'), eN=String(ep.episode).padStart(2,'0');
       const title = modalTv.title+' · S'+sN+'E'+eN+' · '+(ep.name||'');
-      playHere('tv', tvId, ep.season, ep.episode, title);
+      playHere('tv', tvId, ep.season, ep.episode, title, false, ep.resume_s||null);
     };
+    mp.textContent = ep.resume_s ? `Resume S${ep.season} E${ep.episode} · ${hms(ep.resume_s)}` : 'Play';
   }catch(e){ sd.innerHTML='<b>Could not check this one.</b>'; }
 }
 
@@ -1087,6 +1296,8 @@ const pov=document.getElementById('pov'), pv=document.getElementById('pv'),
       pretry=document.getElementById('pretry'), pback=document.getElementById('pback'),
       pnext=document.getElementById('pnext'), pnexttext=document.getElementById('pnexttext'),
       pnextgo=document.getElementById('pnextgo'), pnextstop=document.getElementById('pnextstop'),
+      pstop=document.getElementById('pstop'), pkeep=document.getElementById('pkeep'),
+      pdone=document.getElementById('pdone'),
       pclose=document.getElementById('pclose');
 let pgen=0;                          // guards the poll loop against a stale/abandoned play
 let beatTimer=null, waitTimer=null;
@@ -1094,6 +1305,7 @@ let playToken=null, playTokenGen=null;
 let lastPlayArgs=null, triedKeys=[]; // candidate keys from the last progress poll's tried_keys --
                                       // authoritative; #pretry sends this back as "skip"
 let hls=null;                        // the live hls.js instance, if any -- destroyed on close/replace
+let stopPromptOpen=false;            // the Keep my place / Done with this overlay is showing
 // The episode the server suggested while this one was being prepared (see
 // bx_next_episode), and the countdown offering it. null for a film, for the
 // last episode of a show, and whenever AUTOPLAY_NEXT is off server-side.
@@ -1184,7 +1396,28 @@ async function playNextUp(){
   await stopSession();
   playHere('tv', n.id, n.s, n.e, n.label);
 }
-function closePlayer(){
+// PIN_FROM <= position/duration < DONE_AT: stopping here is "still watching",
+// so every close path funnels through closePlayer() to offer the choice
+// instead of silently dropping (or keeping) the position.
+function stopBand(){
+  const dur=pv.duration;
+  if(!isFinite(dur) || dur<=0) return false;
+  const frac=pv.currentTime/dur;
+  return frac>=PIN_FROM && frac<DONE_AT;
+}
+function showStopPrompt(){ stopPromptOpen=true; pv.pause(); pstop.hidden=false; pkeep.focus(); }
+function hideStopPrompt(){ stopPromptOpen=false; pstop.hidden=true; }
+
+// Re-fetch the detail endpoint for whatever just played, so the wall tile's
+// bar/pin/dim reflects the new position without a reload.
+function refreshTileAfterClose(){
+  const a=lastPlayArgs; if(!a) return;
+  const path = a.kind==='tv' ? '/api/tv/'+a.id : '/api/movie/'+a.id;
+  fetch(path).then(r=>r.json()).then(d=>{ if(d && d.shelf) applyShelf(a.id, d.shelf); }).catch(()=>{});
+}
+
+function reallyClosePlayer(){
+  hideStopPrompt();
   pgen++;                           // abandon any in-flight poll for this play
   // An undestroyed hls.js instance is attached through MediaSource, not src --
   // pv.removeAttribute('src') below does nothing to it, so it keeps fetching
@@ -1197,11 +1430,42 @@ function closePlayer(){
   pv.pause(); pv.removeAttribute('src'); pv.load();   // release the connection
   playToken=null; playTokenGen=null;
   hideTap(); hideError(); clearPState();
+  refreshTileAfterClose();
 }
+function closePlayer(){
+  if(stopPromptOpen) return;        // a stray click while the prompt is up: its own buttons decide
+  if(stopBand()) showStopPrompt();
+  else reallyClosePlayer();
+}
+async function keepAndClose(){
+  hideStopPrompt();
+  await sendBeat();                 // one last beat so the position is recorded before teardown
+  reallyClosePlayer();
+}
+async function dropAndClose(){
+  hideStopPrompt();
+  const a=lastPlayArgs;
+  const job = a ? (a.kind==='tv' ? 'tv:'+a.id+':'+a.s+':'+a.e : a.id) : null;
+  if(job){
+    try{ await fetch('/api/shelf/drop',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({job})}); }catch(e){ /* close proceeds regardless */ }
+  }
+  reallyClosePlayer();
+}
+pkeep.onclick=keepAndClose;
+pdone.onclick=dropAndClose;
 pclose.onclick=closePlayer;
 pback.onclick=closePlayer;
-pov.onclick=e=>{ if(e.target===pov) closePlayer(); };
-document.addEventListener('keydown', e=>{ if(e.key==='Escape' && pov.classList.contains('open')) closePlayer(); });
+pov.onclick=e=>{
+  if(e.target!==pov) return;
+  if(stopPromptOpen){ keepAndClose(); return; }   // backdrop click while the prompt is up = accept the focused default
+  closePlayer();
+};
+document.addEventListener('keydown', e=>{
+  if(e.key!=='Escape' || !pov.classList.contains('open')) return;
+  if(stopPromptOpen){ hideStopPrompt(); pv.play().catch(()=>{}); return; }   // escape again: cancel, keep watching
+  closePlayer();
+});
 addEventListener('pagehide', stopBeacon);
 // Hiding the tab is NOT the end of the session. This used to beacon a Stop
 // the moment document.hidden went true, so glancing at another tab tore the
@@ -1291,17 +1555,20 @@ async function attachMedia(media){
   hls.attachMedia(pv);
 }
 
-async function playHere(kind,id,s,e,title,isRetry){
+async function playHere(kind,id,s,e,title,isRetry,startAt){
   pov.classList.add('open');        // synchronous, before any await -- the click IS the gesture
   unlockGesture();
   const gen=++pgen;
-  if(!isRetry){ triedKeys=[]; lastPlayArgs={kind,id,s,e,title}; }
+  if(!isRetry){ triedKeys=[]; lastPlayArgs={kind,id,s,e,title,t:(startAt!=null?startAt:null)}; }
   // Whatever was offered belonged to the film that just finished, not this
   // one -- a retry included, since a retry re-prepares and will be told again.
   cancelNextUp(); nextUp=null;
   hideError(); hideTap();
   setPState('Finding a source…');
-  const path = kind==='tv' ? '/api/bplay/tv/'+id+'/'+s+'/'+e : '/api/bplay/'+id;
+  let path = kind==='tv' ? '/api/bplay/tv/'+id+'/'+s+'/'+e : '/api/bplay/'+id;
+  // Carried through retries via lastPlayArgs.t; autoplay-next never sets it.
+  const t = isRetry ? (lastPlayArgs && lastPlayArgs.t) : startAt;
+  if(t!=null) path += '?t='+encodeURIComponent(Math.floor(t));
   // Release the previous attempt's session BEFORE asking for another one.
   // The server refuses a second browser session while the first still holds
   // the player (claim_owner), so a retry that merely dropped its old token
@@ -1362,6 +1629,13 @@ async function playHere(kind,id,s,e,title,isRetry){
       try{ await attachMedia(j.media); }
       catch(err){ showError(err.message||String(err)); return; }
       if(gen!==pgen) return;
+      // bplay echoes back the (possibly clamped) offset it actually honoured --
+      // seek to that, once, as soon as the element knows its own duration.
+      if(typeof d.start_s === 'number'){
+        const seekVal=d.start_s;
+        const onMeta=()=>{ try{ pv.currentTime=seekVal; }catch(err){} pv.removeEventListener('loadedmetadata', onMeta); };
+        pv.addEventListener('loadedmetadata', onMeta);
+      }
       try{ await pv.play(); }
       catch(err){
         if(err.name==='NotAllowedError' || err.name==='AbortError') showTap();
@@ -1378,7 +1652,7 @@ async function playHere(kind,id,s,e,title,isRetry){
 pretry.onclick=()=>{
   if(!lastPlayArgs) return;
   hideError();
-  playHere(lastPlayArgs.kind, lastPlayArgs.id, lastPlayArgs.s, lastPlayArgs.e, lastPlayArgs.title, true);
+  playHere(lastPlayArgs.kind, lastPlayArgs.id, lastPlayArgs.s, lastPlayArgs.e, lastPlayArgs.title, true, lastPlayArgs.t);
 };
 
 /* ---------- provider settings / setup ---------- */
@@ -1797,8 +2071,8 @@ document.getElementById('stop').onclick=async()=>{
   pollNowPlaying();
   await setupCheck;
   if(setupConfigured){
-    loadGenres();
-    await fetchRow(); pump();                    // honours any saved genre selection
+    if(kind==='fav') await loadFavourites();
+    else { loadGenres(); await fetchRow(); pump(); }   // honours any saved genre selection
   }
   new IntersectionObserver(es=>{
     if(es.some(e=>e.isIntersecting)) pump();
