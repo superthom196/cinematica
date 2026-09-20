@@ -132,15 +132,19 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
             Wordmark(logoSize = 26.dp)
             Spacer(Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                // The favourites wall is a third view of the same grid, not a screen of its own:
+                // it belongs in the switch that already chooses which wall you are looking at.
+                val fav = state.kind == LibraryStore.KIND_FAV
                 SegmentedPill(
-                    options = listOf("movie" to "Movies", "tv" to "Series"),
+                    options = listOf("movie" to "Movies", "tv" to "Series", LibraryStore.KIND_FAV to "♥"),
                     selected = state.kind,
                     onSelect = { vm.library.setKind(it) },
                 )
                 PillButton("Search", onClick = { vm.openSearch() }, dense = true, modifier = Modifier.focusRequester(headerFocus))
-                PillButton("Sort: ${sortName(state.sort)} ▾", onClick = { sortOpen = true }, dense = true)
+                // Sort and genres belong to a pool. The wall is already in the order it wants.
+                PillButton("Sort: ${sortName(state.sort)} ▾", onClick = { sortOpen = true }, dense = true, enabled = !fav)
                 val n = state.include.size + state.exclude.size
-                PillButton("Genres ${if (n > 0) "($n) " else ""}▾", onClick = { genreOpen = true }, dense = true)
+                PillButton("Genres ${if (n > 0) "($n) " else ""}▾", onClick = { genreOpen = true }, dense = true, enabled = !fav)
                 PillButton(vm.net.chipLabel(netState.net), onClick = { vm.net.refresh(); netOpen = true }, dense = true)
                 PillButton("Settings", onClick = { vm.openSettings() }, dense = true)
             }
@@ -149,7 +153,8 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
         // A cold view assembles its whole pool before the first row can exist, which takes minutes
         // for a biased film wall. A blank grid for that long reads as a broken service, so the
         // server's own progress goes on screen as a ring that only ever closes.
-        val gathering = state.movies.isEmpty() && state.loading && !state.failed
+        // Never on the favourites wall: one file read is not a pool being assembled.
+        val gathering = state.movies.isEmpty() && state.loading && !state.failed && state.kind != LibraryStore.KIND_FAV
         Box(Modifier.fillMaxSize()) {
         if (gathering) GatheringRing(state.progress, state.kind)
         LazyVerticalGrid(
@@ -165,6 +170,7 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
                     movie,
                     onClick = { vm.library.rememberFocus(index); vm.openDetail(movie) },
                     progress = playJob?.takeIf { it.id == movie.id }?.pct,
+                    onLongClick = { vm.toggleWatched(movie) },
                     modifier = Modifier
                         .onFocusChanged { if (it.isFocused) vm.library.rememberFocus(index) }
                         .then(if (index == restoreTo.coerceIn(0, (state.movies.size - 1).coerceAtLeast(0))) Modifier.focusRequester(itemFocus) else Modifier),
@@ -226,6 +232,8 @@ private fun GatheringRing(progress: ViewProgress?, kind: String) {
 
 /** The one line under the grid, in the phone page's words. */
 private fun footerText(state: io.github.superthom196.cinematica.browse.LibraryState): String = when {
+    state.kind == LibraryStore.KIND_FAV ->
+        if (state.movies.isEmpty() && !state.loading) "Nothing here yet — open a title and press ♥" else ""
     state.failed -> "Failed to load more."
     state.exhausted && state.movies.isEmpty() -> "Nothing playable found — try a different sort or fewer genres."
     state.exhausted -> "End of the list · ${state.movies.size} ${if (state.kind == "tv") "series" else "movies"}"

@@ -73,6 +73,19 @@ private const val OSD_MS = 4_000L
 private const val SEEK_STEP_MS = 10_000L
 private const val SEEK_COMMIT_MS = 350L
 
+// Mirrors server/shelf.py. Below PIN_FROM a stop is an early bail and nothing is kept; at DONE_AT
+// the film counts as watched. Between the two the server is about to pin it and go on offering it,
+// which is the only moment worth asking the viewer about.
+private const val PIN_FROM = 0.20f
+private const val DONE_AT = 0.90f
+
+/** Whether a stop here is the kind the server would pin. An unknown or still-growing total is not. */
+private fun inPinBand(st: PlayerState): Boolean {
+    if (st.lengthMs <= 0L || st.isLive) return false
+    val at = st.timeMs.toFloat() / st.lengthMs
+    return at >= PIN_FROM && at < DONE_AT
+}
+
 /**
  * The film, full screen, with an OSD that comes up on any key and goes away again.
  *
@@ -102,6 +115,9 @@ fun PlayerScreen(vm: AppViewModel) {
     var picker by remember { mutableStateOf(false) }
     var pickerIndex by remember { mutableIntStateOf(0) }
     var backArmed by remember { mutableStateOf(false) }
+    // The two-row prompt the Back that would stop playback opens, part-way through a film.
+    var stopPrompt by remember { mutableStateOf(false) }
+    var stopIndex by remember { mutableIntStateOf(0) }
     var seekTarget by remember { mutableStateOf<Long?>(null) }
     var noticeVisible by remember { mutableStateOf(false) }
     var trackNoteVisible by remember { mutableStateOf(false) }
@@ -194,7 +210,20 @@ fun PlayerScreen(vm: AppViewModel) {
                     return@onPreviewKeyEvent ev.key == Key.Back
                 }
                 keyTick++
-                if (picker) {
+                if (stopPrompt) {
+                    when (ev.key) {
+                        Key.DirectionUp -> { stopIndex = 0; true }
+                        Key.DirectionDown -> { stopIndex = 1; true }
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                            stopPrompt = false
+                            if (stopIndex == 1) vm.dropAndStop() else vm.stopPlayback()
+                            true
+                        }
+                        // Backing out of the question is not an answer: the film carries on.
+                        Key.Back -> { stopPrompt = false; true }
+                        else -> true
+                    }
+                } else if (picker) {
                     when (ev.key) {
                         Key.DirectionUp -> { pickerIndex = (pickerIndex - 1).coerceAtLeast(0); true }
                         Key.DirectionDown -> { pickerIndex = (pickerIndex + 1).coerceAtMost(maxOf(0, tracks.lastIndex)); true }
@@ -230,7 +259,13 @@ fun PlayerScreen(vm: AppViewModel) {
                     Key.Back -> {
                         val finished = st.status is PlayStatus.Ended || st.status is PlayStatus.Error ||
                             st.status is PlayStatus.Idle
-                        if (finished || backArmed) vm.stopPlayback() else backArmed = true
+                        when {
+                            // Stopping part-way through is the one stop the server acts on, so it
+                            // is the one worth a question. Everywhere else Back is what it was.
+                            (finished || backArmed) && inPinBand(st) -> { backArmed = false; stopIndex = 0; stopPrompt = true }
+                            finished || backArmed -> vm.stopPlayback()
+                            else -> backArmed = true
+                        }
                         true
                     }
                     else -> false
@@ -261,6 +296,7 @@ fun PlayerScreen(vm: AppViewModel) {
         if (osdVisible || picker) Osd(st, pick, seekTarget, backArmed, noticeVisible, hifi, syncErrMs, hifiStatus)
         if (lipSync) LipSyncBar(hifiDelayMs, Modifier.align(Alignment.BottomCenter))
         if (picker) TrackPicker(tracks, pickerIndex, Modifier.align(Alignment.CenterEnd))
+        if (stopPrompt) StopPrompt(stopIndex, Modifier.align(Alignment.Center))
         // Audio that failed to start is said even with the OSD down: a silent film must never
         // pass for a quiet one.
         val failed = hifiStatus?.takeIf { hifi && it.state == "failed" }
@@ -460,6 +496,34 @@ private fun TrackPicker(rows: List<PickRow>, index: Int, modifier: Modifier = Mo
                         modifier = Modifier.weight(1f),
                     )
                     if (row.selected) Text("●", style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.AccentBright)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Stopping part-way through: keep the place, or be done with it. Same panel as the track picker,
+ * centred, and the safe answer is the one already under the cursor.
+ */
+@Composable
+private fun StopPrompt(index: Int, modifier: Modifier = Modifier) {
+    Box(modifier.width(340.dp).background(Color(0xEE16161C), RoundedCornerShape(14.dp)).padding(vertical = 12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            SectionLabel("Stopping", Modifier.padding(start = 16.dp, bottom = 4.dp))
+            listOf("Keep my place", "Done with this").forEachIndexed { i, label ->
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(if (i == index) Modifier.background(CinematicaColors.SurfaceHigh) else Modifier)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (i == index) CinematicaColors.Text else CinematicaColors.Muted,
+                        maxLines = 1,
+                    )
                 }
             }
         }

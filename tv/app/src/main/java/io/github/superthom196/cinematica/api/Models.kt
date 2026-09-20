@@ -53,6 +53,27 @@ data class Imdb(
     val id: String? = null,
 )
 
+/**
+ * What the server remembers about a title: favourite, watched, where the viewer got to. Absent on
+ * a server that predates the shelf, and absent on a title nothing is known about — which is the
+ * same thing to every screen here, so nothing ever has to tell the two apart.
+ */
+@Serializable
+data class Shelf(
+    val fav: Boolean = false,
+    val watched: Boolean = false,
+    val pinned: Boolean = false,
+    /** 0..1, or null. A film's own position; for a series, its in-progress episode's. */
+    val progress: Float? = null,
+    /** Seconds to start from, already backed off a few seconds by the server. Films only. */
+    val resume_s: Int? = null,
+    val next: ShelfNext? = null,
+)
+
+/** Where a series carries on. A null [resume_s] means the start of that episode. */
+@Serializable
+data class ShelfNext(val s: Int, val e: Int, val resume_s: Int? = null)
+
 @Serializable
 data class Movie(
     val id: String? = null,
@@ -73,11 +94,18 @@ data class Movie(
     val imdb: Imdb? = null,
     val boost: Double? = null,
     val kind: String? = null,
+    val shelf: Shelf? = null,
 )
 
 @Serializable
 data class MoviesPage(
     val movies: List<Movie>? = null,
+    /**
+     * At offset 0 only: the titles the viewer is part-way through, most recently touched first.
+     * They go in front of the catalogue, and a later page repeating one of them drops it. Built
+     * from a stored snapshot, so they may carry no stream, rating or quality at all.
+     */
+    val pinned: List<Movie> = emptyList(),
     val offset: Int? = null,
     val limit: Int? = null,
     val more: Boolean? = null,
@@ -123,6 +151,7 @@ data class MovieDetail(
     val backdrop: String? = null,
     val poster: String? = null,
     val imdb_id: String? = null,
+    val shelf: Shelf? = null,
 )
 
 @Serializable
@@ -152,6 +181,7 @@ data class TvDetail(
     val backdrop: String? = null,
     val poster: String? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
+    val shelf: Shelf? = null,
 )
 
 @Serializable
@@ -164,6 +194,11 @@ data class Episode(
     val air: String? = null,
     val still: String? = null,
     val vote: Double? = null,
+    // An episode has no shelf object of its own: the three things worth knowing about one are
+    // flat on the episode, and a series' fav/pinned belong to the series.
+    val watched: Boolean = false,
+    val progress: Float? = null,
+    val resume_s: Int? = null,
 )
 
 @Serializable
@@ -308,6 +343,8 @@ data class AppCmd(
     val pick: Pick? = null,
     val transcoded: Boolean? = null,
     val hifi: Boolean = false,
+    /** Where to start, when the play was a resume. Absent on an ordinary play and on autoplay-next. */
+    val start_s: Double? = null,
 )
 
 @Serializable
@@ -387,3 +424,39 @@ data class SearchDone(
 data class SearchFound(
     val found: Int? = null,
 )
+
+/** `/api/shelf`: the favourites, newest first, films and series mixed. */
+@Serializable
+data class ShelfPage(
+    val items: List<Movie> = emptyList(),
+)
+
+/** What the fav and watched posts answer with: the title's shelf as the server now has it. */
+@Serializable
+data class ShelfResp(
+    val ok: Boolean? = null,
+    val shelf: Shelf? = null,
+)
+
+/**
+ * Enough of a title to draw it on the favourites wall after it has fallen out of the catalogue.
+ * Sent with every favourite, since the server has nowhere else to get it from.
+ */
+@Serializable
+data class ShelfSnap(
+    val kind: String? = null,
+    val title: String? = null,
+    val year: String? = null,
+    val poster: String? = null,
+    val imdb_id: String? = null,
+)
+
+@Serializable
+data class FavReq(val id: String, val on: Boolean, val snap: ShelfSnap? = null)
+
+/** `s` and `e` together mean one episode; absent, the whole title. */
+@Serializable
+data class WatchedReq(val id: String, val on: Boolean, val s: Int? = null, val e: Int? = null)
+
+@Serializable
+data class DropReq(val job: String)

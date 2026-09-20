@@ -41,9 +41,10 @@ data class PlayJob(
 /**
  * What to POST and what to poll for. [jobId] is the fallback progress key — used only until the
  * server's own reply names the real job (a film's job id has always just been its catalogue id; an
- * episode's play call names its own).
+ * episode's play call names its own). [t] is where to resume from, in seconds, and is a field
+ * rather than part of [path] so the two path shapes below stay exactly the two shapes there are.
  */
-data class PlayTarget(val path: String, val jobId: String, val title: String?)
+data class PlayTarget(val path: String, val jobId: String, val title: String?, val t: Int? = null)
 
 /**
  * `POST /api/play/{id}` and the progress poll that narrates it.
@@ -71,9 +72,9 @@ class PlayStore(
     private val maxMisses = 10
 
     /** A film from the grid or a search result: same job, its old shape. */
-    fun play(movie: Movie) {
+    fun play(movie: Movie, t: Int? = null) {
         val id = movie.id ?: return
-        play(PlayTarget("/api/play/$id", "$id", movie.title))
+        play(PlayTarget("/api/play/$id", "$id", movie.title, t))
     }
 
     fun play(target: PlayTarget) {
@@ -82,7 +83,7 @@ class PlayStore(
         val gen = ++playGen
         _job.value = PlayJob(target.jobId, target.title.orEmpty())
         pollJob = scope.launch {
-            val resp = runCatching { postPlay(target.path) }
+            val resp = runCatching { postPlay(target.path, target.t) }
             if (gen != playGen) return@launch
             val d = resp.getOrNull()
             if (d == null || d.ok != true) {
@@ -130,11 +131,11 @@ class PlayStore(
      * back into whichever call built it rather than adding a `playPath` to the API just for this —
      * the two shapes below (a film, an episode) are the only ones there are.
      */
-    private suspend fun postPlay(path: String): PlayResp {
-        MOVIE_PATH.find(path)?.let { return api.play(it.groupValues[1]) }
+    private suspend fun postPlay(path: String, t: Int? = null): PlayResp {
+        MOVIE_PATH.find(path)?.let { return api.play(it.groupValues[1], t) }
         TV_PATH.find(path)?.let { m ->
             val (id, s, e, auto) = m.destructured
-            return api.playTv(id, s.toInt(), e.toInt(), auto == "1")
+            return api.playTv(id, s.toInt(), e.toInt(), auto == "1", t)
         }
         error("PlayStore: unrecognised play path $path")
     }

@@ -117,6 +117,8 @@ class PlayerEngine(private val context: Context) {
     private var url: String? = null
     private var title: String? = null
     private var transcoded = false
+    /** Where this film should start, while that has not been dealt with yet. See [open]. */
+    private var resumeMs = 0L
     private var notice: String? = null
     private var noticeSeq = 0L
     private var trackNote: String? = null
@@ -233,12 +235,18 @@ class PlayerEngine(private val context: Context) {
      *
      * [hifi] is Sendspin: the server streams lossless audio out of band, so the TV's own decode
      * must stay silent for this film — otherwise the viewer hears both tracks, out of step.
+     *
+     * [startMs] is a resume point. The engine only *holds* for it: a film the server is still
+     * converting is paused on its first frame rather than played from zero while the converter
+     * catches up. The seek itself belongs to the ViewModel, so the server's seek counter — and the
+     * hifi audio that follows it — sees a resume exactly as it sees a viewer's seek.
      */
-    fun open(url: String, title: String?, transcoded: Boolean, hifi: Boolean = false) {
+    fun open(url: String, title: String?, transcoded: Boolean, hifi: Boolean = false, startMs: Long = 0L) {
         val mp = ensurePlayer()
         this.url = url
         this.title = title
         this.transcoded = transcoded
+        this.resumeMs = startMs
         setAudioEnabled(!hifi)
         status = PlayStatus.Opening
         timeMs = 0L
@@ -322,17 +330,28 @@ class PlayerEngine(private val context: Context) {
         url = null
         title = null
         transcoded = false
+        resumeMs = 0L
         audioTracks = emptyList()
         spuTracks = emptyList()
         publish(force = true)
     }
 
-    fun seekTo(ms: Long) {
+    /** The resume point has been reached, or given up on: stop holding the first frame. */
+    fun clearResume() {
+        resumeMs = 0L
+    }
+
+    /**
+     * [force] is for a resume whose caller has already proved the converted length clears the
+     * target: the refusal below is about seeking past the live edge, and there is no live edge
+     * between here and bytes ffmpeg has already written.
+     */
+    fun seekTo(ms: Long, force: Boolean = false) {
         val mp = player ?: return
         if (status is PlayStatus.Idle || status is PlayStatus.Ended || status is PlayStatus.Error) return
         val len = mp.length
         val at = mp.time
-        if (transcoded && (len <= 0L || lengthProvisional())) {
+        if (transcoded && !force && (len <= 0L || lengthProvisional())) {
             // A growing TS has no trustworthy total: the length VLC reports is whatever ffmpeg has
             // written so far, which can be *behind* the playhead — clamping a forward seek to it
             // would jump backwards — and a seek past the real live edge leaves the server's
@@ -539,6 +558,10 @@ class PlayerEngine(private val context: Context) {
                 status = PlayStatus.Playing
                 seekable = player?.isSeekable ?: false
                 lengthMs = player?.length ?: lengthMs
+                // Resuming into a film the converter has not reached yet: hold on the first frame.
+                // Playing from the beginning would be the one thing a resume must not do, and the
+                // ViewModel releases this the moment the seek can actually land.
+                if (resumeMs > 0L && transcoded && (lengthMs <= 0L || lengthProvisional())) player?.pause()
                 refreshTracks()
                 autoSelectTracks()
                 publish(force = true)
@@ -686,7 +709,8 @@ class PlayerEngine(private val context: Context) {
         }
     }
 
-    private fun say(msg: String) {
+    /** One line on the OSD. Also how the ViewModel says why a resume is waiting. */
+    fun say(msg: String) {
         notice = msg
         noticeSeq++
         publish(force = true)

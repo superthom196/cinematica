@@ -35,6 +35,8 @@ import io.github.superthom196.cinematica.AppViewModel
 import io.github.superthom196.cinematica.UiState
 import io.github.superthom196.cinematica.api.Movie
 import io.github.superthom196.cinematica.api.MovieDetail
+import io.github.superthom196.cinematica.api.Shelf
+import io.github.superthom196.cinematica.api.ShelfSnap
 import io.github.superthom196.cinematica.api.StreamInfo
 import kotlinx.coroutines.launch
 
@@ -54,7 +56,14 @@ fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     var stream by remember(id) { mutableStateOf(id?.let { vm.cachedStream("m:$it") } ?: movie.stream) }
     var probe by remember(id) { mutableStateOf(if (stream != null) StreamProbe.Answered else StreamProbe.Pending) }
 
-    LaunchedEffect(id) { if (id != null) detail = vm.movieDetail(id) }
+    // The grid's own copy is the fresher one — it is patched on the way back from the player — so
+    // the detail response only fills this in when the grid knew nothing about the title.
+    var shelf by remember(id) { mutableStateOf(movie.shelf) }
+
+    LaunchedEffect(id) {
+        if (id != null) detail = vm.movieDetail(id)
+        if (movie.shelf == null) detail?.shelf?.let { shelf = it }
+    }
     LaunchedEffect(id) {
         if (id == null || stream != null) return@LaunchedEffect
         vm.fetchStream(id)
@@ -117,13 +126,30 @@ fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
             VSpace(12.dp)
             val pick = stream?.pick
             val busy = playJob != null
+            val resume = shelf?.resume_s
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 PillButton(
-                    "Play",
-                    onClick = { if (pick != null && !busy) vm.play.play(movie) },
+                    // Where the viewer actually got to, rather than a word for it: "Resume 47:12"
+                    // is the whole reason to press this button instead of the one beside it.
+                    if (resume != null) "Resume ${formatTime(resume.toDouble())}" else "Play",
+                    onClick = { if (pick != null && !busy) vm.play.play(movie, resume) },
                     primary = true,
                     enabled = pick != null && !busy,
                     modifier = Modifier.focusRequester(playFocus),
+                )
+                if (resume != null) {
+                    PillButton("From the start", onClick = { if (pick != null && !busy) vm.play.play(movie) }, enabled = pick != null && !busy)
+                }
+                PillButton(
+                    "♥",
+                    onClick = {
+                        if (id != null) {
+                            val on = shelf?.fav != true
+                            shelf = (shelf ?: Shelf()).copy(fav = on)
+                            vm.setFav(id, on, snapOf(movie, detail))
+                        }
+                    },
+                    primary = shelf?.fav == true,
                 )
                 // Only worth offering while this app actually has a film open.
                 if (ui.playTitle != null) {
@@ -134,6 +160,18 @@ fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
         playJob?.let { BufferingOverlay(it) }
     }
 }
+
+/**
+ * Enough of a title for the favourites wall to draw it after the catalogue has moved on. The
+ * server has nowhere else to get it from, so it rides along with every favourite.
+ */
+fun snapOf(movie: Movie, detail: MovieDetail?): ShelfSnap = ShelfSnap(
+    kind = movie.kind ?: "movie",
+    title = detail?.title ?: movie.title,
+    year = detail?.year ?: movie.year,
+    poster = detail?.poster ?: movie.poster,
+    imdb_id = detail?.imdb_id ?: movie.imdb?.id,
+)
 
 /** Year, runtime, rating and genre names — from the grid's data first, then from `/api/movie`. */
 private fun chips(movie: Movie, detail: MovieDetail?): List<String> {

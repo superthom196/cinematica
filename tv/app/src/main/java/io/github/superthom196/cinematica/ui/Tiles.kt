@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,13 +36,25 @@ fun MovieTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     progress: Double? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val pick: Pick? = movie.stream?.pick
     val isTv = movie.kind == "tv"
-    GridTile(onClick = onClick, modifier = modifier) { _ ->
+    val shelf = movie.shelf
+    // A pinned or favourite tile is built from the server's stored snapshot, which carries no
+    // stream, rating or quality at all. Unknown is not the same answer as "no stream".
+    val snapshot = pick == null && shelf != null
+    GridTile(onClick = onClick, onLongClick = onLongClick, modifier = modifier) { focused ->
         Column(Modifier.padding(4.dp)) {
             Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
-                PosterImage(movie.poster, Modifier.fillMaxWidth().aspectRatio(2f / 3f), corner = 6.dp)
+                // Watched: the poster steps back so the wall reads as what is left to see. Under
+                // focus it comes back, or the tile being looked at would be the dimmest one.
+                PosterImage(
+                    movie.poster,
+                    Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                        .alpha(if (shelf?.watched == true && !focused) 0.4f else 1f),
+                    corner = 6.dp,
+                )
                 if (pick != null || isTv) {
                     Row(
                         Modifier.align(Alignment.TopStart).padding(3.dp),
@@ -74,6 +87,7 @@ fun MovieTile(
             // choose between here. The one thing the tag cannot say is that this pick is a heavy
             // re-encode that will not look like its badge — so say that, and nothing else.
             when {
+                snapshot -> Text("", style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp), maxLines = 1)
                 pick == null -> Text(
                     "no stream",
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold),
@@ -86,9 +100,12 @@ fun MovieTile(
                 )
                 else -> Text("", style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp), maxLines = 1)
             }
-            if (progress != null) {
+            // A launch in progress is the live thing and wins the slot; otherwise the bar is how
+            // far into this one the viewer already is.
+            val bar = progress ?: shelf?.progress?.let { it * 100.0 }
+            if (bar != null) {
                 VSpace(3.dp)
-                ProgressBar(progress, Modifier.fillMaxWidth(), height = 3.dp)
+                ProgressBar(bar, Modifier.fillMaxWidth(), height = 3.dp)
             }
         }
     }

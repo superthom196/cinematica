@@ -15,6 +15,7 @@ import io.github.superthom196.cinematica.api.MovieDetail
 import io.github.superthom196.cinematica.api.NowPlaying
 import io.github.superthom196.cinematica.api.Pick
 import io.github.superthom196.cinematica.api.SeasonResp
+import io.github.superthom196.cinematica.api.ShelfSnap
 import io.github.superthom196.cinematica.api.StreamInfo
 import io.github.superthom196.cinematica.api.HifiStatus
 import io.github.superthom196.cinematica.api.SyncInfo
@@ -130,6 +131,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var jobTitle: String? = null
     private var endedReported = false
     private var errorReported = false
+
+    // A resume the converter has not reached yet: the film is held on its first frame while
+    // `resumeJob` waits for the converted length to clear the target. While that is true the
+    // heartbeat must not report the 0:00 the player is sitting on, or the server would record it
+    // as where the viewer got to and the resume point would be lost to the resume itself.
+    private var resumeJob: Job? = null
+    private var resumeHolding = false
 
     // Hifi (Sendspin) lip sync: the server streams audio out of band and periodically reports how
     // far the TV's picture has drifted from it. lipSync turns each verdict into a rate nudge or a
@@ -270,8 +278,65 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         endedReported = false
         errorReported = false
         _ui.update { it.copy(phase = Phase.Player, playPick = cmd.pick, playTitle = cmd.title, hifi = cmd.hifi) }
-        engine.open(url, cmd.title, cmd.transcoded == true, hifi = cmd.hifi)
+        val startMs = ((cmd.start_s ?: 0.0) * 1000).toLong().coerceAtLeast(0L)
+        engine.open(url, cmd.title, cmd.transcoded == true, hifi = cmd.hifi, startMs = startMs)
         lipSync.onOpen(android.os.SystemClock.uptimeMillis())
+        // A film with no resume point must not inherit the last one's wait.
+        if (startMs > 0L) startResume(startMs) else { resumeJob?.cancel(); resumeJob = null; endResume() }
+    }
+
+    /**
+     * Get the film to [targetMs], once, and only ever through [seekTo] — the same path a viewer's
+     * seek takes, so `seek_seq` moves and the hifi audio follows a resume as it follows a skip.
+     *
+     * Directly playable media: as soon as the player says it can seek. Media the server is still
+     * converting: nothing plays until the converted length comfortably clears the target, because
+     * a forward seek past the live edge leaves the picture hung — so the film waits, paused, and
+     * says so. If the converter has not got there in [RESUME_WAIT_MS] the film starts from the
+     * beginning rather than leaving the viewer looking at a still frame indefinitely.
+     */
+    private fun startResume(targetMs: Long) {
+        resumeJob?.cancel()
+        resumeHolding = false
+        resumeJob = viewModelScope.launch {
+            val at = io.github.superthom196.cinematica.ui.formatTime(targetMs / 1000.0)
+            val giveUpAt = android.os.SystemClock.uptimeMillis() + RESUME_WAIT_MS
+            var saidAt = 0L
+            while (true) {
+                val s = engine.state.value
+                if (!s.active) break
+                if (!s.isLive) {
+                    // A trustworthy length, converted or not: an ordinary seek, the moment one works.
+                    if (s.seekable) { endResume(); seekTo(targetMs); break }
+                } else if (s.lengthMs > targetMs + RESUME_MARGIN_MS) {
+                    endResume()
+                    seekTo(targetMs, force = true)
+                    engine.play()
+                    break
+                } else {
+                    resumeHolding = true
+                    val now = android.os.SystemClock.uptimeMillis()
+                    if (now - saidAt > RESUME_SAY_EVERY_MS) {
+                        saidAt = now
+                        engine.say("Resuming at $at — still converting")
+                    }
+                    if (now > giveUpAt) {
+                        endResume()
+                        engine.play()
+                        engine.say("Still converting — starting from the beginning")
+                        break
+                    }
+                }
+                delay(500)
+            }
+            resumeHolding = false
+        }
+    }
+
+    /** Stop waiting on a resume point, whether it was reached, abandoned, or overtaken by a stop. */
+    private fun endResume() {
+        resumeHolding = false
+        engine.clearResume()
     }
 
     /**
@@ -286,6 +351,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         jobTitle = null
         endedReported = true
         errorReported = true
+        resumeJob?.cancel()
+        resumeJob = null
+        resumeHolding = false
+        val leavingPlayer = _ui.value.phase is Phase.Player
         engine.stop()
         engine.setRate(1f)
         lipSync.reset()
@@ -295,7 +364,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (it.phase is Phase.Player) it.copy(phase = Phase.Library, playPick = null, playTitle = null, hifi = false)
             else it.copy(playPick = null, playTitle = null, hifi = false)
         }
+        // Back on the wall, the film just watched should already show what it now knows about
+        // itself. Not while the app is going to the background: there is nobody to show it to.
+        if (leavingPlayer && isForeground.value) library.refreshShelf()
         if (tellServer) tellServerToStop()
+    }
+
+    /**
+     * "Done with this" on the stop prompt. The drop goes first: after it the server ignores this
+     * job's progress, so the stop that follows cannot write the position straight back.
+     */
+    fun dropAndStop() {
+        val job = jobId
+        if (job == null) { stopPlayback(); return }
+        viewModelScope.launch {
+            runCatching { api.drop(job) }
+            stopPlayback()
+        }
     }
 
     /** A `sync` verdict off the heartbeat, for a hifi film: nudge the engine, and the OSD chip. */
@@ -319,6 +404,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun togglePause() {
+        // Asking for the film outranks waiting for a resume point: the hold is given up, not fought.
+        if (resumeHolding) { resumeJob?.cancel(); resumeJob = null; endResume() }
         engine.setRate(1f)
         lipSync.reset()
         if (engine.state.value.status is PlayStatus.Paused) lipSync.onResume(android.os.SystemClock.uptimeMillis())
@@ -331,12 +418,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         lipSync.onUserSeek(android.os.SystemClock.uptimeMillis())
         engine.seekBy(ms)
     }
-    fun seekTo(ms: Long) {
+    /** [force] is the resume's, and only the resume's: see [PlayerEngine.seekTo]. */
+    fun seekTo(ms: Long, force: Boolean = false) {
         userSeekSeq++
         engine.setRate(1f)
         lipSync.reset()
         lipSync.onUserSeek(android.os.SystemClock.uptimeMillis())
-        engine.seekTo(ms)
+        engine.seekTo(ms, force)
     }
     fun setAudioTrack(id: Int) = engine.setAudioTrack(id)
     fun setSpuTrack(id: Int) = engine.setSpuTrack(id)
@@ -375,8 +463,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // Report `job` from the moment the stream starts opening, not once the first frame is
             // up: launch() waits up to APP_HANDOFF_SECS for exactly that and fails the play without it.
             PlayStatus.Opening, is PlayStatus.Buffering -> PlayerReport("buffering", jobId, jobTitle, pos, dur)
-            PlayStatus.Playing -> PlayerReport("playing", jobId, jobTitle, pos, dur)
-            PlayStatus.Paused -> PlayerReport("paused", jobId, jobTitle, pos, dur)
+            // Held for a resume: "buffering" with no position, because the position it is holding
+            // at is 0:00 and the server would record that as where the viewer got to.
+            PlayStatus.Playing -> if (resumeHolding) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("playing", jobId, jobTitle, pos, dur)
+            PlayStatus.Paused -> if (resumeHolding) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("paused", jobId, jobTitle, pos, dur)
             // "ended" is the falling edge the server's cache watcher looks for; it is said once and
             // then the app is simply idle again.
             PlayStatus.Ended -> if (endedReported) PlayerReport("idle") else PlayerReport("ended", jobId, jobTitle, pos, dur)
@@ -460,6 +550,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toLibrary() {
         _ui.update { it.copy(phase = Phase.Library) }
+    }
+
+    // ---- the shelf ----------------------------------------------------------
+    // Every one of these is optimistic: the grid's own copy changes at once and the request goes
+    // after it. A server that has never heard of these routes simply never answers, which leaves
+    // the app exactly where it was before the press.
+
+    /** Long-press on a tile. */
+    fun toggleWatched(movie: Movie) {
+        val id = movie.id ?: return
+        val on = movie.shelf?.watched != true
+        library.patchShelf(id) { it.copy(watched = on, progress = if (on) null else it.progress) }
+        viewModelScope.launch {
+            runCatching { api.setWatched(id, on) }.getOrNull()?.shelf?.let { s -> library.patchShelf(id) { s } }
+        }
+    }
+
+    /** The ♥ on a detail screen. [snap] is what the favourites wall draws once the catalogue moves on. */
+    fun setFav(id: String, on: Boolean, snap: ShelfSnap) {
+        library.patchShelf(id) { it.copy(fav = on) }
+        viewModelScope.launch {
+            runCatching { api.setFav(id, on, snap) }.getOrNull()?.shelf?.let { s -> library.patchShelf(id) { s } }
+        }
+    }
+
+    /** Long-press on an episode row; the series' own screen keeps the list it is showing in step. */
+    fun setEpisodeWatched(id: String, s: Int, e: Int, on: Boolean) {
+        viewModelScope.launch { runCatching { api.setWatched(id, on, s, e) } }
     }
 
     /** Back out of Detail: to Search with its results intact if that's where it was opened from,
@@ -730,5 +848,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val PIN_MAX_TRIES = 5
         const val PIN_WAIT_MS = 30_000L
+
+        /** How long a resume waits for the converter before giving up and starting from the top. */
+        const val RESUME_WAIT_MS = 180_000L
+        /** How far past the resume point the conversion must be before the seek is safe. */
+        const val RESUME_MARGIN_MS = 10_000L
+        /** A held film says why it is holding this often, so the wait is never unexplained. */
+        const val RESUME_SAY_EVERY_MS = 30_000L
     }
 }

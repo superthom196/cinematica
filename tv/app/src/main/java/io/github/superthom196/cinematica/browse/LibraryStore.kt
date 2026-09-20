@@ -3,6 +3,7 @@ package io.github.superthom196.cinematica.browse
 import io.github.superthom196.cinematica.api.CinematicaApi
 import io.github.superthom196.cinematica.api.Genre
 import io.github.superthom196.cinematica.api.Movie
+import io.github.superthom196.cinematica.api.Shelf
 import io.github.superthom196.cinematica.api.ViewProgress
 import io.github.superthom196.cinematica.data.Prefs
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +65,13 @@ class LibraryStore(
         /** Columns in the grid, and therefore the `limit` on every request. */
         const val COLUMNS = 6
         const val ROWS_AHEAD = 3
+
+        /**
+         * The third segment of the header switch: the favourites wall, films and series mixed.
+         * It lives in [LibraryState.kind] like the other two, but is never persisted — a cold
+         * start always lands on a pool, so a server with no shelf can never open on an empty wall.
+         */
+        const val KIND_FAV = "fav"
     }
 
     private val _state = MutableStateFlow(LibraryState())
@@ -98,6 +106,8 @@ class LibraryStore(
      */
     fun loadGenres() {
         val kind = _state.value.kind
+        // The favourites wall is not a pool and has no genre menu of its own.
+        if (kind == KIND_FAV) return
         scope.launch {
             val resp = withTimeoutOrNull(20_000) { runCatching { api.genres(kind) }.getOrNull() }
             val genres = resp?.genres.orEmpty().filter { it.id != null && it.name != null }
@@ -127,7 +137,8 @@ class LibraryStore(
         scope.launch {
             val include = if (k == "tv") prefs.genresIncludeTv.first() else prefs.genresInclude.first()
             val exclude = if (k == "tv") prefs.genresExcludeTv.first() else prefs.genresExclude.first()
-            prefs.setKind(k)
+            // The wall is a place to visit, not a view to come back to: only a real pool is saved.
+            if (k != KIND_FAV) prefs.setKind(k)
             _state.update { it.copy(kind = k, include = include, exclude = exclude, genres = emptyList()) }
             loadGenres()
             reload()
@@ -172,6 +183,7 @@ class LibraryStore(
 
     fun pump() {
         if (pumpJob?.isActive == true) return
+        if (_state.value.kind == KIND_FAV) { pumpShelf(); return }
         if (!needMore()) { drip(); return }
         val gen = loadGen
         pumpJob = scope.launch {
@@ -187,29 +199,87 @@ class LibraryStore(
                         delay(1_500)
                     }
                 } else null
-                val page = runCatching { api.movies(offset, COLUMNS, s.sort, s.include, s.exclude, s.kind, s.bias) }
+                val resp = runCatching { api.movies(offset, COLUMNS, s.sort, s.include, s.exclude, s.kind, s.bias) }
                 poll?.cancel()
                 _state.update { it.copy(progress = null) }
                 if (gen != loadGen) return@launch
-                val value = page.getOrNull()
+                val value = resp.getOrNull()
                 if (value == null) {
                     // Never retried on a timer: /api/movies is not a cheap list call. The next time
                     // focus moves further down the grid asks again, and nothing else does.
                     _state.update { it.copy(loading = false, failed = true) }
                     return@launch
                 }
-                val got = value.movies.orEmpty()
+                val page = value.movies.orEmpty()
+                // The pinned strip rides on the offset-0 response only, and goes in front of the
+                // catalogue. Being first in `got` is also what makes the dedupe below drop the
+                // catalogue's own copy of a pinned title rather than the other way round.
+                val got = if (offset == 0) value.pinned + page else page
                 // A film can repeat across pages when the pool re-sorts between requests, and a
                 // repeated id crashes the lazy grid's keys: drop anything already shown or waiting.
                 val seen = HashSet<String>()
                 _state.value.movies.forEach { m -> m.id?.let(seen::add) }
                 pending.forEach { m -> m.id?.let(seen::add) }
                 pending += got.filter { m -> val id = m.id; id == null || seen.add(id) }
-                offset += got.size
+                // Paging is the catalogue's alone: the pinned strip is not part of the offset.
+                offset += page.size
                 _state.update { it.copy(loading = false, exhausted = value.more != true || got.isEmpty()) }
                 drip()
             }
             if (gen == loadGen) { _state.update { it.copy(loading = false) }; drip() }
+        }
+    }
+
+    /**
+     * The favourites wall: one request for the lot, no paging, no progress ring — the server is
+     * reading its own file, not resolving torrents. A server that has never heard of the route
+     * answers 404, and an empty wall with its one quiet line is the right thing to show for that
+     * as much as for a viewer who has not favourited anything yet.
+     */
+    private fun pumpShelf() {
+        if (_state.value.exhausted) return
+        val gen = loadGen
+        pumpJob = scope.launch {
+            _state.update { it.copy(loading = true, failed = false) }
+            val items = runCatching { api.shelf() }.getOrNull()?.items.orEmpty()
+            if (gen != loadGen) return@launch
+            _state.update { it.copy(movies = items, loading = false, exhausted = true) }
+        }
+    }
+
+    /**
+     * A shelf change made elsewhere — the ♥ on a detail screen, a long-press on a tile. The grid's
+     * own copy follows at once so the tile says what just happened without waiting for a page.
+     */
+    fun patchShelf(id: String, transform: (Shelf) -> Shelf) {
+        _state.update { st ->
+            st.copy(movies = st.movies.map { m -> if (m.id == id) m.copy(shelf = transform(m.shelf ?: Shelf())) else m })
+        }
+    }
+
+    /**
+     * Back from a film: ask for the first page again — the server has just served it, so it is
+     * cheap — and let its fresh `shelf` objects land on the tiles already on screen, with anything
+     * newly pinned going in front. Never re-pages and never empties the grid.
+     */
+    fun refreshShelf() {
+        if (_state.value.kind == KIND_FAV) { reload(); return }
+        val gen = loadGen
+        scope.launch {
+            val s = _state.value
+            val page = runCatching { api.movies(0, COLUMNS, s.sort, s.include, s.exclude, s.kind, s.bias) }.getOrNull()
+                ?: return@launch
+            if (gen != loadGen) return@launch
+            val fresh = HashMap<String, Shelf?>()
+            (page.pinned + page.movies.orEmpty()).forEach { m -> m.id?.let { fresh[it] = m.shelf } }
+            _state.update { st ->
+                val patched = st.movies.map { m ->
+                    val id = m.id
+                    if (id != null && fresh.containsKey(id)) m.copy(shelf = fresh[id]) else m
+                }
+                val have = patched.mapNotNull { it.id }.toHashSet()
+                st.copy(movies = page.pinned.filter { m -> m.id?.let { it !in have } == true } + patched)
+            }
         }
     }
 

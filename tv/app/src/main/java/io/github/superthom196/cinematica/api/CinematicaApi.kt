@@ -192,15 +192,23 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
     suspend fun streamTv(id: String, s: Int, e: Int, force: Boolean = false): StreamInfo =
         get(shortReadClient, "/api/stream/tv/${encodePathSegment(id)}/$s/$e" + if (force) "?force=1" else "")
 
-    /** 202 (buffering), 409 (already active / no stream) and 502 (TV unreachable) all decode as PlayResp. */
-    suspend fun play(id: String): PlayResp =
-        post(shortReadClient, "/api/play/${encodePathSegment(id)}", allowNonSuccess = true)
-
-    /** Same 202/409/502-as-PlayResp contract as [play]. */
-    suspend fun playTv(id: String, s: Int, e: Int, autoplay: Boolean): PlayResp =
+    /**
+     * 202 (buffering), 409 (already active / no stream) and 502 (TV unreachable) all decode as PlayResp.
+     * [t] is where to start, in seconds, for a resume; left off, the film starts at the beginning.
+     */
+    suspend fun play(id: String, t: Int? = null): PlayResp =
         post(
             shortReadClient,
-            "/api/play/tv/${encodePathSegment(id)}/$s/$e?autoplay=" + if (autoplay) "1" else "0",
+            "/api/play/${encodePathSegment(id)}" + if (t != null) "?t=$t" else "",
+            allowNonSuccess = true,
+        )
+
+    /** Same 202/409/502-as-PlayResp contract as [play]; same [t]. */
+    suspend fun playTv(id: String, s: Int, e: Int, autoplay: Boolean, t: Int? = null): PlayResp =
+        post(
+            shortReadClient,
+            "/api/play/tv/${encodePathSegment(id)}/$s/$e?autoplay=" + (if (autoplay) "1" else "0") +
+                (if (t != null) "&t=$t" else ""),
             allowNonSuccess = true,
         )
 
@@ -222,6 +230,23 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
     suspend fun stop(): OkResp = post(shortReadClient, "/api/stop")
 
     suspend fun reconnect(): OkResp = post(shortReadClient, "/api/reconnect")
+
+    // ---- the shelf ----------------------------------------------------------
+    // A server that predates these routes answers 404, which `body` turns into an IOException:
+    // every caller treats that as "nothing known", which is exactly how the app behaved before.
+    // The bodies are encoded rather than interpolated — a title can contain a quote.
+
+    suspend fun shelf(): ShelfPage = get(shortReadClient, "/api/shelf")
+
+    suspend fun setFav(id: String, on: Boolean, snap: ShelfSnap? = null): ShelfResp =
+        post(shortReadClient, "/api/shelf/fav", json.encodeToString(FavReq.serializer(), FavReq(id, on, snap)))
+
+    suspend fun setWatched(id: String, on: Boolean, s: Int? = null, e: Int? = null): ShelfResp =
+        post(shortReadClient, "/api/shelf/watched", json.encodeToString(WatchedReq.serializer(), WatchedReq(id, on, s, e)))
+
+    /** "Done with this": the server forgets this job's position and stops pinning the title. */
+    suspend fun drop(job: String): OkResp =
+        post(shortReadClient, "/api/shelf/drop", json.encodeToString(DropReq.serializer(), DropReq(job)))
 
     /**
      * The lip-sync trim, in ms, positive when the sound should be heard later. Sent the moment the

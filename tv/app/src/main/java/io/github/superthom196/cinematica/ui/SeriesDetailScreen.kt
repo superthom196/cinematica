@@ -42,6 +42,8 @@ import io.github.superthom196.cinematica.AppViewModel
 import io.github.superthom196.cinematica.UiState
 import io.github.superthom196.cinematica.api.Episode
 import io.github.superthom196.cinematica.api.Movie
+import io.github.superthom196.cinematica.api.Shelf
+import io.github.superthom196.cinematica.api.ShelfSnap
 import io.github.superthom196.cinematica.api.StreamInfo
 import io.github.superthom196.cinematica.api.TvDetail
 import io.github.superthom196.cinematica.browse.PlayTarget
@@ -64,9 +66,15 @@ fun SeriesDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     val scope = rememberCoroutineScope()
 
     var detail by remember(id) { mutableStateOf<TvDetail?>(null) }
-    LaunchedEffect(id) { if (id != null) detail = vm.tvDetail(id).getOrNull() }
+    // Where the series was left, when the server knows. The grid's copy is the fresher one — it is
+    // patched on the way back from the player — so the detail response only fills a gap.
+    var shelf by remember(id) { mutableStateOf(movie.shelf) }
+    LaunchedEffect(id) {
+        if (id != null) detail = vm.tvDetail(id).getOrNull()
+        if (movie.shelf == null) detail?.shelf?.let { shelf = it }
+    }
 
-    var season by remember(id) { mutableStateOf(1) }
+    var season by remember(id) { mutableStateOf(movie.shelf?.next?.s ?: 1) }
     var episodes by remember(id, season) { mutableStateOf<List<Episode>>(emptyList()) }
     LaunchedEffect(id, season) {
         episodes = if (id != null) vm.tvSeason(id, season).getOrNull()?.episodes.orEmpty() else emptyList()
@@ -99,6 +107,20 @@ fun SeriesDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
         if (focusedOnce || episodes.isEmpty()) return@LaunchedEffect
         focusedOnce = true
         runCatching { firstEpisodeFocus.requestFocus() }
+    }
+
+    // The episode the series is up to is chosen for the viewer, so Play is already on the right
+    // one. Once only: choosing a different episode afterwards must stick.
+    var resumed by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(episodes, shelf) {
+        val next = shelf?.next
+        if (resumed || next == null) return@LaunchedEffect
+        // A shelf that only arrives with the detail response can name another season: open that
+        // one and let its episodes bring this back round.
+        if (next.s != season) { season = next.s; return@LaunchedEffect }
+        if (episodes.isEmpty()) return@LaunchedEffect
+        resumed = true
+        episodes.firstOrNull { it.episode == next.e }?.let { selected = it }
     }
 
     // OK on a row opens the episode, and focus goes to its Play button — as opening a film lands
@@ -186,22 +208,39 @@ fun SeriesDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
                                 modifier = Modifier.fillMaxWidth()
                                     .then(if (idx == 0) Modifier.focusRequester(firstEpisodeFocus) else Modifier),
                                 container = if (on) CinematicaColors.SurfaceHigh else CinematicaColors.Surface,
+                                onLongClick = {
+                                    val e = ep.episode
+                                    if (id != null && e != null) {
+                                        val watched = !ep.watched
+                                        episodes = episodes.map { if (it.episode == e) it.copy(watched = watched) else it }
+                                        if (selected?.episode == e) selected = episodes.firstOrNull { it.episode == e }
+                                        vm.setEpisodeWatched(id, ep.season ?: season, e, watched)
+                                    }
+                                },
                             ) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        "E%02d · %s".format(ep.episode ?: (idx + 1), ep.name.orEmpty()),
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                                        ),
-                                        color = if (on) CinematicaColors.AccentBright else CinematicaColors.Text,
-                                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    ep.runtime?.takeIf { it > 0 }?.let {
-                                        Text("$it min", style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
+                                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "E%02d · %s".format(ep.episode ?: (idx + 1), ep.name.orEmpty()),
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                                            ),
+                                            // Seen episodes step back so the one to watch next stands out.
+                                            color = when {
+                                                on -> CinematicaColors.AccentBright
+                                                ep.watched -> CinematicaColors.Muted
+                                                else -> CinematicaColors.Text
+                                            },
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        ep.runtime?.takeIf { it > 0 }?.let {
+                                            Text("$it min", style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
+                                        }
+                                    }
+                                    ep.progress?.let {
+                                        VSpace(4.dp)
+                                        ProgressBar(it * 100.0, Modifier.fillMaxWidth(), height = 2.dp)
                                     }
                                 }
                             }
@@ -223,17 +262,25 @@ fun SeriesDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
                         busy = playJob != null,
                         playing = ui.playTitle != null,
                         playFocus = playFocus,
-                        onPlay = {
+                        onPlay = { t ->
                             val e = ep.episode ?: return@EpisodePane
                             if (id == null || stream?.pick == null || playJob != null) return@EpisodePane
                             val s = ep.season ?: season
                             val label = "%s · S%02dE%02d · %s".format(detail?.title ?: movie.title.orEmpty(), s, e, ep.name.orEmpty())
                             scope.launch {
                                 val auto = vm.currentAutoplayNext()
-                                vm.play.play(PlayTarget("/api/play/tv/$id/$s/$e?autoplay=${if (auto) 1 else 0}", "tv:$id:$s:$e", label))
+                                vm.play.play(PlayTarget("/api/play/tv/$id/$s/$e?autoplay=${if (auto) 1 else 0}", "tv:$id:$s:$e", label, t))
                             }
                         },
                         onStop = { vm.stopPlayback() },
+                        fav = shelf?.fav == true,
+                        onFav = {
+                            if (id != null) {
+                                val favOn = shelf?.fav != true
+                                shelf = (shelf ?: Shelf()).copy(fav = favOn)
+                                vm.setFav(id, favOn, seriesSnap(movie, detail))
+                            }
+                        },
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
@@ -253,8 +300,11 @@ private fun EpisodePane(
     busy: Boolean,
     playing: Boolean,
     playFocus: FocusRequester,
-    onPlay: () -> Unit,
+    /** Called with where to start, in seconds, or null for the beginning. */
+    onPlay: (Int?) -> Unit,
     onStop: () -> Unit,
+    fav: Boolean,
+    onFav: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
@@ -294,19 +344,37 @@ private fun EpisodePane(
         }
         VSpace(8.dp)
         val pick = stream?.pick
+        val resume = ep.resume_s
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             PillButton(
-                "Play",
-                onClick = onPlay,
+                // Which episode and how far in, both, because this screen can be two episodes
+                // away from the one the viewer actually stopped in the middle of.
+                if (resume != null) {
+                    "Resume S%d E%d · %s".format(ep.season ?: season, ep.episode ?: 0, formatTime(resume.toDouble()))
+                } else "Play",
+                onClick = { onPlay(resume) },
                 primary = true,
                 enabled = pick != null && !busy,
                 modifier = Modifier.focusRequester(playFocus),
             )
+            if (resume != null) {
+                PillButton("From the start", onClick = { onPlay(null) }, enabled = pick != null && !busy)
+            }
+            PillButton("♥", onClick = onFav, primary = fav)
             // Only worth offering while this app actually has something open.
             if (playing) PillButton("Stop", onClick = onStop)
         }
     }
 }
+
+/** The series' own snapshot for the favourites wall. See [snapOf], which does this for a film. */
+private fun seriesSnap(movie: Movie, detail: TvDetail?): ShelfSnap = ShelfSnap(
+    kind = "tv",
+    title = detail?.title ?: movie.title,
+    year = detail?.firstAir?.take(4) ?: movie.year,
+    poster = detail?.poster ?: movie.poster,
+    imdb_id = detail?.imdbId ?: movie.imdb?.id,
+)
 
 /** Air date, runtime and rating — the episode's own facts row. */
 private fun episodeChips(ep: Episode): List<String> = buildList {
