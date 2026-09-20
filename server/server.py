@@ -18,6 +18,7 @@ HERE      = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from providers import contract, gateway   # noqa: E402
 import browser_play   # noqa: E402 -- the HLS grid/tfdt helpers the packager needs
+import shelf          # noqa: E402 -- favourites/watched/resume, rules kept out of here
 # Defaults to .env beside server.py. Was hardcoded to a second directory in
 # $HOME, which is the only reason that directory still existed.
 ENV_FILE  = os.environ.get("ENV_FILE", os.path.join(HERE, ".env"))
@@ -2710,6 +2711,22 @@ def app_heartbeat(d):
             # Anything that arrives during the wait was queued within the last
             # few seconds, so there is nothing to expire here.
             cmd = _cmd_wire(_app_cmd)
+    # The shelf, outside the lock above for the reason shelf_note() gives.
+    # The same report the TV sends for its own sake is the only thing that
+    # knows where a film got to, so it is fed straight through -- including
+    # "ended", which is what marks a FILM watched as well as an episode.
+    # A position is not always reported with an ending; treat a missing one
+    # as zero there rather than lose the fact that the thing finished.
+    prev_state = (prev or {}).get("state")
+    if job and state in ("playing", "paused", "ended"):
+        shelf_note(job, position_s if position_s is not None
+                        else (0.0 if state == "ended" else None),
+                   _secs(d.get("duration_s")), state,
+                   force_save=(state != prev_state))
+    elif state == "idle" and prev_state in ("playing", "paused"):
+        # Stopped without an ending. Nothing new to record, but whatever the
+        # throttle is still holding belongs on disk now.
+        shelf.save(force=True)
     # Outside the lock, and only for a job that exists: a film the TV could not
     # open must fail its job now, rather than leaving the phone on "Handing over
     # to the TV app" until the handoff deadline runs out.
@@ -2774,6 +2791,149 @@ def _now_save(d):
         os.replace(tmp, NOW_FILE)
     except Exception:
         pass
+# Favourites / watched / resume, persisted beside nowplaying.json for the same
+# reason: it is state about what this household is in the middle of, and a
+# service restart (every deploy is one) must not lose where a film got to.
+# shelf.py owns every rule about it; this file only says where the file lives
+# and feeds it what the players report.
+# CINEMATICA_SHELF exists for the test suite, which drives real heartbeats
+# through this module: without somewhere else to point it, a test run on the Pi
+# would write "Stub Movie 1" into the household's actual watch history.
+SHELF_FILE = os.environ.get("CINEMATICA_SHELF") or os.path.join(HERE, "shelf.json")
+shelf.init(SHELF_FILE)
+
+def _pool_item(tid):
+    """This title as the browse pool already holds it, or None.
+
+    Memory only, deliberately: the two callers are a play start and the
+    /api/movies pinned row, and neither is worth a network fetch. A pool item
+    carries the poster/year/external ids a shelf snapshot wants AND the
+    stream/rating/quality fields a wall tile wants, which the snapshot alone
+    can never have.
+    """
+    with _lock:
+        pools = list(_pool.values())
+    for st in pools:
+        for rows in (st.get("served"), st.get("cands")):
+            for row in rows or ():
+                if row.get("id") == tid:
+                    return row
+    return None
+
+def shelf_pins(kind):
+    """shelf.pins() with this process's own richer copy of a title preferred
+    wherever it still has one. The stored snapshot carries only
+    title/year/poster/imdb_id -- correct per the contract, and clients treat
+    the rest as unknown -- but when the pool is warm there is no reason to
+    make them: hand over the full tile instead."""
+    out = []
+    for item in shelf.pins(kind):
+        rich = _pool_item(item.get("id"))
+        out.append(shelf.decorate(dict(rich)) if rich is not None else item)
+    return out
+
+def _ep_view(tid, s, ep):
+    """One episode row's shelf fields, tolerating an episode number a provider
+    left unusable -- the row still goes out, just with nothing known about it."""
+    n = ep.get("episode")
+    if not isinstance(n, int):
+        return {"watched": False, "progress": None, "resume_s": None}
+    return shelf.episode_view(tid, s, n)
+
+def _shelf_begin(jobid, entry, runtime_min):
+    """Everything the shelf needs to know about a play, worked out ONCE when
+    it starts and returned as fields to store on the job.
+
+    All of it -- the runtime, the snapshot, a series' aired count and whether
+    a next episode exists -- is either a provider call or a scan of the pool,
+    and a heartbeat arrives every couple of seconds. Doing it here means the
+    heartbeat path reads a dict and nothing else.
+    """
+    tid, s, e = shelf.parse_job(jobid)
+    if tid is None:
+        return {}
+    # A play is the viewer coming back: whatever an earlier "done with this"
+    # muted, this exact job records again from now on.
+    shelf.begin(jobid)
+    kind = "tv" if s is not None else "movie"
+    out = {"shelf_kind": kind,
+           # The true length, for note_progress: a film still converting
+           # reports "converted so far" as its duration, which would make an
+           # early position look like the end of the film.
+           "runtime_s": (runtime_min * 60) if runtime_min else None}
+    det = None
+    if kind == "tv":
+        try:
+            det = tv_detail(tid)
+        except Exception:
+            det = None       # a snapshot is never worth failing a play for
+        # aired: the seasons roster the detail already carries, specials
+        # (season 0) left out. It is the FULL episode count rather than the
+        # aired one, so for a show still airing it OVERSTATES what has aired
+        # -- which can only hold "watched" back, never declare a series
+        # finished early, and costs no per-season fetch on the play path.
+        counts = [sn.get("episodes") for sn in ((det or {}).get("seasons") or [])
+                  if sn.get("n")]
+        if counts and all(isinstance(c, int) for c in counts):
+            out["shelf_aired"] = sum(counts)
+        out["shelf_has_next"] = next_episode(tid, s, e) is not None
+    if shelf.snapshot_needed(tid):
+        # Only when the shelf has nothing to render this title with yet.
+        # For a series the 24h detail is both cheaper and better than a pool
+        # scan; for a film the pool is the only thing here that knows its
+        # poster, and the stream entry's title is the last resort. An episode
+        # job's entry title is "Show · S01E02 · Name", which is not the
+        # series' name, so it is never used as one.
+        src = (det if kind == "tv" else None) or _pool_item(tid) or {}
+        out["shelf_snap"] = {
+            "title": src.get("title") or ((entry or {}).get("title")
+                                          if kind == "movie" else None),
+            "year": src.get("year"),
+            "poster": src.get("poster"),
+            "imdb_id": ((src.get("external_ids") or {}).get("imdb")
+                        or src.get("imdb_id") or (entry or {}).get("imdb_id"))}
+    return out
+
+def shelf_note(job, pos_s, dur_s, state, force_save=False):
+    """One player report -> the shelf.
+
+    NEVER call this holding _lock (_app_cv's lock is the same one): shelf has
+    a lock of its own and save() writes to disk, and the heartbeat handler is
+    the last place in this server that should be doing file I/O under a lock
+    every other request needs.
+
+    save() is self-throttled to once every FLUSH_S, so a run of "playing"
+    beats costs nothing; force is for the moments that are actually worth a
+    write -- a pause, an ending, a stop.
+    """
+    j = job_get(job)
+    start_s = j.get("start_s")
+    # Resume guard. A TV that has been told to start at start_s still reports
+    # 0 for the beats before it seeks, and recording those would overwrite the
+    # very resume point the viewer just used with the start of the film.
+    if start_s is not None and pos_s is not None and pos_s < start_s - 10:
+        return
+    shelf.note_progress(job, pos_s, dur_s, state,
+                        runtime_s=j.get("runtime_s"),
+                        snap=j.get("shelf_snap"), kind=j.get("shelf_kind"),
+                        aired=j.get("shelf_aired"),
+                        has_next=j.get("shelf_has_next"))
+    shelf.save(force=force_save)
+
+def _start_s(query):
+    """The `t=<seconds>` resume offset off a play route's query string: a
+    float at or above zero, or None. Rubbish is ignored rather than refused --
+    a resume offset that cannot be read should start the film from the
+    beginning, not fail it."""
+    raw = urllib.parse.parse_qs(query).get("t", [None])[0]
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, v) if math.isfinite(v) else None
+
 _now = _now_load()        # what was last handed to the player
 if _now.get("hifi_src"):
     # Restart mid-film: the first playing heartbeat with hifi on restarts the
@@ -3930,9 +4090,14 @@ def launch(url, mid, pick, title, gen):
         app = app_fresh()
     if app:
         job_set(mid, msg="Handing over to the TV app…")
+        # Resume: the app seeks there itself once the stream is open. Only
+        # present when the play route was given t=, so autoplay-next -- which
+        # never sets one -- cannot carry the previous episode's offset.
+        start_s = job_get(mid).get("start_s")
         seq = app_cmd("play", job=str(mid), url=url, title=title, pick=pick,
                       transcoded=bool(pick.get("transcoded")),
-                      hifi=bool(_hifi["on"] and SENDSPIN_ENABLED))
+                      hifi=bool(_hifi["on"] and SENDSPIN_ENABLED),
+                      **({"start_s": start_s} if start_s is not None else {}))
         print("app: play %s seq=%d -> %s" % (mid, seq, app["name"] or app["id"]),
               flush=True)
         deadline = time.time() + APP_HANDOFF_SECS
@@ -4543,7 +4708,7 @@ def _read_package_manifest(package_dir):
 
 # ---- HTTP -------------------------------------------------------------------
 def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
-                worker=run_play_job):
+                worker=run_play_job, start_s=None):
     """Shared tail of every play route -- a film, an episode and autoplay all
     land here. resolve() returns (entry, runtime) from get_stream() or
     get_stream_tv(); it is called inside the cancel guard because it can run
@@ -4610,11 +4775,25 @@ def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
                   title=title, gen=gen, autoplay=autoplay, owner=owner)
         if token is not None:
             kw["otoken"] = token
+        # Carried on the job, the way autoplay is: launch() puts it in the play
+        # command for the TV, and shelf_note() uses it to tell a position
+        # reported before the seek from a real one. Written even when it is
+        # None, because job_set MERGES: a job id is reused by every later play
+        # of the same title, and leaving the key alone would have a replay --
+        # or an autoplay-next -- inherit the offset the previous play was
+        # given and seek to the middle of a film nobody asked to resume.
+        kw["start_s"] = start_s
         job_set(jobid, **kw)
         threading.Thread(target=worker,
                          args=(jobid, entry.get("picks") or [entry["pick"]], runtime,
                                title, gen),
                          daemon=True).start()
+        # After the worker is away: _shelf_begin() can reach the metadata
+        # provider for a series, and nothing about remembering where a film
+        # got to is worth delaying the film itself for. Still well ahead of
+        # the first heartbeat for this job -- the TV has not been handed a
+        # URL yet.
+        job_set(jobid, **_shelf_begin(jobid, entry, runtime))
         return 202, {"ok": True, "msg": "buffering", "url": url,
                      "pick": entry["pick"], "job": jobid}
     finally:
@@ -5095,6 +5274,11 @@ class H(BaseHTTPRequestHandler):
                     bias = bias.lower() not in ("0", "", "false", "no", "off")
                 _, _, _, key = view_key(g, srt, ex, kind, bias)
                 return self._send(200, view_progress(key))
+            if p.path == "/api/shelf":
+                # Favourites, newest first, films and series mixed. Rendered
+                # from the stored snapshots rather than the pool: a favourite
+                # is kept precisely so it survives the catalogue forgetting it.
+                return self._send(200, {"items": shelf.favourites()})
             if p.path == "/api/movies":
                 q = urllib.parse.parse_qs(p.query)
                 kind = q.get("kind", ["movie"])[0]
@@ -5112,13 +5296,25 @@ class H(BaseHTTPRequestHandler):
                 if bias is not None:
                     bias = bias.lower() not in ("0", "", "false", "no", "off")
                 ms, more, cursor, pool, perr = get_page(g, off, lim, srt, ex, kind, bias)
-                return self._send(200, {"movies": ms, "err": perr,
-                                        "genres_applied": g,
-                                        "excluded": ex,
-                                        "bias": BIAS if bias is None else bias,
-                                        "sort": srt if srt in SORTS else "top",
-                                        "offset": off, "limit": lim, "more": more,
-                                        "checked": cursor, "pool": pool})
+                # Decorated COPIES. `ms` is a slice of the pool's own served
+                # list, which every later request for this view is served
+                # from -- a shelf state written into those dicts would be
+                # baked into the cache and go on being sent long after it
+                # stopped being true.
+                body = {"movies": [shelf.decorate(dict(m)) for m in ms], "err": perr,
+                        "genres_applied": g,
+                        "excluded": ex,
+                        "bias": BIAS if bias is None else bias,
+                        "sort": srt if srt in SORTS else "top",
+                        "offset": off, "limit": lim, "more": more,
+                        "checked": cursor, "pool": pool}
+                if off == 0:
+                    # First page only: the client prepends these and drops any
+                    # later catalogue item with the same id, so sending them
+                    # again further down the wall would only duplicate work.
+                    # Paging arithmetic above is untouched by them.
+                    body["pinned"] = shelf_pins(kind)
+                return self._send(200, body)
             if p.path == "/api/search/stream":
                 # Same search, pushed result-by-result. A cold franchise search
                 # resolves ~60 candidates through the streams provider and takes
@@ -5146,7 +5342,7 @@ class H(BaseHTTPRequestHandler):
                     ms, found, checked = search_movies(
                         term, lim,
                         on_found=lambda c: emit("found", {"found": c}),
-                        on_movie=lambda m: emit("movie", m),
+                        on_movie=lambda m: emit("movie", shelf.decorate(dict(m))),
                         kind=kind)
                     emit("done", {"playable": len(ms), "found": found, "checked": checked})
                 except (BrokenPipeError, ConnectionResetError):
@@ -5167,13 +5363,15 @@ class H(BaseHTTPRequestHandler):
                 if kind not in ("movie", "tv"):
                     kind = "movie"
                 ms, found, checked = search_movies(term, lim, kind=kind)
-                return self._send(200, {"q": term, "movies": ms, "playable": len(ms),
+                return self._send(200, {"q": term,
+                                        "movies": [shelf.decorate(dict(m)) for m in ms],
+                                        "playable": len(ms),
                                         "found": found, "checked": checked})
             if p.path.startswith("/api/movie/"):
                 tid = self._id(p.path.rsplit("/", 1)[-1])
                 d = gateway.details(tid, contract.KIND_MOVIE)
                 ir = rating_of(d, "imdb")
-                return self._send(200, {
+                return self._send(200, shelf.decorate({
                     "id": d.get("id"), "title": d.get("title"),
                     "tagline": d.get("tagline"), "overview": d.get("overview"),
                     "runtime": d.get("runtime"), "vote": ir[0] if ir else None,
@@ -5185,17 +5383,21 @@ class H(BaseHTTPRequestHandler):
                     "year": d.get("year"),
                     "genres": d.get("genres") or [],
                     "backdrop": d.get("backdrop"), "poster": d.get("poster"),
-                    "imdb_id": (d.get("external_ids") or {}).get("imdb")})
+                    "imdb_id": (d.get("external_ids") or {}).get("imdb")}))
             if p.path.startswith("/api/tv/") and "/season/" in p.path:
                 bits = p.path[len("/api/tv/"):].split("/")
                 bits[0] = self._id(bits[0])
                 if len(bits) != 3 or bits[1] != "season":
                     return self._send(404, {"err": "not found"})
-                tid, n = bits[0], bits[2]
-                return self._send(200, tv_season(tid, int(n)))
+                tid, n = bits[0], int(bits[2])
+                e = tv_season(tid, n)
+                # Copies again: this dict IS the 24h season cache, and a
+                # watched flag written into it would outlive the fact.
+                return self._send(200, dict(e, episodes=[
+                    dict(ep, **_ep_view(tid, n, ep)) for ep in e["episodes"]]))
             if p.path.startswith("/api/tv/"):
                 tid = self._id(p.path.rsplit("/", 1)[-1])
-                return self._send(200, tv_detail(tid))
+                return self._send(200, shelf.decorate(dict(tv_detail(tid))))
             if p.path.startswith("/api/stream/tv/"):
                 bits = p.path[len("/api/stream/tv/"):].split("/")
                 bits[0] = self._id(bits[0])
@@ -5870,6 +6072,48 @@ class H(BaseHTTPRequestHandler):
                 payload = {"delta": d["delta"]} if "delta" in d else {"level": d.get("level")}
                 _ss_q.put(("volume", payload))
                 return self._send(200, {"ok": True})
+            # The three shelf writes. Household actions, exactly like a play
+            # or a stop: behind the host and origin guards every POST here is
+            # behind, and not behind _require_admin -- marking a film watched
+            # is not administering the install. Each forces a save: these are
+            # deliberate, one-at-a-time acts, and a restart losing the last
+            # one would be plainly wrong in a way a dropped heartbeat is not.
+            if p.path == "/api/shelf/fav":
+                tid = str(d.get("id") or "").strip()
+                if not tid:
+                    return self._send(400, {"ok": False, "msg": "id is required"})
+                snap = d.get("snap") if isinstance(d.get("snap"), dict) else None
+                shelf.set_fav(tid, bool(d.get("on")), snap=snap)
+                shelf.save(force=True)
+                return self._send(200, {"ok": True, "shelf": shelf.view(tid)})
+            if p.path == "/api/shelf/watched":
+                tid = str(d.get("id") or "").strip()
+                if not tid:
+                    return self._send(400, {"ok": False, "msg": "id is required"})
+                # s and e together mean one episode; either missing means the
+                # whole title, so a half-given pair is a mistake worth saying
+                # rather than silently marking a whole series watched.
+                s, e = d.get("s"), d.get("e")
+                if s is not None or e is not None:
+                    try:
+                        s, e = int(s), int(e)
+                    except (TypeError, ValueError):
+                        return self._send(400, {"ok": False,
+                                                "msg": "s and e must both be numbers"})
+                shelf.set_watched(tid, bool(d.get("on")), s=s, e=e)
+                shelf.save(force=True)
+                return self._send(200, {"ok": True, "shelf": shelf.view(tid)})
+            if p.path == "/api/shelf/drop":
+                # "Done with this". The job form is what a player sends as it
+                # stops: it mutes that exact job, so the stop arriving right
+                # behind it cannot record the position back again.
+                jb = str(d.get("job") or "").strip() or None
+                tid = str(d.get("id") or "").strip() or None
+                if not jb and not tid:
+                    return self._send(400, {"ok": False, "msg": "id or job is required"})
+                shelf.drop(title_id=tid, job=jb)
+                shelf.save(force=True)
+                return self._send(200, {"ok": True})
             if p.path.startswith("/api/play/tv/"):
                 bits = p.path[len("/api/play/tv/"):].split("/")
                 if len(bits) != 3:
@@ -5895,7 +6139,8 @@ class H(BaseHTTPRequestHandler):
                 def resolve():
                     entry = get_stream_tv(tid, s, ep)
                     return entry, entry.get("runtime") or 45
-                return self._send(*start_play(jobid, resolve, autoplay=autoplay))
+                return self._send(*start_play(jobid, resolve, autoplay=autoplay,
+                                              start_s=_start_s(p.query)))
             if p.path.startswith("/api/play/"):
                 tid = self._id(p.path.rsplit("/", 1)[-1])
                 # Refuse rather than race. The loser of a two-job race does not
@@ -5914,7 +6159,8 @@ class H(BaseHTTPRequestHandler):
                     # stream lookup -- nothing left to fetch again here.
                     e = get_stream(tid)
                     return e, e.get("runtime")
-                return self._send(*start_play(str(tid), resolve))
+                return self._send(*start_play(str(tid), resolve,
+                                              start_s=_start_s(p.query)))
             if p.path.startswith("/api/bplay/tv/"):
                 # The browser's counterpart to /api/play/tv/... above --
                 # same id/season/episode shape and the same dedupe, but it
@@ -5955,8 +6201,10 @@ class H(BaseHTTPRequestHandler):
                 def worker(mid, picks, runtime_min, title, gen):
                     run_browser_job(mid, browser_picks(holder["entry"], caps),
                                     runtime_min, title, gen, token, caps, skip)
+                start_s = _start_s(p.query)
                 status, body = start_play(jobid, resolve, owner="browser",
-                                          token=token, worker=worker)
+                                          token=token, worker=worker,
+                                          start_s=start_s)
                 if status != 202:
                     return self._send(status, body)
                 # No absolute media URL here -- unlike /api/play/'s body,
@@ -5964,8 +6212,12 @@ class H(BaseHTTPRequestHandler):
                 # browser gets its media URL only once run_browser_job has
                 # actually decided how to serve it (see publish()), and it
                 # is always a path relative to this same origin.
+                # start_s is echoed rather than acted on: there is no command
+                # channel to a browser, so the page seeks its own <video>
+                # once the metadata is in.
                 return self._send(202, {"ok": True, "job": jobid, "token": token,
-                                        "gen": job_get(jobid).get("gen")})
+                                        "gen": job_get(jobid).get("gen"),
+                                        "start_s": start_s})
             if p.path.startswith("/api/bplay/"):
                 # The browser's counterpart to /api/play/<id> above.
                 tid = self._id(p.path.rsplit("/", 1)[-1])
@@ -5984,12 +6236,15 @@ class H(BaseHTTPRequestHandler):
                 def worker(mid, picks, runtime_min, title, gen):
                     run_browser_job(mid, browser_picks(holder["entry"], caps),
                                     runtime_min, title, gen, token, caps, skip)
+                start_s = _start_s(p.query)
                 status, body = start_play(str(tid), resolve, owner="browser",
-                                          token=token, worker=worker)
+                                          token=token, worker=worker,
+                                          start_s=start_s)
                 if status != 202:
                     return self._send(status, body)
                 return self._send(202, {"ok": True, "job": str(tid), "token": token,
-                                        "gen": job_get(str(tid)).get("gen")})
+                                        "gen": job_get(str(tid)).get("gen"),
+                                        "start_s": start_s})
             if p.path == "/api/bx/beat":
                 # The browser's heartbeat: real currentTime and play/pause
                 # state, on whatever cadence the page chooses.
@@ -6008,6 +6263,7 @@ class H(BaseHTTPRequestHandler):
                     return self._send(409, {"ok": False, "stale": True})
                 state = d.get("state")
                 with _lock:
+                    was = _bx["state"]
                     _bx["at"] = time.time()
                     _bx["state"] = state
                     pos = d.get("pos")
@@ -6016,6 +6272,13 @@ class H(BaseHTTPRequestHandler):
                             _bx["pos"] = float(pos)
                         except (TypeError, ValueError):
                             pass
+                    mid, bpos, bdur = _bx["job"], _bx["pos"], _bx["dur"]
+                # The shelf, outside the lock (see shelf_note): this beat is
+                # the browser's only progress report, so it records where the
+                # film got to exactly as the TV's heartbeat does -- "ended"
+                # included, which is what marks it watched.
+                if mid and state in ("playing", "paused", "ended"):
+                    shelf_note(mid, bpos, bdur, state, force_save=(state != was))
                 # A pause must never tear the job down -- only a lost
                 # heartbeat does, via browser_playing()'s own staleness
                 # check above. All a pause has to do here is stop the
@@ -6166,6 +6429,11 @@ class H(BaseHTTPRequestHandler):
                 # fields by hand, which left that ffmpeg running -- a real
                 # leak, since nothing else here ever reaped it.
                 bx_stop_all("Stopped")
+                # Whatever the last heartbeat recorded is the resume point for
+                # this film, and the viewer has just said they are done with
+                # it for now: put it on disk rather than leave it to the
+                # 30 s throttle of a heartbeat that is not coming.
+                shelf.save(force=True)
                 threading.Thread(target=cache_clear, daemon=True).start()
                 ok, msg = tv_stop()
                 return self._send(200, {"ok": ok, "msg": msg})

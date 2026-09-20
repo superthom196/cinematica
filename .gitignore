@@ -10,6 +10,7 @@ tv/signing.properties
 # Server runtime state (lives beside server.py on the Pi, never committed)
 server/transcode/
 server/nowplaying.json
+server/shelf.json
 server/netprofile.json
 server/imdb-ratings.tsv.gz
 __pycache__/
