@@ -214,6 +214,30 @@ class ShelfTest(unittest.TestCase):
         shelf.set_fav("cinemeta:tt17", True, snap={"title": "A Series", "kind": "tv"}, now=NOW)
         self.assertEqual(shelf.favourites(now=NOW)[0]["kind"], "tv")
 
+    def test_watchlist_drops_a_title_watched_after_saving(self):
+        shelf.set_fav("cinemeta:tt20", True, snap={"title": "Saved"}, now=NOW)
+        shelf.set_watched("cinemeta:tt20", True, now=NOW + 5)
+        self.assertEqual(shelf.favourites(now=NOW + 5), [])
+        # Un-marking watched (the fell-asleep undo) puts it back.
+        shelf.set_watched("cinemeta:tt20", False, now=NOW + 6)
+        self.assertEqual([f["id"] for f in shelf.favourites(now=NOW + 6)], ["cinemeta:tt20"])
+
+    def test_watchlist_keeps_a_rewatch_saved_after_watching(self):
+        shelf.set_watched("cinemeta:tt21", True, now=NOW)
+        shelf.set_fav("cinemeta:tt21", True, snap={"title": "Again"}, now=NOW + 5)
+        self.assertEqual([f["id"] for f in shelf.favourites(now=NOW + 5)], ["cinemeta:tt21"])
+        shelf.set_watched("cinemeta:tt21", True, now=NOW + 9)
+        self.assertEqual(shelf.favourites(now=NOW + 9), [])
+
+    def test_watchlist_drops_a_series_finished_by_its_episodes(self):
+        tid = "cinemeta:tt22"
+        shelf.set_fav(tid, True, snap={"title": "Short Run", "kind": "tv"}, now=NOW)
+        shelf.set_watched(tid, True, s=1, e=1, now=NOW + 1)
+        # Not finished yet: stays.
+        self.assertEqual([f["id"] for f in shelf.favourites(now=NOW + 1)], [tid])
+        shelf.set_watched(tid, True, now=NOW + 2)
+        self.assertEqual(shelf.favourites(now=NOW + 2), [])
+
     def test_set_watched_undo(self):
         shelf.set_watched("cinemeta:tt16", True, now=NOW)
         self.assertTrue(shelf.view("cinemeta:tt16", now=NOW)["watched"])

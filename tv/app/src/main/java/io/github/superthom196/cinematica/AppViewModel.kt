@@ -567,7 +567,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** The ♥ on a detail screen. [snap] is what the favourites wall draws once the catalogue moves on. */
+    /** The ♥ on a detail screen. [snap] is what the watchlist draws once the catalogue moves on. */
     fun setFav(id: String, on: Boolean, snap: ShelfSnap) {
         library.patchShelf(id) { it.copy(fav = on) }
         viewModelScope.launch {

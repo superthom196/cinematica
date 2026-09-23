@@ -54,7 +54,7 @@ data class Imdb(
 )
 
 /**
- * What the server remembers about a title: favourite, watched, where the viewer got to. Absent on
+ * What the server remembers about a title: saved, watched, where the viewer got to. Absent on
  * a server that predates the shelf, and absent on a title nothing is known about — which is the
  * same thing to every screen here, so nothing ever has to tell the two apart.
  */
@@ -425,7 +425,7 @@ data class SearchFound(
     val found: Int? = null,
 )
 
-/** `/api/shelf`: the favourites, newest first, films and series mixed. */
+/** `/api/shelf`: the watchlist, newest save first, films and series mixed, less what was watched since. */
 @Serializable
 data class ShelfPage(
     val items: List<Movie> = emptyList(),
@@ -439,8 +439,8 @@ data class ShelfResp(
 )
 
 /**
- * Enough of a title to draw it on the favourites wall after it has fallen out of the catalogue.
- * Sent with every favourite, since the server has nowhere else to get it from.
+ * Enough of a title to draw it on the watchlist after it has fallen out of the catalogue.
+ * Sent with every save, since the server has nowhere else to get it from.
  */
 @Serializable
 data class ShelfSnap(

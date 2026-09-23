@@ -141,7 +141,7 @@ fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
                     PillButton("From the start", onClick = { if (pick != null && !busy) vm.play.play(movie) }, enabled = pick != null && !busy)
                 }
                 PillButton(
-                    "♥",
+                    saveLabel(shelf?.fav == true),
                     onClick = {
                         if (id != null) {
                             val on = shelf?.fav != true
@@ -162,8 +162,14 @@ fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
 }
 
 /**
- * Enough of a title for the favourites wall to draw it after the catalogue has moved on. The
- * server has nowhere else to get it from, so it rides along with every favourite.
+ * The watchlist button, in words rather than a bare heart: a heart says "love", and this is
+ * "keep it for later", which the header's ♥ segment then lists until it has been watched.
+ */
+fun saveLabel(saved: Boolean): String = if (saved) "♥ Saved" else "♥ Save for later"
+
+/**
+ * Enough of a title for the watchlist to draw it after the catalogue has moved on. The
+ * server has nowhere else to get it from, so it rides along with every save.
  */
 fun snapOf(movie: Movie, detail: MovieDetail?): ShelfSnap = ShelfSnap(
     kind = movie.kind ?: "movie",

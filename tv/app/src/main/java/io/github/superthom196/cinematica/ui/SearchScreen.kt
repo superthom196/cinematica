@@ -43,7 +43,7 @@ fun SearchScreen(vm: AppViewModel) {
     // Search only makes sense within whichever shelf the grid is currently showing — films or
     // series — so it goes to the server as the same kind the library is browsing.
     val libraryState by vm.library.state.collectAsStateWithLifecycle()
-    // The favourites wall is not a pool the server can search, so searching from it searches films.
+    // The watchlist is not a pool the server can search, so searching from it searches films.
     val kind = libraryState.kind.takeIf { it != LibraryStore.KIND_FAV } ?: "movie"
     val field = remember { FocusRequester() }
     val gridState = rememberLazyGridState()

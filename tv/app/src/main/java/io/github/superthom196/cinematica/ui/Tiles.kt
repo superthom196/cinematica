@@ -41,7 +41,7 @@ fun MovieTile(
     val pick: Pick? = movie.stream?.pick
     val isTv = movie.kind == "tv"
     val shelf = movie.shelf
-    // A pinned or favourite tile is built from the server's stored snapshot, which carries no
+    // A pinned or saved tile is built from the server's stored snapshot, which carries no
     // stream, rating or quality at all. Unknown is not the same answer as "no stream".
     val snapshot = pick == null && shelf != null
     GridTile(onClick = onClick, onLongClick = onLongClick, modifier = modifier) { focused ->

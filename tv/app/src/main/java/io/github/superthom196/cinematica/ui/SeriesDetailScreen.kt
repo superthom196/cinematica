@@ -360,14 +360,14 @@ private fun EpisodePane(
             if (resume != null) {
                 PillButton("From the start", onClick = { onPlay(null) }, enabled = pick != null && !busy)
             }
-            PillButton("♥", onClick = onFav, primary = fav)
+            PillButton(saveLabel(fav), onClick = onFav, primary = fav)
             // Only worth offering while this app actually has something open.
             if (playing) PillButton("Stop", onClick = onStop)
         }
     }
 }
 
-/** The series' own snapshot for the favourites wall. See [snapOf], which does this for a film. */
+/** The series' own snapshot for the watchlist. See [snapOf], which does this for a film. */
 private fun seriesSnap(movie: Movie, detail: TvDetail?): ShelfSnap = ShelfSnap(
     kind = "tv",
     title = detail?.title ?: movie.title,

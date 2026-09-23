@@ -234,9 +234,10 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 .eprow .en{font-weight:700;color:var(--dim);min-width:1.5rem}
 .eprow .et{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .eprow .er{color:var(--dim);font-size:.72rem;white-space:nowrap;flex:none}
-.mact{display:flex;gap:.5rem}
+.mact{display:flex;flex-wrap:wrap;gap:.5rem}
 .mact button{padding:.6rem .9rem;font-size:.85rem}
-#mfav{font-size:1.05rem;line-height:1}
+.mact button.play{flex:1 1 0;width:auto;margin-top:0}
+#mfav{white-space:nowrap}
 #mfav.on{background:var(--accent);color:#fff;border-color:transparent}
 #mstart{color:var(--dim);background:transparent}
 #mclose{position:absolute;top:.6rem;right:.6rem;z-index:2;background:#000a;color:#fff;border:none;
@@ -303,7 +304,7 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <h1>Cinematica</h1>
   </div>
   <div class="kwrap"><button id="kmovie" class="on">Movies</button><button id="ktv">Series</button>
-    <button id="kfav" title="Favourites" aria-label="Favourites">&#9829;</button></div>
+    <button id="kfav" title="Watchlist" aria-label="Watchlist">&#9829;</button></div>
   <div class="controls">
     <button id="qbtn" title="Search">&#128269;<span class="wide"> Search</span></button>
     <button id="nbtn" title="Assess the connection">&#9889;</button>
@@ -359,7 +360,7 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <div id="mepisodes" hidden></div>
     <div class="mstream" id="mstream"></div>
     <div class="mact"><button class="play" id="mplay">Play</button>
-      <button id="mfav" title="Favourite">&#9829;</button>
+      <button id="mfav" title="Save for later">&#9829; Save for later</button>
       <button id="mstart" hidden>From the start</button></div>
   </div></div></div>
 <div id="pov"><div class="pwrap">
@@ -510,7 +511,7 @@ function paint(m){
                      : streamCache[m.id];
   const s=document.getElementById('s'+m.id), b=document.getElementById('b'+m.id);
   if(!d || !d.pick){
-    // Pinned/favourite items are built from a stored snapshot and may lack
+    // Pinned/saved items are built from a stored snapshot and may lack
     // stream data entirely -- that is "unknown", never "no stream".
     if(s){ if(m._snap){ s.className='s'; s.textContent=''; } else { s.className='s bad'; s.textContent='no stream'; } }
     return;
@@ -605,9 +606,11 @@ async function fetchRow(){
   finally{ if(gen===loadGen) loading=false; }   // a stale page must not clear
 }                                               // the live request's flag
 
-// The favourites tab: no paging, just the one list, prepended/deduped the
-// same way pinned items are on the ordinary wall.
-async function loadFavourites(){
+// The watchlist tab: no paging, just the one list, prepended/deduped the
+// same way pinned items are on the ordinary wall. The server leaves out what
+// has been watched since it was saved; a tile marked watched here dims in
+// place and is gone on the next load, so the undo stays within reach.
+async function loadWatchlist(){
   const lm=document.getElementById('loadmore');
   exhausted=true;
   const gen=loadGen;
@@ -617,10 +620,10 @@ async function loadFavourites(){
     const items=(d.items||[]).map(x=>{ x._snap=true; return x; });
     movies=items; items.forEach(x=>seenIds.add(x.id));
     if(items.length){ render(items,false); lm.textContent=''; }
-    else lm.textContent='Nothing here yet \u2014 open a title and press \u2665';
+    else lm.textContent='Nothing saved yet \u2014 open a title and press Save for later';
   }catch(e){
-    // old server / no route yet: identical to "nothing favourited", never an error
-    if(gen===loadGen) lm.textContent='Nothing here yet \u2014 open a title and press \u2665';
+    // old server / no route yet: identical to "nothing saved", never an error
+    if(gen===loadGen) lm.textContent='Nothing saved yet \u2014 open a title and press Save for later';
   }
 }
 
@@ -710,12 +713,12 @@ function loadGenres(){
     .catch(()=>{ /* menu stays empty; the grid does not depend on it */ });
 }
 
-/* ---------- Movies / Series / Favourites toggle ---------- */
+/* ---------- Movies / Series / Watchlist toggle ---------- */
 function syncKindUI(){
   kmovie.classList.toggle('on', kind==='movie');
   ktv.classList.toggle('on', kind==='tv');
   kfav.classList.toggle('on', kind==='fav');
-  // Sort/Genres make no sense against the favourites list -- disabling (rather
+  // Sort/Genres make no sense against the watchlist -- disabling (rather
   // than a new dimmed-but-clickable style) reuses the existing button:disabled
   // look and, for free, stops the menus from opening at all.
   sbtn.disabled = gbtn.disabled = (kind==='fav');
@@ -732,8 +735,8 @@ function setKind(k){
   seenIds=new Set(); tiles.clear();
   if(k==='fav'){
     smenu.classList.remove('open'); gmenu.classList.remove('open');
-    document.getElementById('loadmore').textContent='Loading your favourites…';
-    loadFavourites();
+    document.getElementById('loadmore').textContent='Loading your watchlist…';
+    loadWatchlist();
     return;
   }
   document.getElementById('loadmore').textContent = kind==='tv' ? 'Finding series…' : 'Finding movies…';
@@ -745,7 +748,7 @@ ktv.onclick=()=>setKind('tv');
 kfav.onclick=()=>setKind('fav');
 syncKindUI();
 if(kind==='tv') document.getElementById('loadmore').textContent='Finding series…';
-else if(kind==='fav') document.getElementById('loadmore').textContent='Loading your favourites…';
+else if(kind==='fav') document.getElementById('loadmore').textContent='Loading your watchlist…';
 
 /* ---------- link assessment ---------- */
 const nbtn=document.getElementById('nbtn');
@@ -923,8 +926,13 @@ const mfav=document.getElementById('mfav'), mstart=document.getElementById('msta
 let modalMovie=null, modalTv=null, modalMovieDetail=null, modalSeason=null, modalEp=null;
 let pendingNextEp=null;   // {s,e} from shelf.next, consumed once on modal open
 
-function paintFavButton(shelf){ mfav.classList.toggle('on', !!(shelf&&shelf.fav)); }
-// The snap the server stores for a favourite so it can show something even if
+function paintFavButton(shelf){
+  const on=!!(shelf&&shelf.fav);
+  mfav.classList.toggle('on', on);
+  mfav.textContent = on ? '\u2665 Saved' : '\u2665 Save for later';
+  mfav.title = on ? 'On your watchlist \u2014 click to remove' : 'Save for later';
+}
+// The snap the server stores for a saved title so it can show something even if
 // the title later vanishes from the catalogue. Wall-list items keep the IMDb
 // id nested at m.imdb.id (see server.py's get_page()); the detail endpoints
 // return it as a top-level imdb_id -- prefer that once it has loaded.
@@ -2071,7 +2079,7 @@ document.getElementById('stop').onclick=async()=>{
   pollNowPlaying();
   await setupCheck;
   if(setupConfigured){
-    if(kind==='fav') await loadFavourites();
+    if(kind==='fav') await loadWatchlist();
     else { loadGenres(); await fetchRow(); pump(); }   // honours any saved genre selection
   }
   new IntersectionObserver(es=>{

@@ -524,15 +524,34 @@ def pins(kind, now=None):
     return [item for _, item in rows]
 
 
+def _watched_at(rec):
+    """When the title last became watched: the film's own stamp, or for a
+    series the latest of its stamp and its episodes' (a series completed by
+    the aired-count rule has no stamp of its own, only its episodes')."""
+    stamps = [rec.get("watched")]
+    stamps += [ep.get("watched") for ep in (rec.get("eps") or {}).values()]
+    stamps = [t for t in stamps if t]
+    return max(stamps) if stamps else None
+
+
 def favourites(now=None):
+    """The watchlist, newest save first. A title leaves it once watched, but
+    only when the watching came after the save: something saved to see again
+    after it was already watched stays until it is watched once more. The
+    record keeps its "fav" either way, so un-marking watched brings it back."""
     now_ts = now if now is not None else time.time()
     with _lock:
-        items = list(_state["titles"].items())
+        items = [(tid, dict(rec)) for tid, rec in _state["titles"].items()]
     rows = []
     for tid, rec in items:
         if rec.get("fav") is None:
             continue
-        rows.append((rec["fav"], _snap_item(tid, rec, rec.get("kind"), now_ts)))
+        item = _snap_item(tid, rec, rec.get("kind"), now_ts)
+        if item["shelf"]["watched"]:
+            at = _watched_at(rec)
+            if at is not None and at >= rec["fav"]:
+                continue
+        rows.append((rec["fav"], item))
     rows.sort(key=lambda r: r[0], reverse=True)
     return [item for _, item in rows]
 

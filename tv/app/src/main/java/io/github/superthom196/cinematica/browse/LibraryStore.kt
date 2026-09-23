@@ -67,7 +67,8 @@ class LibraryStore(
         const val ROWS_AHEAD = 3
 
         /**
-         * The third segment of the header switch: the favourites wall, films and series mixed.
+         * The third segment of the header switch: the watchlist, films and series mixed, less
+         * whatever has been watched since it was saved.
          * It lives in [LibraryState.kind] like the other two, but is never persisted — a cold
          * start always lands on a pool, so a server with no shelf can never open on an empty wall.
          */
@@ -106,7 +107,7 @@ class LibraryStore(
      */
     fun loadGenres() {
         val kind = _state.value.kind
-        // The favourites wall is not a pool and has no genre menu of its own.
+        // The watchlist is not a pool and has no genre menu of its own.
         if (kind == KIND_FAV) return
         scope.launch {
             val resp = withTimeoutOrNull(20_000) { runCatching { api.genres(kind) }.getOrNull() }
@@ -231,10 +232,10 @@ class LibraryStore(
     }
 
     /**
-     * The favourites wall: one request for the lot, no paging, no progress ring — the server is
+     * The watchlist: one request for the lot, no paging, no progress ring — the server is
      * reading its own file, not resolving torrents. A server that has never heard of the route
      * answers 404, and an empty wall with its one quiet line is the right thing to show for that
-     * as much as for a viewer who has not favourited anything yet.
+     * as much as for a viewer who has not saved anything yet.
      */
     private fun pumpShelf() {
         if (_state.value.exhausted) return
