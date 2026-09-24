@@ -60,9 +60,9 @@ header{
   /* a 4th pill button (Channels) is the tightest fit on a ~390px phone --
      tighten the pill itself rather than truncate any of its labels */
   .kwrap{gap:1px;padding:2px}
-  .kwrap button{padding:.35rem .4rem;font-size:.7rem}
+  .kwrap button{padding:.35rem .34rem;font-size:.7rem}
   /* ...and the wordmark gives up a little, or the pill drops under it */
-  .brand h1{font-size:1.15rem}
+  .brand h1{font-size:1.05rem}
 }
 @media(max-width:380px){
   .brand h1{font-size:1rem}
@@ -342,7 +342,7 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
   </div>
   <div class="kwrap"><button id="kmovie" class="on">Movies</button><button id="ktv">Series</button>
     <button id="kchan" hidden>Channels</button>
-    <button id="kfav" title="Watchlist" aria-label="Watchlist">&#9829;</button></div>
+    <button id="kfav" title="Films and series to watch">Watch</button></div>
   <div class="controls">
     <button id="qbtn" title="Search">&#128269;<span class="wide"> Search</span></button>
     <button id="nbtn" title="Assess the connection">&#9889;</button>
@@ -398,7 +398,7 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <div id="mepisodes" hidden></div>
     <div class="mstream" id="mstream"></div>
     <div class="mact"><button class="play" id="mplay">Play</button>
-      <button id="mfav" title="Save for later">&#9829; Save for later</button>
+      <button id="mfav">Add to Watch</button>
       <button id="mstart" hidden>From the start</button></div>
   </div></div></div>
 <div id="pov"><div class="pwrap">
@@ -1077,8 +1077,8 @@ let pendingNextEp=null;   // {s,e} from shelf.next, consumed once on modal open
 function paintFavButton(shelf){
   const on=!!(shelf&&shelf.fav);
   mfav.classList.toggle('on', on);
-  mfav.textContent = on ? '\u2665 Saved' : '\u2665 Save for later';
-  mfav.title = on ? 'On your watchlist \u2014 click to remove' : 'Save for later';
+  mfav.textContent = on ? '\u2713 In Watch' : 'Add to Watch';
+  mfav.title = on ? 'On your Watch list \u2014 click to remove' : 'Keep it on your Watch list until you have seen it';
 }
 // The snap the server stores for a saved title so it can show something even if
 // the title later vanishes from the catalogue. Wall-list items keep the IMDb

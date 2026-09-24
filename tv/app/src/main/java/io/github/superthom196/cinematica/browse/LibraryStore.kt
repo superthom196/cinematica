@@ -291,7 +291,7 @@ class LibraryStore(
     }
 
     /**
-     * A shelf change made elsewhere — the ♥ on a detail screen, a long-press on a tile. The grid's
+     * A shelf change made elsewhere — the Watch button on a detail screen, a long-press on a tile. The grid's
      * own copy follows at once so the tile says what just happened without waiting for a page.
      */
     fun patchShelf(id: String, transform: (Shelf) -> Shelf) {

@@ -163,10 +163,10 @@ fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
 }
 
 /**
- * The watchlist button, in words rather than a bare heart: a heart says "love", and this is
- * "keep it for later", which the header's ♥ segment then lists until it has been watched.
+ * The watchlist button, in words and no heart: a heart says "love", and this is "keep it to
+ * watch", which the header's Watch segment then lists until it has been watched.
  */
-fun saveLabel(saved: Boolean): String = if (saved) "♥ Saved" else "♥ Save for later"
+fun saveLabel(saved: Boolean): String = if (saved) "✓ In Watch" else "Add to Watch"
 
 /**
  * Enough of a title for the watchlist to draw it after the catalogue has moved on. The
