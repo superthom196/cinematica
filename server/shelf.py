@@ -48,7 +48,12 @@ def _new_rec():
 def init(path):
     """Point the module at a JSON file and load it. A missing or corrupt
     file is not fatal -- an unreadable shelf just starts empty rather than
-    taking the server down."""
+    taking the server down.
+
+    A corrupt one is moved aside to path+'.corrupt-<epoch>' first, never left
+    in place: the next save() would otherwise overwrite it, and a file cut
+    short by a power cut still holds every title up to the cut, which is
+    worth having back by hand."""
     global _path, _state, _last_save, _dirty
     with _lock:
         _path = path
@@ -56,10 +61,19 @@ def init(path):
         try:
             with open(path, "r") as f:
                 data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("titles"), dict):
-                _state = {"v": 1, "titles": data["titles"]}
-        except Exception:
+            if not (isinstance(data, dict) and isinstance(data.get("titles"), dict)):
+                raise ValueError("no titles object")
+            _state = {"v": 1, "titles": data["titles"]}
+        except FileNotFoundError:
             pass
+        except Exception as ex:
+            aside = "%s.corrupt-%d" % (path, int(time.time()))
+            try:
+                os.replace(path, aside)
+                print("shelf: %s unreadable (%s); moved to %s, starting empty"
+                      % (path, ex, aside), flush=True)
+            except OSError:
+                print("shelf: %s unreadable (%s), starting empty" % (path, ex), flush=True)
         # Reset the throttle window so the first real save() after init
         # (i.e. after an actual mutation) is never blocked by a timer left
         # over from a previous process.
@@ -68,7 +82,10 @@ def init(path):
 
 
 def save(force=False):
-    """Atomic write: json.dump to path+'.tmp' then os.replace. Throttled to
+    """Atomic, durable write: json.dump to path+'.tmp', fsync, os.replace,
+    fsync the directory -- the same order providers/store.py uses, since a
+    rename that reaches the disk before the bytes it points at is exactly
+    what a Pi losing power leaves behind as an empty file. Throttled to
     once per FLUSH_S unless force=True, and always a no-op if nothing has
     changed since the last write -- force only waives the throttle, not the
     "nothing to do" check, so a shutdown-time flush doesn't touch disk for
@@ -86,7 +103,17 @@ def save(force=False):
             tmp = _path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(_state, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, _path)
+            try:
+                dir_fd = os.open(os.path.dirname(os.path.abspath(_path)), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass  # some filesystems refuse a directory fsync; the rename still stands
         except Exception:
             return
         _last_save = now

@@ -187,6 +187,22 @@ class ShelfTest(unittest.TestCase):
             },
         )
 
+    def test_corrupt_file_is_kept_aside_not_overwritten(self):
+        with open(self._path, "w") as f:
+            f.write('{"v": 1, "titles": {"cinemeta:tt1": {"fav"')  # cut short
+        shelf.init(self._path)
+        shelf.note_progress("cinemeta:tt14", 3000, 6000, "paused", now=NOW)
+        shelf.save(force=True)
+        aside = [n for n in os.listdir(self._tmpdir) if n.startswith("shelf.json.corrupt-")]
+        self.assertEqual(len(aside), 1)
+        with open(os.path.join(self._tmpdir, aside[0])) as f:
+            self.assertIn("cinemeta:tt1", f.read())
+
+    def test_missing_file_leaves_nothing_aside(self):
+        self.assertFalse(os.path.exists(self._path))
+        shelf.init(self._path)
+        self.assertEqual(os.listdir(self._tmpdir), [])
+
     def test_save_throttle(self):
         shelf.note_progress("cinemeta:tt13", 3000, 6000, "paused", now=NOW)
         shelf.save(force=True)
