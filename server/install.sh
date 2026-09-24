@@ -318,6 +318,44 @@ if [ "$SKIP_DOCKER" = 0 ]; then
     fi
 fi
 
+# Python providers are someone else's code. Run as $SVC_USER they would inherit
+# its docker group, which is root on this machine, so they run as their own
+# account instead: no docker group, no login, a home of its own. The sudoers
+# rule lets $SVC_USER drop to that account and nothing else; the unit names
+# the account in CINEMATICA_PROVIDER_USER (see providers/runner.py).
+PROVIDER_USER="cinematica-provider"
+PROVIDER_HOME="/var/lib/cinematica-provider"
+PROVIDER_SUDOERS="/etc/sudoers.d/cinematica-provider"
+command -v sudo >/dev/null 2>&1 || apt_install sudo
+if id -u "$PROVIDER_USER" >/dev/null 2>&1; then
+    info "provider account exists: $PROVIDER_USER"
+else
+    info "creating the provider account: $PROVIDER_USER (not in the docker group)"
+    run useradd --system --user-group --no-create-home --home-dir "$PROVIDER_HOME" \
+        --shell /usr/sbin/nologin "$PROVIDER_USER"
+fi
+if [ "$DRY" != 1 ] && id -nG "$PROVIDER_USER" | tr ' ' '\n' | grep -qx docker; then
+    die "$PROVIDER_USER is in the docker group, which defeats its purpose. Remove it: gpasswd -d $PROVIDER_USER docker"
+fi
+run install -d -m 0700 -o "$PROVIDER_USER" -g "$PROVIDER_USER" "$PROVIDER_HOME"
+if [ "$DRY" = 1 ]; then
+    plan "write $PROVIDER_SUDOERS ($SVC_USER may run commands as $PROVIDER_USER, nothing else)"
+else
+    tmp_sudoers="$(mktemp)"
+    {
+        echo "# Written by Cinematica's install.sh; re-running it rewrites this file."
+        echo "# Lets the service account start provider code as $PROVIDER_USER, an"
+        echo "# account with less access than its own. It grants nothing else."
+        echo "# No pty: the server talks to the provider over pipes."
+        echo "Defaults>$PROVIDER_USER !use_pty"
+        echo "$SVC_USER ALL=($PROVIDER_USER) NOPASSWD: ALL"
+    } > "$tmp_sudoers"
+    visudo -cqf "$tmp_sudoers" || { rm -f "$tmp_sudoers"; die "the sudoers rule for $PROVIDER_USER did not validate"; }
+    install -m 0440 -o root -g root "$tmp_sudoers" "$PROVIDER_SUDOERS"
+    rm -f "$tmp_sudoers"
+    info "installed $PROVIDER_SUDOERS"
+fi
+
 # ------------------------------------------------------------------- host ----
 step "Address"
 detect_ip() {
@@ -411,6 +449,13 @@ for f in server.py sendspin_bridge.py index.html; do
     fi
 done
 info "transcode/ and stremio/ ready (owner $SVC_USER; container-written files will be root-owned)"
+# The provider account imports providers/host.py from here. Under a private
+# home directory (--dir ~/something) it cannot, and every Python provider
+# would fail to start with nothing on screen but a crash.
+if [ "$DRY" != 1 ] && ! sudo -n -u "$PROVIDER_USER" test -r "$DIR/providers/host.py"; then
+    warn "$PROVIDER_USER cannot read $DIR/providers/host.py, so Python providers will not start."
+    warn "Put Cinematica somewhere every account can read (the default /opt/cinematica is)."
+fi
 
 # --------------------------------------------------------- state directory ---
 # Everything provider-related — installed packages, per-role activation,
@@ -420,12 +465,14 @@ info "transcode/ and stremio/ ready (owner $SVC_USER; container-written files wi
 # take an installed provider or its credentials down with it.
 step "State directory"
 STATE_DIR="${CINEMATICA_STATE:-/var/lib/cinematica}"
+# 0711: $PROVIDER_USER must reach its own package in providers/, but may not
+# list either level. Every file store.py writes here is 0600.
 if [ "$DRY" = 1 ]; then
-    plan "install -d -m 0700 -o $SVC_USER $STATE_DIR $STATE_DIR/providers"
+    plan "install -d -m 0711 -o $SVC_USER $STATE_DIR $STATE_DIR/providers"
 else
-    install -d -m 0700 -o "$SVC_USER" "$STATE_DIR"
-    install -d -m 0700 -o "$SVC_USER" "$STATE_DIR/providers"
-    info "ready: $STATE_DIR (mode 0700, owner $SVC_USER)"
+    install -d -m 0711 -o "$SVC_USER" "$STATE_DIR"
+    install -d -m 0711 -o "$SVC_USER" "$STATE_DIR/providers"
+    info "ready: $STATE_DIR (mode 0711, owner $SVC_USER)"
 fi
 
 # ------------------------------------------------------------ local settings -

@@ -20,10 +20,13 @@ There are two ways to add a provider:
 - **Add-on URL:** paste a compatible Stremio `manifest.json` URL. Cinematica requests
   data from that service over HTTP. The add-on's code runs on its own server.
 - **Python package:** upload an integration archive. Its code runs on your server
-  with the service account's permissions. Only install packages from authors you
-  trust; a separate Python process is not a security sandbox. The service account
-  is in the Docker group, which is equivalent to root, so a package can take full
-  control of the machine.
+  on your server. `install.sh` runs it under its own `cinematica-provider`
+  account, which is outside the Docker group, so it can't use Docker to take over
+  the machine. That account is not a sandbox: the package still has the network
+  and can read anything on the machine that every account can read. Only install
+  packages from authors you trust. On an installation without that account
+  (`CINEMATICA_PROVIDER_USER` unset), a package runs as the service account,
+  whose Docker group is equivalent to root.
 
 Cinematica bundles no integrations. Any service can supply any of the three
 roles if it meets the compatibility requirements below.

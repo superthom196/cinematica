@@ -60,8 +60,11 @@ account, and the box distinguishes them. Re-running the installer is safe.
 | `--skip-systemd` | Leave service setup to you |
 
 The service account belongs to the Docker group so it can run the audio tools
-inside the container. That grants it administrator-level access through Docker,
-and the same access extends to any Python provider package you install.
+inside the container. That grants it administrator-level access through Docker.
+Python provider packages don't run as that account: the installer creates a
+separate `cinematica-provider` account outside the Docker group, and a sudoers
+rule (`/etc/sudoers.d/cinematica-provider`) that lets the service start provider
+code as that account and nothing else.
 
 ## Adding providers
 

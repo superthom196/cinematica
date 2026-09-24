@@ -14,10 +14,11 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tests import addon_stub  # noqa: E402
-from providers import addon, contract, gateway, registry, store  # noqa: E402
+from providers import addon, contract, gateway, host, registry, runner, store  # noqa: E402
 
 
 class _StateIsolatedTestCase(unittest.TestCase):
@@ -511,6 +512,57 @@ class LoginThrottleTest(unittest.TestCase):
             store.note_login("10.0.0.9", False)
         store.note_login("10.0.0.9", True)
         self.assertEqual(store.login_wait("10.0.0.9"), 0)
+
+
+class ProviderAccountTest(_StateIsolatedTestCase):
+    """Python providers run as CINEMATICA_PROVIDER_USER when the installer set
+    one, and exactly as before when nothing did."""
+
+    def tearDown(self):
+        os.environ.pop("CINEMATICA_PROVIDER_USER", None)
+        super().tearDown()
+
+    def test_no_account_runs_python_directly(self):
+        argv, env = runner._worker_argv("/pkg")
+        self.assertEqual(argv, [sys.executable, "-m", "providers.host", "/pkg"])
+        self.assertNotIn("CINEMATICA_DIE_WITH_PARENT", env)
+
+    def test_account_drops_through_sudo_with_its_own_home(self):
+        os.environ["CINEMATICA_PROVIDER_USER"] = "cinematica-provider"
+        home = type("pw", (), {"pw_dir": "/var/lib/cinematica-provider"})()
+        with mock.patch.object(runner.pwd, "getpwnam", return_value=home):
+            argv, _ = runner._worker_argv("/pkg")
+        self.assertEqual(argv[:7], ["sudo", "-n", "-u", "cinematica-provider", "--", "env", "-i"])
+        self.assertEqual(argv[-4:], [sys.executable, "-m", "providers.host", "/pkg"])
+        self.assertIn("HOME=/var/lib/cinematica-provider", argv)
+        self.assertIn("CINEMATICA_DIE_WITH_PARENT=1", argv)
+        self.assertIn("PYTHONPATH=" + runner._SERVER_DIR, argv)
+
+    def test_state_tree_is_searchable_not_listable_with_an_account(self):
+        store.ensure_dirs()
+        self.assertEqual(os.stat(store.providers_dir()).st_mode & 0o777, 0o700)
+        os.environ["CINEMATICA_PROVIDER_USER"] = "cinematica-provider"
+        store.ensure_dirs()
+        self.assertEqual(os.stat(store.state_dir()).st_mode & 0o777, 0o711)
+        self.assertEqual(os.stat(store.providers_dir()).st_mode & 0o777, 0o711)
+
+    def test_installed_package_is_readable_by_another_account(self):
+        src = tempfile.mkdtemp(prefix="cinematica-pkg-", dir=self._tmp)  # 0700, like an unpacked upload
+        os.makedirs(os.path.join(src, "lib"))
+        for name, mode in (("main.py", 0o600), (os.path.join("lib", "tool"), 0o700)):
+            with open(os.path.join(src, name), "w") as f:
+                f.write("")
+            os.chmod(os.path.join(src, name), mode)
+        manifest = {"entry": "main.py"}
+        registry.swap_in_files("pkgperm", src, manifest)
+        dest = store.provider_dir("pkgperm")
+        self.assertEqual(os.stat(dest).st_mode & 0o777, 0o755)
+        self.assertEqual(os.stat(os.path.join(dest, "main.py")).st_mode & 0o777, 0o644)
+        self.assertEqual(os.stat(os.path.join(dest, "lib", "tool")).st_mode & 0o777, 0o755)
+
+    def test_host_arms_nothing_outside_sudo(self):
+        with mock.patch.dict(os.environ, {"CINEMATICA_DIE_WITH_PARENT": ""}):
+            host._die_with_parent()  # must return, not exit
 
 
 if __name__ == "__main__":

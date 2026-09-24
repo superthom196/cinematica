@@ -1,7 +1,9 @@
 """The provider pool: lives in the Cinematica process, one per installed
 provider, and owns every subprocess that runs that provider's code.
 
-A provider is someone else's Python, launched by path, running unsandboxed.
+A provider is someone else's Python, launched by path, running unsandboxed --
+though, where the installer created one, under its own account (see
+_worker_argv) rather than the service account's.
 Everything here exists to make sure a bug in it costs one call, not the
 process it runs in and not every OTHER call queued behind it: a bounded
 worker count (so nothing here ever forks its way into resource exhaustion), a
@@ -12,6 +14,7 @@ elsewhere leave a film that is mid-playback alone.
 import collections
 import json
 import os
+import pwd
 import queue
 import subprocess
 import sys
@@ -82,6 +85,46 @@ def _minimal_env():
     return env
 
 
+def provider_user():
+    """The account provider code runs as, or "" to run it as this process's.
+
+    install.sh creates it (cinematica-provider) and names it in the unit. The
+    service account is in the docker group, which is root on the machine, and
+    a provider running as that account inherits it; this account is not. It
+    is a smaller blast radius, not a sandbox: the provider still has the
+    network and can read whatever on the box is world-readable.
+    """
+    return os.environ.get("CINEMATICA_PROVIDER_USER", "").strip()
+
+
+def _worker_argv(package_dir):
+    """(argv, env) that starts one worker, as provider_user() when one is set.
+
+    sudo resets the environment, so the child's is handed over through
+    env(1) on the command line instead, with HOME pointed at the provider
+    account's own home: the service account's is not writable to it. The
+    sudoers rule install.sh writes allows exactly this drop, and -n makes a
+    missing rule fail at once, onto stderr and the web page, instead of
+    waiting on a password prompt that nobody will ever answer.
+
+    sudo stays as this worker's parent process, and that matters: this
+    process may signal sudo (same real uid) but not the worker beneath it
+    (another account). close()'s SIGTERM is relayed by sudo; kill()'s SIGKILL
+    cannot be relayed, and reaches the worker through the parent-death signal
+    host.py arms before loading any provider code.
+    """
+    argv = [sys.executable, "-m", "providers.host", package_dir]
+    env = _minimal_env()
+    user = provider_user()
+    if not user:
+        return argv, env
+    env["HOME"] = pwd.getpwnam(user).pw_dir
+    env["PYTHONDONTWRITEBYTECODE"] = "1"  # server/ is not the provider account's to write in
+    env["CINEMATICA_DIE_WITH_PARENT"] = "1"  # see host._die_with_parent
+    passed = ["%s=%s" % kv for kv in sorted(env.items())]
+    return ["sudo", "-n", "-u", user, "--", "env", "-i"] + passed + argv, env
+
+
 class _Worker:
     """One provider subprocess plus the threads that keep it from ever
     blocking this process: a reader that turns its stdout into queued
@@ -99,10 +142,11 @@ class _Worker:
         self._stderr_ring = stderr_ring
         self._stderr_lock = stderr_lock
 
+        argv, env = _worker_argv(package_dir)
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "providers.host", package_dir],
+            argv,
             cwd=package_dir,
-            env=_minimal_env(),
+            env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             bufsize=0,
         )

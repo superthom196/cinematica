@@ -13,15 +13,23 @@
 #            below; removed entirely otherwise, same rule as @ADB@.
 #
 # StateDirectory=cinematica asks systemd to create /var/lib/cinematica (mode
-# 0700, owned by @USER@) before every start and keep it that way -- this is
+# 0711, owned by @USER@) before every start and keep it that way -- this is
 # the providers/store.py state tree (installed provider packages, their
 # config and credentials, the admin password). install.sh also creates it
 # directly during install, so a first run of the freshly-installed unit finds
-# it already there either way.
+# it already there either way. 0711, not 0700, so the cinematica-provider
+# account can reach its own package inside it; nobody else can list it, and
+# the files in it are 0600.
+#
+# CINEMATICA_PROVIDER_USER runs Python provider code as that separate
+# account, which install.sh creates outside the docker group, instead of as
+# @USER@ (root-equivalent through docker). See providers/runner.py.
 #
 # KEEP IN SYNC with cinematica.service, the committed unit for the original Pi
 # (deployed by deploy/post-receive, not by install.sh). Same environment block,
-# different paths/user/host. Change one, change the other.
+# different paths/user/host. Change one, change the other. The one deliberate
+# exception is CINEMATICA_PROVIDER_USER and the 0711 mode: the original Pi has
+# no provider account until it is set up there by hand.
 
 [Unit]
 Description=Cinematica — top-rated 4K films, streamed to the TV
@@ -33,7 +41,8 @@ Type=simple
 User=@USER@
 WorkingDirectory=@DIR@
 StateDirectory=cinematica
-StateDirectoryMode=0700
+StateDirectoryMode=0711
+Environment=CINEMATICA_PROVIDER_USER=cinematica-provider
 Environment=PORT=8090
 Environment=PAGE_SIZE=24
 Environment=STREMIO=http://@HOST@:11470

@@ -253,11 +253,40 @@ def _handle_line(line, module, provider_id):
         _write({"id": rid, "ok": True, "result": result})
 
 
+def _die_with_parent():
+    """Ask Linux to SIGKILL this process the moment its parent exits.
+
+    When runner.py starts this under a separate account, the parent is sudo,
+    and the server cannot signal this process directly -- only sudo, which
+    cannot pass a SIGKILL on. Without this, a worker hung inside provider code
+    would outlive the kill meant for it. Armed before the provider is loaded,
+    so nothing the provider does at import time can race it.
+
+    Only under sudo (the runner says so in the environment): Linux ties the
+    signal to the parent THREAD, and the server starts replacement workers
+    from short-lived threads, so armed there it would kill healthy workers.
+    Without sudo in between, the runner can and does kill this process itself.
+    """
+    if os.environ.get("CINEMATICA_DIE_WITH_PARENT") != "1" or not sys.platform.startswith("linux"):
+        return
+    parent = os.getppid()
+    try:
+        import ctypes
+        import signal
+        PR_SET_PDEATHSIG = 1
+        ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0)
+    except Exception:
+        return
+    if os.getppid() != parent:  # the parent went before the signal was armed
+        os._exit(1)
+
+
 def main(argv):
     if len(argv) < 2:
         print("usage: python3 -m providers.host <package_dir>", file=sys.stderr)
         return 2
     package_dir = argv[1]
+    _die_with_parent()
 
     try:
         manifest = _load_manifest(package_dir)

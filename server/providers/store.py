@@ -58,6 +58,11 @@ def provider_dir(provider_id):
 
 
 def ensure_dirs():
+    # With a separate provider account (runner.provider_user), that account
+    # has to reach its own package under providers/, so both levels get the
+    # search bit for others -- never read: nobody else can list them, and
+    # every file this module writes here is 0600 regardless.
+    mode = 0o711 if os.environ.get("CINEMATICA_PROVIDER_USER", "").strip() else 0o700
     for path in (state_dir(), providers_dir()):
         os.makedirs(path, exist_ok=True)
         try:
@@ -65,7 +70,7 @@ def ensure_dirs():
             # the directory already exists, so the only way to be sure this
             # tree (secrets.json's parent) is not world-readable is to chmod
             # it explicitly, every time.
-            os.chmod(path, 0o700)
+            os.chmod(path, mode)
         except OSError:
             pass
 

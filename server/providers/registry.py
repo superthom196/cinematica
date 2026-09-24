@@ -73,6 +73,20 @@ def _record(provider_id, raw):
     )
 
 
+def _make_readable(root):
+    """Open a staged package to the provider account (runner.provider_user),
+    which is not its owner: an upload is unpacked into a 0700 temp directory
+    and copytree carries that mode across. A package is code, not a secret;
+    its credentials live in secrets.json and reach it over stdin."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        os.chmod(dirpath, 0o755)
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            if os.path.islink(path):
+                continue  # chmod would follow it out of the package
+            os.chmod(path, 0o755 if os.stat(path).st_mode & 0o100 else 0o644)
+
+
 def swap_in_files(provider_id, files_dir, manifest):
     """Put `files_dir`'s tree in place as provider_id's installed package,
     without ever being able to leave the provider with no files at all.
@@ -103,6 +117,7 @@ def swap_in_files(provider_id, files_dir, manifest):
 
     shutil.copytree(files_dir, staged)
     try:
+        _make_readable(staged)
         # Validate the COPY, not the source: the point is to catch a copy that
         # went wrong, so checking the directory we were handed proves nothing.
         entry = os.path.realpath(os.path.join(staged, manifest["entry"]))
