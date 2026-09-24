@@ -105,14 +105,14 @@ jobs:
           work=$(mktemp -d)
           tar xzf "dist/cinematica-server-${VERSION}.tar.gz" -C "$work"
           cd "$work/cinematica-server"
-          sudo ./install.sh --non-interactive --skip-docker --host 127.0.0.1
-          for i in $(seq 60); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8090/api/health; then
-              echo "/api/health answered after ${i}s."
-              exit 0
-            fi
-            sleep 1
-          done
+          # install.sh already waits up to 60 s for /api/health and exits
+          # nonzero without it; the curl is the check this step owns.
+          if sudo ./install.sh --non-interactive --skip-docker --host 127.0.0.1 &&
+             curl -fsS -o /dev/null --retry 15 --retry-delay 2 --retry-all-errors \
+               http://127.0.0.1:8090/api/health; then
+            echo "Installed from the tarball, and /api/health answers."
+            exit 0
+          fi
           echo "::error::the installed server never answered /api/health."
           sudo systemctl status cinematica --no-pager || true
           sudo journalctl -u cinematica --no-pager -n 80 || true
