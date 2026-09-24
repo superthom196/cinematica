@@ -5513,14 +5513,18 @@ class H(BaseHTTPRequestHandler):
                 body["channel_ops"] = sorted(ops)
                 return self._send(200, body)
             if p.path == "/api/channel/videos":
-                q = urllib.parse.parse_qs(p.query)
+                # Blank values kept: "page=" (the first page's next="" followed)
+                # means "the full list from the start", and a parser that drops
+                # it serves page one again, so the list never grows past it.
+                q = urllib.parse.parse_qs(p.query, keep_blank_values=True)
                 cid = (q.get("id", [""])[0] or "").strip()
                 if not cid:
                     return self._send(400, {"err": "no id"})
+                paging = "page" in q
                 page = (q.get("page", [""])[0] or "").strip()
                 try:
                     ops = gateway.channel_ops()
-                    if page:
+                    if paging:
                         if contract.OP_CH_VIDEOS not in ops:
                             return self._send(200, {"videos": [], "next": None})
                         r = gateway.channel_videos(cid, page)

@@ -356,6 +356,23 @@ class ServerChannelsTest(ChannelsTestBase):
         code, body = get("/api/channel/videos?id=prov:a")
         self.assertEqual([v["id"] for v in body["videos"]], ["v2"])
 
+    def test_channel_videos_empty_page_starts_the_full_list(self):
+        # The TV follows the first page's next="" by asking for "&page=" -- a
+        # blank value the query parser must keep, or it serves page one again
+        # and the list never grows past it.
+        server.gateway.channel_latest = lambda cid: {"videos": [_video("v1", "x", 5)], "next": None}
+        asked = []
+        server.gateway.channel_videos = lambda cid, page=None: asked.append(page) or {
+            "videos": [_video("v1", "x", 5), _video("v0", "older", 1)], "next": "tok2"}
+        code, body = get("/api/channel/videos?id=prov:a")
+        self.assertEqual(body["next"], "")
+        code, body = get("/api/channel/videos?id=prov:a&page=" + body["next"])
+        self.assertEqual(asked, [""])
+        self.assertEqual([v["id"] for v in body["videos"]], ["v1", "v0"])
+        self.assertEqual(body["next"], "tok2")
+        get("/api/channel/videos?id=prov:a&page=tok2")
+        self.assertEqual(asked, ["", "tok2"])
+
     def test_channel_videos_paging_needs_the_op(self):
         server.gateway.channel_ops = lambda: set()
         code, body = get("/api/channel/videos?id=prov:a&page=tok")
