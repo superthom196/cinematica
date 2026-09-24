@@ -55,6 +55,8 @@ Environment=BUFFER_MIN_MB=80
 Environment=BUFFER_MAX_MB=1000
 Environment=HARD_CAP_SECS=600
 Environment=AUDIO_FIX=1
+# Candidate pool per view. The code default (600) left the film wall at ~240 playable titles.
+Environment=POOL_MAX=1500
 ExecStart=/usr/bin/python3 @DIR@/server.py
 Restart=on-failure
 RestartSec=5
