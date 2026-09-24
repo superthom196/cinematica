@@ -42,7 +42,8 @@ class HifiSyncTest(unittest.TestCase):
                             last_restart=0.0, err_s=None, player_url="ws://p:8928/sendspin",
                             pending_since=0.0, seek_seq=None, delay_ms=0, last_error=None,
                             fail_count=0, supply=None, cache=None, job="1",
-                            applied_delay_ms=0, delay_at=0.0, tv_delay_ms=None)
+                            applied_delay_ms=0, delay_at=0.0, tv_delay_ms=None,
+                            volume=None)
         drain()
 
     def beat(self, state, pos=None, seek_seq=0, hifi=True):
@@ -333,6 +334,18 @@ class HifiSyncTest(unittest.TestCase):
         self.beat("playing", 30.0)
         self.assertEqual([a[0] for a in drain()], ["start"])
         self.assertEqual(server._hifi["delay_ms"], -125)
+
+    def test_the_players_volume_rides_on_hifi_status_until_release(self):
+        r = self.beat("playing", 12.0)
+        self.assertNotIn("volume", r["hifi_status"], "no level is shown before the bridge says one")
+        gen = self.go_live(20.0)
+        server._hifi_apply_status({"connected": True, "streaming": True, "pending": False,
+                                   "gen": gen, "t0_us": server._hifi["t0_us"],
+                                   "ffmpeg_alive": True, "clock_offset_us": 0, "volume": 40})
+        r = self.beat("playing", 21.0)
+        self.assertEqual(r["hifi_status"]["volume"], 40)
+        server._hifi_release()
+        self.assertIsNone(server._hifi["volume"], "the player goes back to Music Assistant")
 
     def test_hifi_off_leaves_the_bridge_alone(self):
         r = self.beat("playing", 5.0, hifi=False)

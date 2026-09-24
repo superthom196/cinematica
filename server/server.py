@@ -2322,6 +2322,9 @@ _hifi = {"on": False, "gen": int(time.time()), "t0_us": None, "clock_offset_us":
          # TV repeats its stored value on every beat, which would otherwise
          # undo a trim set from anywhere else within a second.
          "tv_delay_ms": None,
+         # The player's own volume (0-100) as the bridge last reported it, for
+         # the TV's volume badge; None until a /status or /volume says.
+         "volume": None,
          # The bridge's decoder supply counters (stalls, queued audio), so a
          # dropout can be blamed on the source or the player, not guessed at.
          "supply": None, "cache": None,
@@ -2360,6 +2363,8 @@ def _hifi_release():
         _hifi["job"] = None
         _hifi["cache"] = None
         _hifi["supply"] = None
+        # Music Assistant gets the player back and may change its volume.
+        _hifi["volume"] = None
     _ss_q.put(("release",))
 
 
@@ -2435,6 +2440,8 @@ def _hifi_apply_status(body):
         _hifi["cache"] = body.get("cache")
         if body.get("delay_ms") is not None:
             _hifi["applied_delay_ms"] = body["delay_ms"]
+        if body.get("volume") is not None:
+            _hifi["volume"] = body["volume"]
         pending = _hifi["pending_since"] > 0
         live = _hifi["streaming"] and _hifi["t0_us"] is not None
         if body.get("gen") != _hifi["gen"]:
@@ -2627,7 +2634,10 @@ def _ss_worker():
                     _hifi["connected"] = False
             elif kind == "volume":
                 _, payload = action
-                _ss_call("/volume", payload)
+                status, body = _ss_call("/volume", payload)
+                if status == 200 and body.get("volume") is not None:
+                    with _lock:
+                        _hifi["volume"] = body["volume"]
         except Exception as ex:
             print("sendspin: worker error: %s" % ex, flush=True)
 
@@ -2796,6 +2806,8 @@ def app_heartbeat(d):
             else:
                 hst = "starting"
             hifi_status = {"state": hst, "msg": _hifi["last_error"] if hst == "failed" else None}
+            if _hifi["volume"] is not None:
+                hifi_status["volume"] = _hifi["volume"]
         # An order that has been sitting here longer than APP_CMD_TTL is stale by
         # definition -- the app was away for it -- and delivering it now would
         # start a film for a request made in another part of the evening.

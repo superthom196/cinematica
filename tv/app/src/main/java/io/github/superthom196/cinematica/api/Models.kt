@@ -376,12 +376,14 @@ data class HeartbeatResp(
  * Where the hifi audio for the film on screen has got to, on every heartbeat while one is up:
  * `live` (a `sync` verdict rides alongside), `starting` (the decoder is seeking, or the bridge is
  * being connected), `stopped` (paused), or `failed` with [msg] saying why — shown on the OSD so a
- * film with no sound never looks like a film with the volume down.
+ * film with no sound never looks like a film with the volume down. [volume] is the hifi player's
+ * own level, 0-100, once the audio bridge has reported it; null from servers before 1.3.1.
  */
 @Serializable
 data class HifiStatus(
     val state: String,
     val msg: String? = null,
+    val volume: Int? = null,
 )
 
 /**

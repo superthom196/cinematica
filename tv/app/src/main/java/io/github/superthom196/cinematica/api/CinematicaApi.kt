@@ -318,6 +318,10 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
     suspend fun hifiDelay(ms: Int): OkResp =
         post(shortReadClient, "/api/hifi/delay", """{"ms":$ms}""")
 
+    /** Step the hifi player's own volume by [delta] (the server clamps to 0-100). Fire and forget. */
+    suspend fun hifiVolume(delta: Int): OkResp =
+        post(shortReadClient, "/api/player/volume", """{"delta":$delta}""")
+
     suspend fun heartbeat(body: HeartbeatBody): HeartbeatResp {
         val payload = json.encodeToString(HeartbeatBody.serializer(), body)
         return post(heartbeatClient, "/api/player/heartbeat", payload)

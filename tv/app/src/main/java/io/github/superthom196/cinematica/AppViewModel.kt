@@ -233,6 +233,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // The server's word on the audio itself (starting, live, failed and why), for the OSD.
     private val _hifiStatus = MutableStateFlow<HifiStatus?>(null)
     val hifiStatus: StateFlow<HifiStatus?> = _hifiStatus.asStateFlow()
+    // The hifi player's volume, for the player's volume badge: the server's word off the heartbeat,
+    // except just after a P+/P- press, when this TV's own running sum stands until the server has
+    // caught up -- otherwise a beat answered before the step reached the player snaps it back.
+    private val _hifiVolume = MutableStateFlow<Int?>(null)
+    val hifiVolume: StateFlow<Int?> = _hifiVolume.asStateFlow()
+    private var hifiVolumeAt = 0L
 
     private val link = PlayerLink(
         scope = viewModelScope,
@@ -243,7 +249,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         onPlay = ::startPlayback,
         onStop = { stopPlayback(tellServer = false) },
         onSync = ::onSync,
-        onHifiStatus = { _hifiStatus.value = it },
+        onHifiStatus = ::onHifiStatus,
     )
     val linkState: StateFlow<LinkState> = link.link
 
@@ -453,6 +459,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         lipSync.reset()
         _lastSyncErrMs.value = null
         _hifiStatus.value = null
+        _hifiVolume.value = null
         _ui.update {
             if (it.phase is Phase.Player) it.copy(phase = Phase.Library, playPick = null, playTitle = null, hifi = false)
             else it.copy(playPick = null, playTitle = null, hifi = false)
@@ -798,6 +805,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun onHifiStatus(status: HifiStatus?) {
+        _hifiStatus.value = status
+        val level = status?.volume ?: return
+        if (android.os.SystemClock.uptimeMillis() - hifiVolumeAt > VOLUME_SETTLE_MS) _hifiVolume.value = level
+    }
+
+    /**
+     * Step the hifi player's volume by [delta], from the player's P+/P- keys. The TV's own volume
+     * keys stay with the TV: in hifi mode it is muted, and the sound is the Sendspin player's.
+     * Sent at once, like the lip-sync trim, because the viewer is listening for the change.
+     */
+    fun adjustHifiVolume(delta: Int) {
+        if (!_ui.value.hifi) return
+        hifiVolumeAt = android.os.SystemClock.uptimeMillis()
+        _hifiVolume.value?.let { _hifiVolume.value = (it + delta).coerceIn(0, 100) }
+        viewModelScope.launch { runCatching { api.hifiVolume(delta) } }
+    }
+
     fun toggleHifiAudio() {
         viewModelScope.launch { prefs.setHifiAudio(!hifiAudio.value) }
     }
@@ -984,5 +1009,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         const val RESUME_MARGIN_MS = 10_000L
         /** A held film says why it is holding this often, so the wait is never unexplained. */
         const val RESUME_SAY_EVERY_MS = 30_000L
+        /** After a volume press, how long the TV's own sum outranks the heartbeat's (beats are 1 s). */
+        const val VOLUME_SETTLE_MS = 2_500L
     }
 }

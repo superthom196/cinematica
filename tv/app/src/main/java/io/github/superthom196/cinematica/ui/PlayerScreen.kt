@@ -72,6 +72,18 @@ private fun formatGb(gb: Double): String {
 private const val OSD_MS = 4_000L
 private const val SEEK_STEP_MS = 10_000L
 private const val SEEK_COMMIT_MS = 350L
+private const val VOLUME_STEP = 5
+private const val VOLUME_BADGE_MS = 2_000L
+
+/**
+ * P+/P- step the hifi player's volume, the way Music Assistant's TV app does. Some remotes send
+ * page keys for the same buttons.
+ */
+private fun volumeStep(key: Key): Int? = when (key) {
+    Key.ChannelUp, Key.PageUp -> VOLUME_STEP
+    Key.ChannelDown, Key.PageDown -> -VOLUME_STEP
+    else -> null
+}
 
 // Mirrors server/shelf.py. Below PIN_FROM a stop is an early bail and nothing is kept; at DONE_AT
 // the film counts as watched. Between the two the server is about to pin it and go on offering it,
@@ -103,6 +115,7 @@ fun PlayerScreen(vm: AppViewModel) {
     val syncErrMs by vm.lastSyncErrMs.collectAsStateWithLifecycle()
     val hifiStatus by vm.hifiStatus.collectAsStateWithLifecycle()
     val hifiDelayMs by vm.hifiDelayMs.collectAsStateWithLifecycle()
+    val hifiVolume by vm.hifiVolume.collectAsStateWithLifecycle()
     val ping by vm.osdPing.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
@@ -121,6 +134,9 @@ fun PlayerScreen(vm: AppViewModel) {
     var seekTarget by remember { mutableStateOf<Long?>(null) }
     var noticeVisible by remember { mutableStateOf(false) }
     var trackNoteVisible by remember { mutableStateOf(false) }
+    var volumeTick by remember { mutableLongStateOf(0L) }
+    var volumeUp by remember { mutableStateOf(true) }
+    var volumeVisible by remember { mutableStateOf(false) }
 
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
@@ -152,6 +168,13 @@ fun PlayerScreen(vm: AppViewModel) {
         if (lipSync) {
             kotlinx.coroutines.delay(6_000L)
             lipSync = false
+        }
+    }
+    LaunchedEffect(volumeTick) {
+        if (volumeTick > 0L) {
+            volumeVisible = true
+            kotlinx.coroutines.delay(VOLUME_BADGE_MS)
+            volumeVisible = false
         }
     }
     // What the automatic track choice did, said once and briefly: the viewer should know why they
@@ -208,6 +231,14 @@ fun PlayerScreen(vm: AppViewModel) {
                     // Back's key-up must be swallowed too, or the activity's BackHandler acts on it
                     // after this screen has already dealt with the press.
                     return@onPreviewKeyEvent ev.key == Key.Back
+                }
+                // Volume first, so it works over the picker and the prompts alike, and without
+                // keyTick: turning the sound up should not bring the OSD up over the film.
+                if (hifi) volumeStep(ev.key)?.let { delta ->
+                    vm.adjustHifiVolume(delta)
+                    volumeUp = delta > 0
+                    volumeTick++
+                    return@onPreviewKeyEvent true
                 }
                 keyTick++
                 if (stopPrompt) {
@@ -300,8 +331,16 @@ fun PlayerScreen(vm: AppViewModel) {
         // Audio that failed to start is said even with the OSD down: a silent film must never
         // pass for a quiet one.
         val failed = hifiStatus?.takeIf { hifi && it.state == "failed" }
-        if (failed != null && !osdVisible && !picker) {
-            Box(Modifier.align(Alignment.TopEnd).padding(24.dp)) { Chip(hifiChipText(failed), CinematicaColors.Warn) }
+        val showFailed = failed != null && !osdVisible && !picker
+        if (showFailed || volumeVisible) {
+            Column(
+                Modifier.align(Alignment.TopEnd).padding(24.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (volumeVisible) VolumeBadge(hifiVolume, volumeUp)
+                if (showFailed && failed != null) Chip(hifiChipText(failed), CinematicaColors.Warn)
+            }
         }
         // Above the transport band, so it reads whether or not the OSD is up.
         val trackNote = st.trackNote
@@ -453,6 +492,33 @@ private fun hifiChipText(status: HifiStatus): String =
 private fun Chip(text: String, color: Color) {
     Box(Modifier.background(color.copy(alpha = 0.22f), RoundedCornerShape(50)).border(1.dp, color, RoundedCornerShape(50)).padding(horizontal = 12.dp, vertical = 5.dp)) {
         Text(text, style = MaterialTheme.typography.labelMedium, color = color)
+    }
+}
+
+/**
+ * The hifi player's volume after a P+/P- press. A server too old to report the level still gets
+ * the press acknowledged, as a direction.
+ */
+@Composable
+private fun VolumeBadge(level: Int?, up: Boolean) {
+    Column(
+        Modifier.background(Color(0xCC000000), RoundedCornerShape(10.dp))
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+            .width(160.dp),
+    ) {
+        Text(
+            if (level != null) "Volume $level" else if (up) "Volume up" else "Volume down",
+            style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Text,
+        )
+        if (level != null) {
+            VSpace(6.dp)
+            Box(Modifier.fillMaxWidth().height(4.dp).background(CinematicaColors.SurfaceHigh, RoundedCornerShape(2.dp))) {
+                Box(
+                    Modifier.fillMaxWidth(level / 100f).fillMaxHeight()
+                        .background(CinematicaColors.AccentBright, RoundedCornerShape(2.dp)),
+                )
+            }
+        }
     }
 }
 
