@@ -24,9 +24,10 @@ FLUSH_S = 30          # disk write throttle
 
 _lock = threading.Lock()
 _path = None
-_state = {"v": 1, "titles": {}}
+_state = {"v": 1, "titles": {}, "channels": {}}
 _last_save = 0.0
 _dirty = False
+CHANNEL_OPENED_CAP = 500   # per-channel "opened" table; oldest entries drop first
 
 
 def _new_rec():
@@ -57,13 +58,17 @@ def init(path):
     global _path, _state, _last_save, _dirty
     with _lock:
         _path = path
-        _state = {"v": 1, "titles": {}}
+        _state = {"v": 1, "titles": {}, "channels": {}}
         try:
             with open(path, "r") as f:
                 data = json.load(f)
             if not (isinstance(data, dict) and isinstance(data.get("titles"), dict)):
                 raise ValueError("no titles object")
-            _state = {"v": 1, "titles": data["titles"]}
+            # "channels" is newer than the shelf file format -- a file written
+            # before it simply has none, and stays valid rather than corrupt.
+            channels = data.get("channels")
+            _state = {"v": 1, "titles": data["titles"],
+                      "channels": channels if isinstance(channels, dict) else {}}
         except FileNotFoundError:
             pass
         except Exception as ex:
@@ -589,3 +594,196 @@ def snapshot_needed(title_id):
         if rec is None:
             return True
         return not (rec.get("snap") or {}).get("poster")
+
+
+# ---- channels --------------------------------------------------------------
+# Kept in their own top-level table, never under "titles" -- a followed
+# channel is not a title and must stay invisible to favourites()/pins()/
+# view(), which only ever look at _state["titles"].
+
+def _new_channel_rec():
+    return {
+        "snap": {"title": None, "avatar": None, "banner": None,
+                 "subscribers": None, "description": None},
+        "follow": None,
+        "seen": None,
+        "latest": [],
+        "latest_at": None,
+        "checked": None,
+        "opened": {},
+    }
+
+
+def _merge_channel_snap(rec, snap):
+    """Fresh data replaces stale, field by field -- unlike _merge_snap's
+    fill-only rule for titles, a channel snap comes from exactly one source
+    (the provider) each time it is fetched, so a newer value is always the
+    better one, and a field the caller doesn't have this time is left alone."""
+    dst = rec["snap"]
+    for k in dst:
+        if snap.get(k) is not None:
+            dst[k] = snap[k]
+
+
+def _channel_new_count(rec):
+    """Videos published after max(follow, seen) -- 0 for a channel that was
+    never followed, since a follow that sets seen=now is what makes a fresh
+    follow start at zero rather than surfacing every upload the channel ever
+    made as "new"."""
+    if rec.get("follow") is None:
+        return 0
+    cutoff = max(rec.get("follow") or 0, rec.get("seen") or 0)
+    return sum(1 for v in (rec.get("latest") or []) if (v.get("published") or 0) > cutoff)
+
+
+def _wall_item(cid, rec, new=None):
+    snap = rec.get("snap") or {}
+    return {
+        "id": cid,
+        "kind": "channel",
+        "title": snap.get("title"),
+        "poster": snap.get("avatar"),
+        "backdrop": snap.get("banner"),
+        "overview": snap.get("description"),
+        "subscribers": snap.get("subscribers"),
+        "latest_at": rec.get("latest_at"),
+        "followed": rec.get("follow") is not None,
+        "new": _channel_new_count(rec) if new is None else new,
+    }
+
+
+def follow(cid, on, snap=None, now=None):
+    global _dirty
+    now_ts = now if now is not None else time.time()
+    with _lock:
+        rec = _state["channels"].setdefault(cid, _new_channel_rec())
+        if on:
+            # seen=now too, so a channel just followed shows no NEW count for
+            # uploads it already had before anyone here was watching it.
+            rec["follow"] = now_ts
+            rec["seen"] = now_ts
+        else:
+            rec["follow"] = None
+        if snap:
+            _merge_channel_snap(rec, snap)
+        _dirty = True
+
+
+def channel_seen(cid, now=None):
+    global _dirty
+    now_ts = now if now is not None else time.time()
+    with _lock:
+        rec = _state["channels"].setdefault(cid, _new_channel_rec())
+        rec["seen"] = now_ts
+        _dirty = True
+
+
+def set_latest(cid, videos, now=None):
+    global _dirty
+    now_ts = now if now is not None else time.time()
+    with _lock:
+        rec = _state["channels"].setdefault(cid, _new_channel_rec())
+        vids = sorted(videos or [], key=lambda v: v.get("published") or 0, reverse=True)[:50]
+        rec["latest"] = vids
+        published = [v.get("published") for v in vids if v.get("published")]
+        if published:
+            rec["latest_at"] = max(published)
+        rec["checked"] = now_ts
+        _dirty = True
+
+
+def set_snap(cid, snap):
+    global _dirty
+    with _lock:
+        rec = _state["channels"].setdefault(cid, _new_channel_rec())
+        _merge_channel_snap(rec, snap or {})
+        _dirty = True
+
+
+def video_opened(cid, vid, on=True, now=None):
+    global _dirty
+    now_ts = now if now is not None else time.time()
+    with _lock:
+        rec = _state["channels"].setdefault(cid, _new_channel_rec())
+        opened = rec["opened"]
+        if on:
+            opened[vid] = now_ts
+            if len(opened) > CHANNEL_OPENED_CAP:
+                oldest = sorted(opened, key=lambda k: opened[k])[:len(opened) - CHANNEL_OPENED_CAP]
+                for k in oldest:
+                    del opened[k]
+        else:
+            opened.pop(vid, None)
+        _dirty = True
+
+
+def channel_view(cid):
+    with _lock:
+        rec = _state["channels"].get(cid)
+        if rec is None:
+            return {"followed": False, "new": 0, "seen": None}
+        return {"followed": rec.get("follow") is not None,
+                "new": _channel_new_count(rec),
+                "seen": rec.get("seen")}
+
+
+def decorate_videos(cid, videos):
+    """Copies with "opened" (this video was ever played from here) and "new"
+    (published after the channel was last seen -- only meaningful, so only
+    ever true, for a followed channel)."""
+    with _lock:
+        rec = _state["channels"].get(cid)
+        followed = bool(rec and rec.get("follow") is not None)
+        cutoff = max(rec.get("follow") or 0, rec.get("seen") or 0) if rec else 0
+        opened = dict(rec.get("opened") or {}) if rec else {}
+    out = []
+    for v in videos or []:
+        item = dict(v)
+        item["opened"] = v.get("id") in opened
+        item["new"] = followed and (v.get("published") or 0) > cutoff
+        out.append(item)
+    return out
+
+
+def followed_channels():
+    """Wall items for every followed channel: the ones with new uploads
+    first (newest upload first among them), then the rest (also newest
+    upload first)."""
+    with _lock:
+        items = [(cid, dict(rec)) for cid, rec in _state["channels"].items()
+                 if rec.get("follow") is not None]
+    rows = []
+    for cid, rec in items:
+        new = _channel_new_count(rec)
+        rows.append((new > 0, rec.get("latest_at") or 0, _wall_item(cid, rec, new)))
+    rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
+    return [item for _, __, item in rows]
+
+
+def followed_ids():
+    with _lock:
+        return [cid for cid, rec in _state["channels"].items() if rec.get("follow") is not None]
+
+
+def stored_item(cid):
+    """The wall-item shape for a channel that has ever touched the shelf,
+    followed or not -- None if this id has never been seen here. Lets a
+    caller answer "what do we already know" (e.g. after a follow/unfollow)
+    without a live provider round trip."""
+    with _lock:
+        rec = _state["channels"].get(cid)
+        if rec is None:
+            return None
+        return _wall_item(cid, rec)
+
+
+def stored_latest(cid):
+    """The stored "latest" videos and when they were last checked --
+    {"videos": [], "checked": None} for a channel never polled. Distinct
+    from gateway.channel_latest(), which is a live provider call; this is
+    only ever what set_latest() last wrote here."""
+    with _lock:
+        rec = _state["channels"].get(cid)
+        if rec is None:
+            return {"videos": [], "checked": None}
+        return {"videos": list(rec.get("latest") or []), "checked": rec.get("checked")}

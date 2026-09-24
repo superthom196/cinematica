@@ -101,6 +101,7 @@ APP_CMD_TTL = float(os.environ.get("APP_CMD_TTL", 90))
 APP_GRACE = float(os.environ.get("APP_GRACE", 3 * APP_TTL))
 PAGE      = int(os.environ.get("PAGE_SIZE", 20))    # films per infinite-scroll page
 POOL_MAX  = int(os.environ.get("POOL_MAX", 600))   # candidate pool depth per view
+CHANNEL_POLL_MIN = int(os.environ.get("CHANNEL_POLL_MIN", 30))  # how often followed channels are checked for uploads
 # Beside server.py, like .env, netprofile.json and nowplaying.json. It was
 # pinned to one absolute path under $HOME, which silently made any second
 # checkout read and overwrite the first one's dataset.
@@ -2052,6 +2053,38 @@ def cache_watch():
             was = now
         except Exception:
             pass
+
+# cid -> ts of the last snap refresh, so channel_watch() only re-fetches a
+# channel's avatar/banner/subscriber count once a day, not on every sweep.
+_channel_snap_checked = {}
+
+def channel_watch():
+    """Keep every followed channel's stored "latest" videos, and once a day
+    its snap (avatar/banner/subscribers/description), current -- so the wall
+    and the channel page are always served from disk and never wait on a
+    live provider round trip. Same poll-and-sleep shape as cache_watch()."""
+    time.sleep(60)
+    while True:
+        if not gateway.available(contract.ROLE_CHANNELS):
+            time.sleep(CHANNEL_POLL_MIN * 60)
+            continue
+        now = time.time()
+        for cid in shelf.followed_ids():
+            try:
+                r = gateway.channel_latest(cid)
+                shelf.set_latest(cid, r["videos"])
+                if now - _channel_snap_checked.get(cid, 0) > 24 * 3600:
+                    shelf.set_snap(cid, gateway.channel_details(cid))
+                    _channel_snap_checked[cid] = now
+            except contract.ProviderError as ex:
+                print("channels: %s failed for %s: %s" % (ex.op, cid, ex.message), flush=True)
+            except Exception as ex:
+                print("channels: unexpected error for %s: %s" % (cid, ex), flush=True)
+            time.sleep(1)
+        # forced: the throttle would otherwise leave a sweep unsaved until the
+        # next one, CHANNEL_POLL_MIN later
+        shelf.save(force=True)
+        time.sleep(CHANNEL_POLL_MIN * 60)
 
 def net_auto():
     """Apply the stored profile, and calibrate ONLY if it never has been.
@@ -4889,6 +4922,76 @@ def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
         with _lock:
             _play_inflight -= 1
 
+# ---- channels ----------------------------------------------------------------
+# Followed channels, their uploads, and a hand-off to an external app -- see
+# providers/contract.py's channels role. Nothing here buffers or proxies a
+# video: play() only records that it was opened and returns the provider's
+# {url, package, label} for the TV to hand to another app.
+
+# Both keyed by gateway.cache_tag(ROLE_CHANNELS), same convention as _genres
+# above -- a provider swap or a config edit can never keep serving results
+# gathered under the old one.
+_channel_popular_cache = {"at": 0, "data": [], "tag": None}
+_channel_details_cache = {}   # "<tag>@<id>" -> {"at":ts, "channel":{...}}, 1h TTL
+
+
+def _channel_item(ch, cid=None):
+    """The wall/detail tile shape both clients render, from either a
+    normalised gateway channel (ch carries "id") or a stored shelf snap (cid
+    given separately, since a snap has no id of its own). Decorated with
+    this household's own state -- followed/new -- via shelf.channel_view,
+    never from anything the provider said."""
+    cid = cid or ch.get("id")
+    view = shelf.channel_view(cid)
+    return {
+        "id": cid,
+        "kind": "channel",
+        "title": ch.get("title"),
+        "poster": ch.get("avatar"),
+        "backdrop": ch.get("banner"),
+        "overview": ch.get("description"),
+        "subscribers": ch.get("subscribers"),
+        "latest_at": ch.get("latest_at"),
+        "followed": view["followed"],
+        "new": view["new"],
+    }
+
+
+def channel_popular(limit=40):
+    """Cached 6h, same TTL as the catalogue's own popular list. Errors are
+    never cached -- an empty result here is what a not-yet-usable index
+    looks like, and caching that would keep the wall's Popular row empty for
+    6 hours after the provider recovers."""
+    tag = gateway.cache_tag(contract.ROLE_CHANNELS)
+    with _lock:
+        c = _channel_popular_cache
+        if c["data"] and c.get("tag") == tag and time.time() - c["at"] < TTL_LIST:
+            return c["data"]
+    try:
+        items = gateway.channel_popular(limit)["items"]
+    except contract.ProviderError:
+        return []
+    with _lock:
+        _channel_popular_cache.update(at=time.time(), data=items, tag=tag)
+    return items
+
+
+def channel_details_cached(cid):
+    """channel_details(), cached 1h -- for a channel NOT followed (a
+    followed one is served from its stored shelf snap instead, refreshed by
+    channel_watch()). Errors propagate; there is no stale copy worth
+    swallowing an error for."""
+    tag = "%s@%s" % (gateway.cache_tag(contract.ROLE_CHANNELS), cid)
+    with _lock:
+        e = _channel_details_cache.get(tag)
+        if e and time.time() - e["at"] < 3600:
+            return e["channel"]
+    ch = gateway.channel_details(cid)
+    with _lock:
+        _channel_details_cache[tag] = {"at": time.time(), "channel": ch}
+    return ch
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a): pass
@@ -5368,9 +5471,89 @@ class H(BaseHTTPRequestHandler):
                 # from the stored snapshots rather than the pool: a favourite
                 # is kept precisely so it survives the catalogue forgetting it.
                 return self._send(200, {"items": shelf.favourites()})
+            if p.path == "/api/channel":
+                # A channel id contains ':' (provider:local), so it travels
+                # as a query param, never as a path segment.
+                q = urllib.parse.parse_qs(p.query)
+                cid = (q.get("id", [""])[0] or "").strip()
+                if not cid:
+                    return self._send(400, {"err": "no id"})
+                try:
+                    ops = gateway.channel_ops()
+                    view = shelf.channel_view(cid)
+                    if view["followed"]:
+                        item = shelf.stored_item(cid)
+                        if not item or not item.get("title"):
+                            # Followed but never actually got a snap (e.g. an
+                            # interrupted follow) -- one live fetch to fill it
+                            # in; channel_watch() takes over refreshing it daily.
+                            ch = channel_details_cached(cid)
+                            shelf.set_snap(cid, ch)
+                            item = _channel_item(ch, cid)
+                    else:
+                        item = _channel_item(channel_details_cached(cid), cid)
+                except contract.ProviderError as ex:
+                    return self._provider_error(ex)
+                body = dict(item)
+                body["channel_ops"] = sorted(ops)
+                return self._send(200, body)
+            if p.path == "/api/channel/videos":
+                q = urllib.parse.parse_qs(p.query)
+                cid = (q.get("id", [""])[0] or "").strip()
+                if not cid:
+                    return self._send(400, {"err": "no id"})
+                page = (q.get("page", [""])[0] or "").strip()
+                try:
+                    ops = gateway.channel_ops()
+                    if page:
+                        if contract.OP_CH_VIDEOS not in ops:
+                            return self._send(200, {"videos": [], "next": None})
+                        r = gateway.channel_videos(cid, page)
+                        videos, nxt = r["videos"], r["next"]
+                    else:
+                        if shelf.channel_view(cid)["followed"]:
+                            stored = shelf.stored_latest(cid)
+                            fresh = stored["checked"] is not None and \
+                                time.time() - stored["checked"] < CHANNEL_POLL_MIN * 60
+                            if fresh:
+                                videos = stored["videos"]
+                            else:
+                                r = gateway.channel_latest(cid)
+                                videos = r["videos"]
+                                shelf.set_latest(cid, videos)
+                        else:
+                            videos = gateway.channel_latest(cid)["videos"]
+                        # "" (never None) when channels.videos is available:
+                        # the client reads that as "call channels.videos with
+                        # no token for the full list" -- channels.latest has
+                        # no paging of its own to hand back a real one.
+                        nxt = "" if contract.OP_CH_VIDEOS in ops else None
+                except contract.ProviderError as ex:
+                    return self._provider_error(ex)
+                return self._send(200, {"videos": shelf.decorate_videos(cid, videos), "next": nxt})
             if p.path == "/api/movies":
                 q = urllib.parse.parse_qs(p.query)
                 kind = q.get("kind", ["movie"])[0]
+                if kind == "channel":
+                    # Its own shape, not a catalogue page: followed channels
+                    # (new uploads first), then Popular -- only when this
+                    # install's channels provider can answer that op at all.
+                    if not gateway.available(contract.ROLE_CHANNELS):
+                        return self._send(200, {"movies": [], "popular": [], "more": False,
+                                                "offset": 0, "limit": 0,
+                                                "err": "channels are not set up",
+                                                "pool": 0, "checked": 0, "channel_ops": []})
+                    ops = gateway.channel_ops()
+                    movies = shelf.followed_channels()
+                    popular = []
+                    if contract.OP_CH_POPULAR in ops:
+                        followed_ids = {m["id"] for m in movies}
+                        popular = [_channel_item(ch) for ch in channel_popular()
+                                  if ch.get("id") not in followed_ids]
+                    return self._send(200, {"movies": movies, "popular": popular, "more": False,
+                                            "offset": 0, "limit": len(movies), "err": None,
+                                            "pool": len(movies), "checked": 0,
+                                            "channel_ops": sorted(ops)})
                 if kind not in ("movie", "tv"):
                     kind = "movie"
                 g = [x for x in (q.get("genres", [""])[0]).split(",") if x]
@@ -5415,6 +5598,45 @@ class H(BaseHTTPRequestHandler):
                     return self._send(400, {"err": "no query"})
                 lim = max(1, min(int(sq.get("limit", ["24"])[0]), 60))
                 kind = sq.get("kind", ["movie"])[0]
+                if kind == "channel":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    def emit(ev, obj):
+                        self.wfile.write(("event: %s\ndata: %s\n\n"
+                                          % (ev, json.dumps(obj))).encode("utf-8"))
+                        self.wfile.flush()
+                    try:
+                        ops = gateway.channel_ops()
+                        # A link or an @handle names exactly one channel --
+                        # resolve it rather than search it, and fall back to
+                        # resolve for anything else when this install's
+                        # provider has no search index of its own.
+                        if "/" in term or term.startswith("@") or contract.OP_CH_SEARCH not in ops:
+                            n = 1
+                            emit("movie", _channel_item(gateway.channel_resolve(term)))
+                        else:
+                            items = gateway.channel_search(term, lim)["items"]
+                            n = len(items)
+                            for ch in items:
+                                emit("movie", _channel_item(ch))
+                        emit("done", {"playable": n, "found": n, "checked": n})
+                    except contract.ProviderError as ex:
+                        try:
+                            emit("fail", {"err": ex.message})
+                        except Exception:
+                            pass
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass              # searched again, or closed the popup
+                    except Exception as ex:
+                        try:
+                            emit("fail", {"err": "%s: %s" % (type(ex).__name__, ex)})
+                        except Exception:
+                            pass
+                    return
                 if kind not in ("movie", "tv"):
                     kind = "movie"
                 self.send_response(200)
@@ -6216,6 +6438,68 @@ class H(BaseHTTPRequestHandler):
                 shelf.drop(title_id=tid, job=jb)
                 shelf.save(force=True)
                 return self._send(200, {"ok": True})
+            # The channel writes. Same household-action footing as the shelf
+            # writes just above: no admin gate, one save per act.
+            if p.path == "/api/channel/follow":
+                cid = str(d.get("id") or "").strip()
+                if not cid:
+                    return self._send(400, {"ok": False, "msg": "id is required"})
+                on = bool(d.get("on"))
+                if on:
+                    try:
+                        ch = channel_details_cached(cid)
+                    except contract.ProviderError as ex:
+                        return self._provider_error(ex)
+                    shelf.follow(cid, True, snap=ch)
+                    shelf.save(force=True)
+                    def _prime():
+                        # Fills the tile's upload count right away, rather
+                        # than leaving it at 0 until channel_watch()'s next
+                        # sweep (up to CHANNEL_POLL_MIN minutes away).
+                        try:
+                            r = gateway.channel_latest(cid)
+                            shelf.set_latest(cid, r["videos"])
+                            shelf.save(force=True)
+                        except contract.ProviderError:
+                            pass
+                    threading.Thread(target=_prime, daemon=True).start()
+                    item = _channel_item(ch, cid)
+                else:
+                    shelf.follow(cid, False)
+                    shelf.save(force=True)
+                    item = shelf.stored_item(cid) or {"id": cid, "kind": "channel",
+                                                       "followed": False, "new": 0}
+                return self._send(200, {"ok": True, "channel": item})
+            if p.path == "/api/channel/seen":
+                cid = str(d.get("id") or "").strip()
+                if not cid:
+                    return self._send(400, {"ok": False, "msg": "id is required"})
+                shelf.channel_seen(cid)
+                shelf.save(force=True)
+                return self._send(200, {"ok": True})
+            if p.path == "/api/channel/opened":
+                cid = str(d.get("id") or "").strip()
+                vid = str(d.get("video") or "").strip()
+                if not cid or not vid:
+                    return self._send(400, {"ok": False, "msg": "id and video are required"})
+                shelf.video_opened(cid, vid, bool(d.get("on", True)))
+                shelf.save(force=True)
+                return self._send(200, {"ok": True})
+            if p.path == "/api/channel/play":
+                # No buffering, no Stremio, no heartbeat -- just the record
+                # that it was opened, and whatever the provider says the TV
+                # should hand to an external app.
+                cid = str(d.get("id") or "").strip()
+                vid = str(d.get("video") or "").strip()
+                if not cid or not vid:
+                    return self._send(400, {"ok": False, "msg": "id and video are required"})
+                try:
+                    r = gateway.channel_play(cid, vid)
+                except contract.ProviderError as ex:
+                    return self._send(502, {"ok": False, "msg": ex.message})
+                shelf.video_opened(cid, vid, True)
+                shelf.save(force=True)
+                return self._send(200, {"ok": True, "play": r})
             if p.path.startswith("/api/play/tv/"):
                 bits = p.path[len("/api/play/tv/"):].split("/")
                 if len(bits) != 3:
@@ -6562,6 +6846,7 @@ if __name__ == "__main__":
     threading.Thread(target=prefetch, daemon=True).start()
     threading.Thread(target=cache_watch, daemon=True).start()
     threading.Thread(target=cache_size_apply, daemon=True).start()
+    threading.Thread(target=channel_watch, daemon=True).start()
     if SENDSPIN_ENABLED:
         threading.Thread(target=_ss_worker, daemon=True).start()
     print("cinematica on :%d  (stremio=%s  phone remote=%s)"
