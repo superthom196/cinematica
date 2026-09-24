@@ -114,13 +114,13 @@ jobs:
         # highest versionCode this repository has ever released; anything
         # published from here has to be above it, or it installs nowhere.
         #
-        # It is 8 because the v1.2.4 release published an APK at versionCode
-        # 8. Raise it in the same commit that raises tv/version.properties --
+        # It is 9 because the v1.3.0 release published an APK at versionCode
+        # 9. Raise it in the same commit that raises tv/version.properties --
         # the two move together, and this one is what catches the other being
         # stale or unread, which is exactly how a 1.1.0 built at versionCode 1
         # would otherwise have shipped as something no TV could update to.
         env:
-          PUBLISHED_FLOOR: '8'
+          PUBLISHED_FLOOR: '9'
         run: |
           aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
           apk_code=$("$aapt2" dump badging "$APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
