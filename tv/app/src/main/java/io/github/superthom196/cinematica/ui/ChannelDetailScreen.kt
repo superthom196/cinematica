@@ -5,17 +5,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,10 +31,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,11 +54,11 @@ import java.util.Locale
 import kotlinx.coroutines.launch
 
 /**
- * A channel's detail page. Same shell as [SeriesDetailScreen] — banner, title, chips, overview —
- * minus the season pills a series has and this has no use for. Two panes: a video list on the
- * left, and on the right the chosen video's own page (thumbnail, facts, description, Play), which
- * is what OK on a row opens. Cinematica never plays a channel video itself — Play hands it to
- * whatever app on the box actually plays it, through [AppViewModel.playChannelVideo].
+ * A channel's page: one slim row for the channel itself, and the rest of the screen for its videos,
+ * four across, newest first -- the titles are what this screen is for, so nothing else takes
+ * their room. OK on a video hands it to whatever app on the box plays it, through
+ * [AppViewModel.playChannelVideo]; Cinematica never plays one itself. Long-press marks it watched
+ * or not. Older uploads page in as the grid nears its end, when the server says there are more.
  */
 @Composable
 fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
@@ -67,7 +69,6 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     var info by remember(id) { mutableStateOf<ChannelInfo?>(null) }
     var followed by remember(id) { mutableStateOf(movie.followed == true) }
     var subscribers by remember(id) { mutableStateOf(movie.subscribers) }
-    var backdrop by remember(id) { mutableStateOf(movie.backdrop) }
     // The wall tile that opened this screen may be stale — stale enough that its own `followed`
     // is what decides whether NEW has already been cleared below, so it is read once, up front,
     // never from the state the refresh below is about to replace.
@@ -80,7 +81,6 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
             info = c
             followed = c.followed ?: followed
             subscribers = c.subscribers ?: subscribers
-            backdrop = c.backdrop ?: backdrop
         }
     }
 
@@ -113,32 +113,23 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
         loadingMore = false
     }
 
-    var selected by remember(id) { mutableStateOf<ChannelVideo?>(null) }
-    LaunchedEffect(videos) { if (selected == null) selected = videos.firstOrNull() }
-
-    // Focus lands on the first video row once the list exists, as SeriesDetailScreen's episode
-    // list does for its own first row.
-    val firstRowFocus = remember { FocusRequester() }
+    // Focus lands on the newest video once the grid exists; Up from the top row reaches Follow.
+    val firstTileFocus = remember { FocusRequester() }
     var focusedOnce by remember(id) { mutableStateOf(false) }
     LaunchedEffect(videos) {
         if (focusedOnce || videos.isEmpty()) return@LaunchedEffect
         focusedOnce = true
-        runCatching { firstRowFocus.requestFocus() }
-    }
-
-    val playFocus = remember { FocusRequester() }
-    LaunchedEffect(selected) {
-        if (selected == null) return@LaunchedEffect
         withFrameNanos { }
-        runCatching { playFocus.requestFocus() }
+        runCatching { firstTileFocus.requestFocus() }
     }
 
-    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
     val lastVisible by remember {
-        derivedStateOf { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+        derivedStateOf { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
     }
+    // Two rows ahead of the end, so the next page is usually in before the viewer gets there.
     LaunchedEffect(lastVisible, videos.size, nextPage) {
-        if (nextPage != null && lastVisible >= videos.size - 5) loadMore()
+        if (nextPage != null && lastVisible >= videos.size - VIDEO_COLUMNS * 2) loadMore()
     }
 
     // Back out of the buffering overlay stands the job down; Back anywhere else returns to the grid.
@@ -147,154 +138,99 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        // A channel has no poster to fall back to — no banner means no picture at all, not the
-        // avatar stretched over it.
-        val hero = info?.backdrop ?: backdrop
-        Box(Modifier.fillMaxWidth().height(430.dp)) {
-            PosterImage(hero, Modifier.fillMaxSize(), corner = 0.dp)
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.55f to CinematicaColors.Background.copy(alpha = 0.75f),
-                        1f to CinematicaColors.Background,
-                    ),
-                ),
-            )
-        }
-        Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 130.dp, bottom = 20.dp)) {
-            Text(
-                info?.title ?: movie.title.orEmpty(),
-                style = MaterialTheme.typography.headlineMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(0.72f),
-            )
-            VSpace(6.dp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                channelChips(subscribers, followed).forEach { InfoChip(it) }
-            }
-            VSpace(6.dp)
-            Text(
-                info?.overview?.takeIf { it.isNotBlank() } ?: movie.overview.orEmpty(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = CinematicaColors.Text,
-                maxLines = 3, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(0.72f),
-            )
-            VSpace(10.dp)
-            PillButton(
-                if (followed) "Following" else "Follow",
-                onClick = {
-                    if (id != null) {
-                        val on = !followed
-                        followed = on
-                        vm.followChannel(id, on)
+        Column(Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 24.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).clip(CircleShape)) {
+                    PosterImage(info?.poster ?: movie.poster, Modifier.fillMaxSize(), corner = 0.dp)
+                }
+                HSpace(14.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        info?.title ?: movie.title.orEmpty(),
+                        style = MaterialTheme.typography.headlineSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    subscribers?.let {
+                        Text(formatSubscribers(it), style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
                     }
-                },
-                primary = followed,
-            )
-            VSpace(10.dp)
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                // ---- left: videos -------------------------------------------------------
-                Column(Modifier.fillMaxWidth(0.42f).fillMaxHeight()) {
-                    when {
-                        videosLoading && videos.isEmpty() -> {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("Finding videos…", style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Muted)
-                            }
+                }
+                HSpace(14.dp)
+                PillButton(
+                    if (followed) "Following" else "Follow",
+                    onClick = {
+                        if (id != null) {
+                            val on = !followed
+                            followed = on
+                            vm.followChannel(id, on)
                         }
-                        videosFailed && videos.isEmpty() -> {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                FocusSurface(onClick = { scope.launch { loadFirstPage() } }, container = CinematicaColors.Surface) {
-                                    Text(
-                                        "Couldn't load videos",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = CinematicaColors.Danger,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                    )
-                                }
-                            }
-                        }
-                        else -> {
-                            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                itemsIndexed(videos, key = { i, v -> v.id ?: "row-$i" }) { idx, v ->
-                                    var rowFocused by remember(v.id) { mutableStateOf(false) }
-                                    val on = v.id != null && selected?.id == v.id
-                                    FocusSurface(
-                                        onClick = { selected = v },
-                                        modifier = Modifier.fillMaxWidth()
-                                            .onFocusChanged { rowFocused = it.isFocused }
-                                            .then(if (idx == 0) Modifier.focusRequester(firstRowFocus) else Modifier),
-                                        container = if (on) CinematicaColors.SurfaceHigh else CinematicaColors.Surface,
-                                        onLongClick = {
-                                            val vid = v.id ?: return@FocusSurface
-                                            val nowOpened = v.opened != true
-                                            videos = videos.map { if (it.id == vid) it.copy(opened = nowOpened) else it }
-                                            if (selected?.id == vid) selected = videos.firstOrNull { it.id == vid }
-                                            if (id != null) vm.setVideoOpened(id, vid, nowOpened)
-                                        },
-                                    ) {
-                                        Row(
-                                            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)
-                                                .alpha(if (v.opened == true && !rowFocused) 0.4f else 1f),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            Box(Modifier.width(110.dp).aspectRatio(16f / 9f)) {
-                                                PosterImage(v.thumb, Modifier.fillMaxSize(), corner = 4.dp)
-                                                if (v.new == true) {
-                                                    VideoNewBadge(Modifier.align(Alignment.TopStart).padding(2.dp))
-                                                }
-                                            }
-                                            HSpace(10.dp)
-                                            Column(Modifier.weight(1f)) {
-                                                Text(
-                                                    v.title.orEmpty(),
-                                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                                                    ),
-                                                    color = if (on) CinematicaColors.AccentBright else CinematicaColors.Text,
-                                                    maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                                )
-                                                videoMeta(v).takeIf { it.isNotEmpty() }?.let {
-                                                    Text(it, style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted, maxLines = 1)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (loadingMore) {
-                                    item(key = "loading-more") {
-                                        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                                            Text("Loading…", style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
-                                        }
-                                    }
-                                }
-                            }
+                    },
+                    primary = followed,
+                )
+            }
+            VSpace(12.dp)
+            when {
+                videosLoading && videos.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Finding videos…", style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Muted)
+                    }
+                }
+                videosFailed && videos.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        FocusSurface(onClick = { scope.launch { loadFirstPage() } }, container = CinematicaColors.Surface) {
+                            Text(
+                                "Couldn't load videos",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = CinematicaColors.Danger,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            )
                         }
                     }
                 }
-                // ---- right: the chosen video ------------------------------------------
-                val v = selected
-                if (v == null) {
-                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                        Text("Choose a video", style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Muted)
+                videos.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No videos yet", style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Muted)
                     }
-                } else {
-                    VideoPane(
-                        video = v,
-                        playing = ui.playTitle != null,
-                        playFocus = playFocus,
-                        onPlay = {
-                            val vid = v.id
-                            if (id == null || vid == null) return@VideoPane
-                            vm.playChannelVideo(id, vid) {
-                                videos = videos.map { if (it.id == vid) it.copy(opened = true) else it }
-                                selected = selected?.takeIf { it.id == vid }?.copy(opened = true) ?: selected
+                }
+                else -> {
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Fixed(VIDEO_COLUMNS),
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        // Room for the focused tile's scale-up at the edges, and to scroll clear of the bottom.
+                        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 40.dp),
+                    ) {
+                        itemsIndexed(videos, key = { i, v -> v.id ?: "row-$i" }) { idx, v ->
+                            VideoTile(
+                                video = v,
+                                modifier = if (idx == 0) Modifier.focusRequester(firstTileFocus) else Modifier,
+                                onPlay = {
+                                    val vid = v.id
+                                    if (id != null && vid != null) {
+                                        vm.playChannelVideo(id, vid) {
+                                            videos = videos.map { if (it.id == vid) it.copy(opened = true) else it }
+                                        }
+                                    }
+                                },
+                                onToggleOpened = {
+                                    val vid = v.id
+                                    if (vid != null) {
+                                        val nowOpened = v.opened != true
+                                        videos = videos.map { if (it.id == vid) it.copy(opened = nowOpened) else it }
+                                        if (id != null) vm.setVideoOpened(id, vid, nowOpened)
+                                    }
+                                },
+                            )
+                        }
+                        if (loadingMore) {
+                            item(key = "loading-more", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                    Text("Loading older videos…", style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
+                                }
                             }
-                        },
-                        onStop = { vm.stopPlayback() },
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
+                        }
+                    }
                 }
             }
         }
@@ -302,40 +238,51 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     }
 }
 
-/** One video's page: thumbnail and facts up top, its description, Play. */
+private const val VIDEO_COLUMNS = 4
+
+/** One video: thumbnail, its title in full as far as three lines allow, then age and length. */
 @Composable
-private fun VideoPane(
+private fun VideoTile(
     video: ChannelVideo,
-    playing: Boolean,
-    playFocus: FocusRequester,
     onPlay: () -> Unit,
-    onStop: () -> Unit,
+    onToggleOpened: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier) {
-        PosterImage(video.thumb, Modifier.fillMaxWidth(0.85f).aspectRatio(16f / 9f), corner = 8.dp)
-        VSpace(10.dp)
-        Text(
-            video.title.orEmpty(),
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
-        )
-        VSpace(6.dp)
-        videoFacts(video).takeIf { it.isNotEmpty() }?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
-        }
-        VSpace(8.dp)
-        Text(
-            video.description?.takeIf { it.isNotBlank() } ?: "No description.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (video.description.isNullOrBlank()) CinematicaColors.Muted else CinematicaColors.Text,
-            maxLines = 6, overflow = TextOverflow.Ellipsis,
-        )
-        VSpace(10.dp)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            PillButton("Play", onClick = onPlay, primary = true, modifier = Modifier.focusRequester(playFocus))
-            // Only worth offering while this app actually has something open.
-            if (playing) PillButton("Stop", onClick = onStop)
+    var focused by remember(video.id) { mutableStateOf(false) }
+    FocusSurface(
+        onClick = onPlay,
+        onLongClick = onToggleOpened,
+        modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+        shape = RoundedCornerShape(8.dp),
+        container = Color.Transparent,
+    ) {
+        // Watched ones step back, but not while focused: the one being looked at is always legible.
+        Column(Modifier.padding(6.dp).alpha(if (video.opened == true && !focused) 0.4f else 1f)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                PosterImage(video.thumb, Modifier.fillMaxSize(), corner = 6.dp)
+                if (video.new == true) VideoNewBadge(Modifier.align(Alignment.TopStart).padding(4.dp))
+                video.duration_s?.let {
+                    Text(
+                        formatVideoDuration(it),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
+                            .background(Color(0xCC000000), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            VSpace(6.dp)
+            Text(
+                video.title.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = if (focused) CinematicaColors.AccentBright else CinematicaColors.Text,
+                maxLines = 3, overflow = TextOverflow.Ellipsis,
+                minLines = 3,
+            )
+            video.published?.let {
+                Text(relativeAge(it), style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted, maxLines = 1)
+            }
         }
     }
 }
@@ -353,12 +300,6 @@ private fun VideoNewBadge(modifier: Modifier = Modifier) {
     )
 }
 
-/** Subscribers, formatted the way the wall's own numbers read, plus "Following" when it applies. */
-private fun channelChips(subscribers: Long?, followed: Boolean): List<String> = buildList {
-    subscribers?.let { add(formatSubscribers(it)) }
-    if (followed) add("Following")
-}
-
 private fun formatSubscribers(n: Long): String {
     val count = when {
         n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)
@@ -367,19 +308,6 @@ private fun formatSubscribers(n: Long): String {
     }
     return "$count subscribers"
 }
-
-/** "3 days ago · 14 min" — the video row's own line. */
-private fun videoMeta(v: ChannelVideo): String = buildList {
-    v.published?.let { add(relativeAge(it)) }
-    v.duration_s?.let { add(formatVideoDuration(it)) }
-}.joinToString(" · ")
-
-/** "3 days ago · 14 min · 1,204 views" — the chosen video's own line. */
-private fun videoFacts(v: ChannelVideo): String = buildList {
-    v.published?.let { add(relativeAge(it)) }
-    v.duration_s?.let { add(formatVideoDuration(it)) }
-    v.views?.let { add("%,d views".format(it)) }
-}.joinToString(" · ")
 
 private val dateFormatter by lazy { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
 
