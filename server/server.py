@@ -1170,8 +1170,12 @@ def build_pool(ids, sort="top", ex=None, kind="movie", bias=False, key=None, err
             pages_base += share[cap]
         if len(tiers) > 1:
             # merge the tiers by merit, then hold this source to its share of
-            # the pool so a "balanced" pool still gets its recent half
-            block.sort(key=lambda c: (rating_of(c, "imdb") or (0, 0))[0] + home_bonus(c),
+            # the pool so a "balanced" pool still gets its recent half.
+            # Merit is the catalogue's own rating (vote, from _api_entry()):
+            # a list entry has no IMDb rating to go by, and sorting on one
+            # scored every title 0 + home bonus, so the home tier filled the
+            # whole pool and the rest of the world was cut off.
+            block.sort(key=lambda c: (c.get("vote") or 0) + home_bonus(c),
                        reverse=True)
             block = block[:cap]
         cands.extend(block)

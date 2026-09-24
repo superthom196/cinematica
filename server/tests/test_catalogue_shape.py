@@ -186,6 +186,35 @@ class CatalogueShapeTest(unittest.TestCase):
         self.assertEqual((body["vote"], body["votes"]), (8.3, 40000))
         self.assertEqual(body["imdb_id"], "tt0000101")
 
+    def test_biased_pool_merges_tiers_by_the_catalogues_rating(self):
+        # Home tier, big tier and world tier each answer one title; the pool
+        # holds two. A list entry has no IMDb rating, so the merge has to go by
+        # the catalogue's own: sorting on the missing IMDb one scored all three
+        # 0 + home bonus, and the home tier alone filled the pool.
+        def tiered_browse(kind, page=1, page_size=20, sort=None, filters=None):
+            filters = filters or {}
+            if page > 1:
+                return {"entries": []}
+            if filters.get("origin_countries"):
+                raw = {"id": "301", "title": "Home, Rated 7", "ratings": {"cat": {"value": 7.0}}}
+            elif filters.get("original_language"):
+                raw = {"id": "302", "title": "Big Tier, Rated 9", "ratings": {"cat": {"value": 9.0}}}
+            else:
+                raw = {"id": "303", "title": "World Tier, Rated 8", "ratings": {"cat": {"value": 8.0}}}
+            return {"entries": [_entry(dict(raw, kind="movie"))]}
+
+        server.gateway.browse = tiered_browse
+        server.gateway.supports_filters = lambda role=None: {
+            "min_votes", "origin_countries", "original_language"}
+        saved = server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES
+        server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES = \
+            2, ["GB"], "en", 10000
+        try:
+            pool = server.build_pool([], "top", [], "movie", True, "k")
+        finally:
+            server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES = saved
+        self.assertEqual([c["title"] for c in pool], ["Big Tier, Rated 9", "World Tier, Rated 8"])
+
     # -- series ---------------------------------------------------------------
     def test_series_tile_says_tv(self):
         # The TV app and the web page both open the seasons-and-episodes page
