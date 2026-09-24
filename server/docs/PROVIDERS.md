@@ -31,6 +31,37 @@ There are two ways to add a provider:
 Cinematica bundles no integrations. Any service can supply any of the three
 roles if it meets the compatibility requirements below.
 
+### The channels role (optional)
+
+A fourth, optional role: channels you follow, their uploads listed newest
+first, and playback handed to an external app on the TV rather than played
+through Cinematica itself. Setup never requires it -- a working install can
+leave channels unset entirely, and it never affects the "configured" state
+the other three roles determine.
+
+| Op | Params | Result | Required? |
+|---|---|---|---|
+| `channels.resolve` | `query` | One channel | Required |
+| `channels.details` | `id` | One channel | Required |
+| `channels.latest` | `id` | `{videos, next}` | Required |
+| `channels.play` | `id`, `video` | `{url, package, label}` | Required |
+| `channels.videos` | `id`, `page` | `{videos, next}` | Optional |
+| `channels.search` | `query`, `limit` | `{items}` (channels) | Optional |
+| `channels.popular` | `limit` | `{items}` (channels) | Optional |
+
+`resolve`, `details`, `latest` and `play` are what the role obliges. `videos`
+(paged uploads beyond the latest page), `search` and `popular` are optional
+within the role -- a channels provider may have no search index or no
+separate "popular" concept at all -- and each install advertises which of
+those three it actually answers through its own `provider.describe` reply's
+`"channel_ops"` list.
+
+`channels.play` hands back `{url, package, label}`: a playable URL, the app
+to open it with, and a label for the button when it isn't. The TV opens
+`package` if it names an installed app, or falls back to any app that
+handles the URL when `package` is blank. No stream/buffer path is involved --
+this bypasses Cinematica's own playback, proxying and probing entirely.
+
 ## Set up a provider
 
 1. Sign in to the browser settings.

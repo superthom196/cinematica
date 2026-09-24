@@ -1,9 +1,11 @@
 """A complete, working provider package -- the smallest one worth reading.
 
-It fills all three roles (catalogue, metadata, streams) from a JSON file of
-films you host yourself, and it exists so that nobody has to reconstruct the
-contract from providers/contract.py and providers/host.py to write their first
-package. Copy this directory, replace the library, keep the shapes.
+It fills four roles (catalogue, metadata, streams, and the optional channels
+role) from a JSON file you host yourself: a handful of films, and a couple of
+followed channels with their uploads. It exists so that nobody has to
+reconstruct the contract from providers/contract.py and providers/host.py to
+write their first package. Copy this directory, replace the library, keep the
+shapes.
 
 How it is run: Cinematica launches `python3 -m providers.host <this dir>` and
 speaks one JSON request per line to it. The host imports this file and calls
@@ -49,7 +51,7 @@ def _base_url(config):
     return base
 
 
-def _library(config):
+def _read_library_file(config):
     path = str((config or {}).get("library_file") or "").strip() or _DEFAULT_LIBRARY
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -62,13 +64,29 @@ def _library(config):
         # that quotes an exception, a URL or a configured value.
         raise contract.ProviderError(
             contract.E_CONFIG, "Library file %s could not be read: %s" % (path, contract.redact(exc)))
-    titles = data.get("titles") if isinstance(data, dict) else data
-    if not isinstance(titles, list):
-        raise contract.ProviderError(contract.E_CONFIG, "Library file has no 'titles' list.")
     # Read on every request on purpose: editing the JSON takes effect without
     # reinstalling. A provider doing real I/O would cache here instead, keyed
     # on whatever its service calls a version.
+    return data, path
+
+
+def _library(config):
+    data, path = _read_library_file(config)
+    titles = data.get("titles") if isinstance(data, dict) else data
+    if not isinstance(titles, list):
+        raise contract.ProviderError(contract.E_CONFIG, "Library file has no 'titles' list.")
     return [t for t in titles if isinstance(t, dict) and t.get("id")]
+
+
+def _channels(config):
+    """The channel rows for the optional channels role. Its own top-level key
+    -- "channels" is not a title, so it does not belong mixed into "titles"
+    the way _library() reads them."""
+    data, path = _read_library_file(config)
+    channels = data.get("channels") if isinstance(data, dict) else None
+    if not isinstance(channels, list):
+        raise contract.ProviderError(contract.E_CONFIG, "Library file has no 'channels' list.")
+    return [c for c in channels if isinstance(c, dict) and c.get("id")]
 
 
 def _entry(row):
@@ -107,8 +125,13 @@ def _find(rows, local_id):
 # ---- the two operations every provider must answer --------------------------
 def provider_describe(config, params):
     """Called to confirm the package runs at all. No network, no credentials."""
-    return {"id": "example-library", "capabilities": ["catalogue", "metadata", "streams"],
-            "titles": len(_library(config))}
+    return {"id": "example-library", "capabilities": ["catalogue", "metadata", "streams", "channels"],
+            "titles": len(_library(config)), "channels": len(_channels(config)),
+            # channels.search and channels.popular are optional within the
+            # channels role (see docs/PROVIDERS.md); advertising them here is
+            # what lets core offer them for this install without every
+            # channels provider being obliged to implement both.
+            "channel_ops": ["channels.search", "channels.popular"]}
 
 
 def config_test(config, params):
@@ -216,3 +239,99 @@ def streams_lookup(config, params):
         # "proxy_headers": {"Authorization": "Bearer ..."} if your files need
         # one. Whatever is put here stays on the server.
     }]}
+
+
+# ---- channels role (optional) ------------------------------------------------
+# Followed channels and their uploads, played through an external app rather
+# than Cinematica's own stream path -- see docs/PROVIDERS.md's channels
+# section. Setup never requires this role; resolve/details/latest/play are
+# what the role obliges, search/popular are optional and advertised through
+# provider_describe's "channel_ops" above.
+def _find_channel(rows, local_id):
+    for row in rows:
+        if str(row["id"]).lower() == str(local_id).lower():
+            return row
+    raise contract.ProviderError(contract.E_NOTFOUND, "No channel %r in this library." % local_id)
+
+
+def _channel_entry(row):
+    return {
+        "id": str(row["id"]),
+        "title": row.get("title") or str(row["id"]),
+        "avatar": row.get("avatar") or "",
+        "banner": row.get("banner") or "",
+        "subscribers": row.get("subscribers"),
+        "description": row.get("description") or "",
+    }
+
+
+def _video_entry(row):
+    return {
+        "id": str(row["id"]),
+        "title": row.get("title") or str(row["id"]),
+        "published": row.get("published"),
+        "duration_s": row.get("duration_s"),
+        "thumb": row.get("thumb") or "",
+        "description": row.get("description") or "",
+    }
+
+
+def channels_resolve(config, params):
+    """A channel by id, or "@id" -- the shape a person pastes in, not a
+    search. An unmatched query is a named not-found, not an empty result."""
+    params = params or {}
+    query = str(params.get("query") or "").strip()
+    if query.startswith("@"):
+        query = query[1:]
+    for row in _channels(config):
+        if str(row["id"]).lower() == query.lower():
+            return _channel_entry(row)
+    raise contract.ProviderError(contract.E_NOTFOUND, "No channel matches %r." % query)
+
+
+def channels_details(config, params):
+    params = params or {}
+    return _channel_entry(_find_channel(_channels(config), params.get("id")))
+
+
+def channels_latest(config, params):
+    """Uploads, newest first -- what channels.latest promises, regardless of
+    the order they happen to sit in the library file."""
+    params = params or {}
+    row = _find_channel(_channels(config), params.get("id"))
+    videos = sorted(row.get("videos") or [], key=lambda v: v.get("published") or 0, reverse=True)
+    return {"videos": [_video_entry(v) for v in videos]}
+
+
+def channels_search(config, params):
+    params = params or {}
+    query = str(params.get("query") or "").strip().lower()
+    limit = max(1, int(params.get("limit") or 20))
+    if not query:
+        return {"items": []}
+    hits = [c for c in _channels(config) if query in str(c.get("title") or "").lower()]
+    return {"items": [_channel_entry(c) for c in hits[:limit]]}
+
+
+def channels_popular(config, params):
+    """No real popularity signal in a static file -- every channel, in
+    library order, which is an honest answer for an example."""
+    return {"items": [_channel_entry(c) for c in _channels(config)]}
+
+
+def channels_play(config, params):
+    """Hands back a URL and which app to open it with. No stream/buffer path
+    involved, unlike streams_lookup above -- the TV opens "package", or any
+    app that handles the URL when "package" is blank."""
+    params = params or {}
+    channel = _find_channel(_channels(config), params.get("id"))
+    video_id = params.get("video")
+    match = next((v for v in (channel.get("videos") or []) if str(v.get("id")) == str(video_id)), None)
+    if match is None:
+        raise contract.ProviderError(
+            contract.E_NOTFOUND, "No video %r on channel %r." % (video_id, channel["id"]))
+    return {
+        "url": "%s/channels/%s/%s.mp4" % (_base_url(config), channel["id"], match["id"]),
+        "package": "",
+        "label": "the example player",
+    }

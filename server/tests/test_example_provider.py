@@ -44,7 +44,8 @@ class ExampleProviderTest(unittest.TestCase):
         with open(os.path.join(PACKAGE_DIR, "manifest.json"), encoding="utf-8") as fh:
             manifest = contract.validate_manifest(json.load(fh))
         self.assertEqual(sorted(manifest["capabilities"]),
-                         sorted([contract.ROLE_CATALOGUE, contract.ROLE_METADATA, contract.ROLE_STREAMS]))
+                         sorted([contract.ROLE_CATALOGUE, contract.ROLE_METADATA, contract.ROLE_STREAMS,
+                                 contract.ROLE_CHANNELS]))
         # Every op the declared roles oblige it to answer must answer. This is
         # the check that catches an example whose manifest grew a role its
         # code never got.
@@ -58,6 +59,12 @@ class ExampleProviderTest(unittest.TestCase):
                 params = {"identity": {"local_id": "harbour-lights", "kind": contract.KIND_MOVIE}}
             elif op == contract.OP_SEARCH:
                 params = {"query": "harbour", "limit": 5}
+            elif op == contract.OP_CH_RESOLVE:
+                params = {"query": "slow-rivers"}
+            elif op in (contract.OP_CH_DETAILS, contract.OP_CH_LATEST):
+                params = {"id": "slow-rivers"}
+            elif op == contract.OP_CH_PLAY:
+                params = {"id": "slow-rivers", "video": "sr-tide-notes"}
             self.call(op, params)  # raises ProviderError if it does not
 
     def test_browse_returns_normalised_entries_with_qualified_ids(self):
@@ -94,6 +101,29 @@ class ExampleProviderTest(unittest.TestCase):
         with self.assertRaises(contract.ProviderError) as caught:
             self.call(contract.OP_DETAILS, {"id": "no-such-film", "kind": contract.KIND_MOVIE})
         self.assertEqual(caught.exception.code, contract.E_NOTFOUND)
+
+    def test_channels_latest_returns_uploads_newest_first(self):
+        got = self.call(contract.OP_CH_LATEST, {"id": "slow-rivers"})
+        self.assertEqual([v["id"] for v in got["videos"]], ["sr-culvert", "sr-flood-marks", "sr-tide-notes"])
+        self.assertTrue(got["videos"][0]["published"] > got["videos"][1]["published"] > got["videos"][2]["published"])
+
+    def test_channels_search_matches_on_title(self):
+        hits = self.call(contract.OP_CH_SEARCH, {"query": "bench", "limit": 5})
+        self.assertEqual([c["local_id"] for c in hits["items"]], ["bench-notes"])
+
+    def test_channels_resolve_by_at_handle(self):
+        got = self.call(contract.OP_CH_RESOLVE, {"query": "@bench-notes"})
+        self.assertEqual(got["id"], contract.qualify("example-library", "bench-notes"))
+        self.assertEqual(got["title"], "Bench Notes")
+
+    def test_channels_play_returns_a_playable_url(self):
+        got = self.call(contract.OP_CH_PLAY, {"id": "slow-rivers", "video": "sr-tide-notes"})
+        self.assertEqual(got["url"], "http://mediabox.lan:8080/films/channels/slow-rivers/sr-tide-notes.mp4")
+        self.assertEqual(got["label"], "the example player")
+
+    def test_provider_describe_advertises_the_optional_channel_ops(self):
+        described = self.call(contract.OP_DESCRIBE, {})
+        self.assertEqual(set(described["channel_ops"]), {contract.OP_CH_SEARCH, contract.OP_CH_POPULAR})
 
     def test_without_a_base_url_the_failure_names_the_configuration(self):
         pool = runner.Pool("example-library", PACKAGE_DIR, {}, "test-rev-noconfig", workers=1)

@@ -38,7 +38,11 @@ CONTRACT_VERSION = 1
 ROLE_CATALOGUE = "catalogue"   # browse lists, search -> previews
 ROLE_METADATA  = "metadata"    # details, artwork, episodes, ratings
 ROLE_STREAMS   = "streams"     # playable sources
-ROLES = (ROLE_CATALOGUE, ROLE_METADATA, ROLE_STREAMS)
+ROLE_CHANNELS  = "channels"    # followed channels, their uploads, handing a video to an external player
+ROLES = (ROLE_CATALOGUE, ROLE_METADATA, ROLE_STREAMS, ROLE_CHANNELS)
+# Setup only ever needs these three -- channels is optional and never blocks
+# "configured" (see registry.setup_state).
+CORE_ROLES = (ROLE_CATALOGUE, ROLE_METADATA, ROLE_STREAMS)
 CAPABILITIES = ROLES           # a provider's manifest declares the roles it fills
 
 # ---- operations -------------------------------------------------------------
@@ -55,14 +59,26 @@ OP_EPISODES  = "metadata.episodes"
 OP_RATINGS   = "metadata.ratings"     # optional within the role
 # streams role
 OP_STREAMS   = "streams.lookup"
+# channels role -- resolve/details/latest/play are the core the role obliges;
+# videos/search/popular are optional and advertised per install (see
+# gateway.channel_ops), because a channels provider may have no search index
+# or no separate "popular" concept at all.
+OP_CH_RESOLVE = "channels.resolve"
+OP_CH_DETAILS = "channels.details"
+OP_CH_LATEST  = "channels.latest"
+OP_CH_VIDEOS  = "channels.videos"
+OP_CH_SEARCH  = "channels.search"
+OP_CH_POPULAR = "channels.popular"
+OP_CH_PLAY    = "channels.play"
 
 ROLE_OPS = {
     ROLE_CATALOGUE: (OP_BROWSE, OP_SEARCH, OP_GENRES),
     ROLE_METADATA:  (OP_DETAILS, OP_EPISODES),
     ROLE_STREAMS:   (OP_STREAMS,),
+    ROLE_CHANNELS:  (OP_CH_RESOLVE, OP_CH_DETAILS, OP_CH_LATEST, OP_CH_PLAY),
 }
 CAP_OPS = ROLE_OPS
-OPTIONAL_OPS = (OP_RATINGS, OP_GENRES)
+OPTIONAL_OPS = (OP_RATINGS, OP_GENRES, OP_CH_VIDEOS, OP_CH_SEARCH, OP_CH_POPULAR)
 
 # Which normalised browse filters a provider can actually apply. Core asks, via
 # provider.describe; a filter the provider does not support must be declared,
@@ -831,3 +847,68 @@ def normalise_detail(v, provider_id, strict_kind=None):
     e.setdefault("seasons", [])
     e.setdefault("episodes", [])
     return e
+
+
+# ---- normalised channel / video / play ---------------------------------------
+def normalise_channel(v, provider_id):
+    """A followed channel: identity plus enough to show a row for it. Raises
+    ContractError when there is no usable id or title -- every other field
+    degrades to empty, the same trade-off normalise_entry makes."""
+    if not isinstance(v, dict):
+        raise ContractError("channel is %s, expected an object" % type(v).__name__)
+    raw_id = _s(v.get("id")).strip()
+    minted_by, unqualified = unqualify(raw_id)
+    local_id = unqualified if minted_by == provider_id else raw_id
+    local_id = local_id.strip()
+    title = _s(v.get("title")).strip()
+    if not local_id or not title:
+        raise ContractError("channel has no usable id or title")
+    return {
+        "id": qualify(provider_id, local_id),
+        "local_id": local_id,
+        "kind": "channel",
+        "title": title[:300],
+        "avatar": _url(v.get("avatar")) or "",
+        "banner": _url(v.get("banner")) or "",
+        "subscribers": _i(v.get("subscribers")),
+        "description": _s(v.get("description"))[:2000],
+        "latest_at": _i(v.get("latest_at")),
+    }
+
+
+def normalise_video(v):
+    """One upload: identity, when it appeared, and enough to show a row for
+    it. Raises ContractError when there is no usable id or title."""
+    if not isinstance(v, dict):
+        raise ContractError("video is %s, expected an object" % type(v).__name__)
+    local_id = _s(v.get("id")).strip()
+    title = _s(v.get("title")).strip()
+    if not local_id or not title:
+        raise ContractError("video has no usable id or title")
+    return {
+        "id": local_id[:64],
+        "title": title[:300],
+        "published": _i(v.get("published")) or 0,
+        "duration_s": _i(v.get("duration_s")),
+        "thumb": _url(v.get("thumb")) or "",
+        "description": _s(v.get("description"))[:2000],
+        "views": _i(v.get("views")),
+    }
+
+
+def normalise_play(v):
+    """{"url", "package", "label"} -- what the TV hands to an external app.
+    "url" must be a complete http(s) URL (an app link/deep link is not a
+    playable URL Cinematica's proxy or the TV's external-player intent can
+    use); "package" names the app to open it with and may be empty, in which
+    case the TV falls back to any app that handles the URL."""
+    if not isinstance(v, dict):
+        raise ContractError("play result is %s, expected an object" % type(v).__name__)
+    url = _url(v.get("url"))
+    if not url or not (url.lower().startswith("http://") or url.lower().startswith("https://")):
+        raise ContractError("play result has no usable http(s) url")
+    return {
+        "url": url,
+        "package": _s(v.get("package"))[:200],
+        "label": _s(v.get("label"))[:80] or "another app",
+    }

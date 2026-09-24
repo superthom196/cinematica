@@ -37,6 +37,7 @@ TIMEOUT_DETAILS_S = 15.0
 TIMEOUT_EPISODES_S = 15.0
 TIMEOUT_STREAMS_S = 25.0
 TIMEOUT_TEST_S = 15.0
+TIMEOUT_CHANNELS_S = 15.0
 
 # These constants are the timeout actually enforced against a package
 # provider (runner.Pool.call() takes it as a hard parameter). An add-on
@@ -172,6 +173,14 @@ class _PackageAdapter:
 
     def test(self):
         return self._pool.call(contract.OP_TEST, {}, TIMEOUT_TEST_S)
+
+    def channel_call(self, op, params):
+        # One generic method for every channels op -- host.py already
+        # normalises each op's reply through contract.py's channel/video/play
+        # normalisers (see host._normalise_result), so unlike browse()/
+        # search()/streams() above there is no wire-shape gap left to reshape
+        # here.
+        return self._pool.call(op, params, TIMEOUT_CHANNELS_S)
 
 
 def _get_instance(provider_id):
@@ -392,6 +401,103 @@ def streams(identity, season=None, episode=None):
     return _invoke(pid, contract.OP_STREAMS, lambda inst: inst.streams(identity, season, episode))
 
 
+def _channel_call(instance, op, params):
+    """channel_call is only ever present on _PackageAdapter -- an add-on
+    (addon.AddonProvider) speaks the Stremio catalog/meta/stream resources and
+    has no channels equivalent, so an add-on filling this role is not a real
+    scenario the manifest schema even allows today. Still checked explicitly,
+    rather than left to raise AttributeError, so the failure is a named
+    E_UNSUPPORTED like every other "provider does not implement this" case."""
+    call = getattr(instance, "channel_call", None)
+    if call is None:
+        raise contract.ProviderError(contract.E_UNSUPPORTED, "provider does not supply channels",
+                                     provider=getattr(instance, "provider_id", None), op=op)
+    return call(op, params)
+
+
+def channel_resolve(query):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_RESOLVE)
+    params = {"query": query}
+    return _invoke(pid, contract.OP_CH_RESOLVE, lambda inst: _channel_call(inst, contract.OP_CH_RESOLVE, params))
+
+
+def channel_details(qualified_id):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_DETAILS)
+    local_id = _local_id_for(qualified_id, pid, contract.OP_CH_DETAILS)
+    params = {"id": local_id}
+    return _invoke(pid, contract.OP_CH_DETAILS, lambda inst: _channel_call(inst, contract.OP_CH_DETAILS, params))
+
+
+def channel_latest(qualified_id):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_LATEST)
+    local_id = _local_id_for(qualified_id, pid, contract.OP_CH_LATEST)
+    params = {"id": local_id}
+    return _invoke(pid, contract.OP_CH_LATEST, lambda inst: _channel_call(inst, contract.OP_CH_LATEST, params))
+
+
+def channel_videos(qualified_id, page=None):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_VIDEOS)
+    local_id = _local_id_for(qualified_id, pid, contract.OP_CH_VIDEOS)
+    params = {"id": local_id, "page": page or ""}
+    return _invoke(pid, contract.OP_CH_VIDEOS, lambda inst: _channel_call(inst, contract.OP_CH_VIDEOS, params))
+
+
+def channel_search(query, limit=20):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_SEARCH)
+    params = {"query": query, "limit": limit}
+    return _invoke(pid, contract.OP_CH_SEARCH, lambda inst: _channel_call(inst, contract.OP_CH_SEARCH, params))
+
+
+def channel_popular(limit=40):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_POPULAR)
+    params = {"limit": limit}
+    return _invoke(pid, contract.OP_CH_POPULAR, lambda inst: _channel_call(inst, contract.OP_CH_POPULAR, params))
+
+
+def channel_play(qualified_id, video_id):
+    pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_PLAY)
+    local_id = _local_id_for(qualified_id, pid, contract.OP_CH_PLAY)
+    params = {"id": local_id, "video": video_id}
+    return _invoke(pid, contract.OP_CH_PLAY, lambda inst: _channel_call(inst, contract.OP_CH_PLAY, params))
+
+
+# Per cache_tag(ROLE_CHANNELS) -- config_rev already changes on a config edit
+# or a role reassignment, so this needs no invalidate() hook of its own; a
+# failed lookup is deliberately never cached (see channel_ops below), only a
+# real answer, empty or not.
+_channel_ops_cache = {}
+
+
+def channel_ops():
+    """The optional channels ops (videos/search/popular) this install can
+    actually answer right now -- the ones the manifest offers minus the ones
+    the provider itself says it does not implement, since a package may
+    declare more in optional_ops than it wants to advertise for every config
+    (e.g. no search index configured). Empty set if the role is unresolved or
+    the provider errors."""
+    pid = _resolved(contract.ROLE_CHANNELS)
+    if not pid:
+        return set()
+    tag = cache_tag(contract.ROLE_CHANNELS)
+    cached = _channel_ops_cache.get(tag)
+    if cached is not None:
+        return cached
+    optional = {contract.OP_CH_VIDEOS, contract.OP_CH_SEARCH, contract.OP_CH_POPULAR}
+    try:
+        reply = _invoke(pid, contract.OP_DESCRIBE,
+                        lambda inst: _channel_call(inst, contract.OP_DESCRIBE, {}))
+        declared = reply.get("channel_ops") if isinstance(reply, dict) else None
+        if isinstance(declared, list):
+            result = optional & set(declared)
+        else:
+            rec = registry.get(pid)
+            result = optional & set(rec.manifest.get("optional_ops") or ()) if rec else set()
+    except contract.ProviderError:
+        return set()
+    _channel_ops_cache[tag] = result
+    return result
+
+
 def test(provider_id):
     """Round-trip provider_id's current config against the real service, for
     an admin "test connection" action. Not role-routed (a provider being
@@ -584,11 +690,14 @@ if __name__ == "__main__":
             manifest = addon.to_provider_manifest(raw_manifest, stub.manifest_url)
             registry.install(manifest, source=stub.manifest_url)
             pid = manifest["id"]
-            for role in contract.ROLES:
+            # The stub add-on declares only the three core roles -- channels
+            # is optional, and setting it active for a provider that does not
+            # declare it would raise (see registry.set_active).
+            for role in contract.CORE_ROLES:
                 registry.set_active(role, pid)
 
-            check("active_id resolves for all three roles",
-                  all(active_id(r) == pid for r in contract.ROLES))
+            check("active_id resolves for all three core roles",
+                  all(active_id(r) == pid for r in contract.CORE_ROLES))
             check("available() is true once configured", available(contract.ROLE_CATALOGUE))
             check("cache_tag is '<pid>@<rev>'", cache_tag(contract.ROLE_CATALOGUE).startswith(pid + "@"))
             check("supports_filters reports the stub's genre filter",

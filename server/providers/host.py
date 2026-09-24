@@ -204,6 +204,53 @@ def _normalise_result(op, result, provider_id, params):
         return _streams_result(result, provider_id)
     if op == contract.OP_GENRES:
         return _genres_result(result)
+    if op in (contract.OP_CH_RESOLVE, contract.OP_CH_DETAILS):
+        if not isinstance(result, dict):
+            raise contract.ContractError("%s result is %s, expected an object" % (op, type(result).__name__))
+        return contract.normalise_channel(result, provider_id)
+    if op in (contract.OP_CH_SEARCH, contract.OP_CH_POPULAR):
+        if isinstance(result, list):
+            items = result
+        elif isinstance(result, dict):
+            items = result.get("items")
+            if not isinstance(items, list):
+                raise contract.ContractError("%s result has no 'items' list" % op)
+        else:
+            raise contract.ContractError(
+                "%s result is %s, expected a list or {'items': [...]}" % (op, type(result).__name__))
+        out = []
+        for x in items[:50]:
+            try:
+                out.append(contract.normalise_channel(x, provider_id))
+            except contract.ContractError:
+                # One bad row costs a row, not the whole list -- same trade-off
+                # as _streams_result's rejected candidates.
+                continue
+        return {"items": out}
+    if op in (contract.OP_CH_LATEST, contract.OP_CH_VIDEOS):
+        if isinstance(result, list):
+            videos, next_page = result, None
+        elif isinstance(result, dict):
+            videos = result.get("videos")
+            if not isinstance(videos, list):
+                raise contract.ContractError("%s result has no 'videos' list" % op)
+            next_page = result.get("next")
+        else:
+            raise contract.ContractError(
+                "%s result is %s, expected a list or {'videos': [...]}" % (op, type(result).__name__))
+        out = []
+        for x in videos[:50]:
+            try:
+                out.append(contract.normalise_video(x))
+            except contract.ContractError:
+                continue
+        # "next" is only meaningful for channels.videos (paging uploads);
+        # channels.latest has no page concept, so it always reports None.
+        return {"videos": out, "next": (contract._s(next_page) or None) if op == contract.OP_CH_VIDEOS else None}
+    if op == contract.OP_CH_PLAY:
+        if not isinstance(result, dict):
+            raise contract.ContractError("%s result is %s, expected an object" % (op, type(result).__name__))
+        return contract.normalise_play(result)
     # provider.describe / config.test have no contract-level shape -- a
     # provider is only confirming it is alive or that credentials work. Still
     # require the reply be JSON-shaped so a provider handing back e.g. a raw

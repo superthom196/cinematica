@@ -1669,8 +1669,8 @@ pretry.onclick=()=>{
 // on its own. setupConfigured drives whether the grid or the setup view
 // is what main shows; apiClaimed drives claim-form vs login-form.
 let apiSession=null, apiClaimed=null, setupConfigured=null, settingsRoot=null;
-const ROLES=['catalogue','metadata','streams'];
-const ROLE_LABEL={catalogue:'Catalogue',metadata:'Metadata',streams:'Streams'};
+const ROLES=['catalogue','metadata','streams','channels'];
+const ROLE_LABEL={catalogue:'Catalogue',metadata:'Metadata',streams:'Streams',channels:'Channels (optional)'};
 const STATUS_LABEL={ready:'Ready',needs_config:'Needs configuration',disabled:'Disabled',test_failed:'Test failed'};
 const CSRF_HEADER='X-Cinematica-CSRF';
 

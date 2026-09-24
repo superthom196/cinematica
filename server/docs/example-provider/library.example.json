@@ -37,5 +37,75 @@
       "languages": ["en"],
       "external_ids": {"imdb": "tt0000000"}
     }
+  ],
+  "channels": [
+    {
+      "id": "slow-rivers",
+      "title": "Slow Rivers",
+      "avatar": "http://mediabox.lan/channels/slow-rivers/avatar.jpg",
+      "banner": "http://mediabox.lan/channels/slow-rivers/banner.jpg",
+      "subscribers": 4200,
+      "description": "Invented, like the library above -- uploads about slow water, shown here to demonstrate the optional channels role, not to be watched.",
+      "videos": [
+        {
+          "id": "sr-tide-notes",
+          "title": "Tide Notes, Early March",
+          "published": 1700000000,
+          "duration_s": 612,
+          "thumb": "http://mediabox.lan/channels/slow-rivers/sr-tide-notes.jpg",
+          "description": "First upload, oldest of the three."
+        },
+        {
+          "id": "sr-culvert",
+          "title": "The Culvert at Low Water",
+          "published": 1725000000,
+          "duration_s": 845,
+          "thumb": "http://mediabox.lan/channels/slow-rivers/sr-culvert.jpg",
+          "description": "Third upload chronologically, listed here out of order to show that channels.latest must sort newest first."
+        },
+        {
+          "id": "sr-flood-marks",
+          "title": "Reading the Flood Marks",
+          "published": 1715000000,
+          "duration_s": 733,
+          "thumb": "http://mediabox.lan/channels/slow-rivers/sr-flood-marks.jpg",
+          "description": "Second upload chronologically."
+        }
+      ]
+    },
+    {
+      "id": "bench-notes",
+      "title": "Bench Notes",
+      "avatar": "http://mediabox.lan/channels/bench-notes/avatar.jpg",
+      "banner": "http://mediabox.lan/channels/bench-notes/banner.jpg",
+      "subscribers": 980,
+      "description": "A second invented channel, so more than one row exists to page and search over.",
+      "videos": [
+        {
+          "id": "bn-pencil-log",
+          "title": "Pencil Log, Week One",
+          "published": 1701000000,
+          "duration_s": 421,
+          "thumb": "http://mediabox.lan/channels/bench-notes/bn-pencil-log.jpg",
+          "description": "Oldest of the three."
+        },
+        {
+          "id": "bn-grain-study",
+          "title": "A Grain Study",
+          "published": 1723000000,
+          "duration_s": 588,
+          "thumb": "http://mediabox.lan/channels/bench-notes/bn-grain-study.jpg",
+          "description": "Newest of the three, listed here out of order."
+        },
+        {
+          "id": "bn-desk-light",
+          "title": "Desk Light in Winter",
+          "published": 1712000000,
+          "duration_s": 502,
+          "thumb": "http://mediabox.lan/channels/bench-notes/bn-desk-light.jpg",
+          "description": "Middle upload chronologically."
+        }
+      ]
+    }
   ]
 }

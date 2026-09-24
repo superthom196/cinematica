@@ -359,10 +359,14 @@ def setup_state():
             meta = cat
             fallback = True
 
-    roles = {contract.ROLE_CATALOGUE: cat, contract.ROLE_METADATA: meta, contract.ROLE_STREAMS: streams}
+    roles = {contract.ROLE_CATALOGUE: cat, contract.ROLE_METADATA: meta, contract.ROLE_STREAMS: streams,
+             contract.ROLE_CHANNELS: active(contract.ROLE_CHANNELS)}
 
     missing = [r for r in (contract.ROLE_CATALOGUE, contract.ROLE_STREAMS) if not roles[r]]
-    not_ready = [r for r, pid in roles.items() if pid and status(pid)[0] != "ready"]
+    # Only the three core roles gate "configured" -- channels is optional, so a
+    # channels provider that still needs configuration must never make an
+    # otherwise-working install report itself unconfigured.
+    not_ready = [r for r in contract.CORE_ROLES if roles.get(r) and status(roles[r])[0] != "ready"]
 
     if missing:
         message = "%s not set" % " and ".join(missing)
