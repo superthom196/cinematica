@@ -565,5 +565,20 @@ class ProviderAccountTest(_StateIsolatedTestCase):
             host._die_with_parent()  # must return, not exit
 
 
+class WorkerKillTest(unittest.TestCase):
+    def test_a_killed_worker_is_reaped_not_left_a_zombie(self):
+        """Pool.call() kills a worker on a timeout, an oversize reply or a
+        malformed one, then close()s it -- but kill() marks it closed, so
+        close() returns at once. kill() itself has to wait for the child."""
+        import subprocess
+        w = runner._Worker.__new__(runner._Worker)
+        w.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                  stdin=subprocess.PIPE)
+        w._closed = False
+        w.kill()
+        w.close()
+        self.assertIsNotNone(w.proc.returncode)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -236,5 +236,47 @@ class OwnershipTest(unittest.TestCase):
         self.assertTrue(server.playing_now())
 
 
+class CancelRouteTest(unittest.TestCase):
+    """POST /api/cancel, through do_POST itself. The route bumps _cancel_gen,
+    and without a `global` for it in do_POST every cancel that had something
+    to cancel died with UnboundLocalError -- a 500, and a job that went on
+    buffering to seize the TV."""
+
+    setUp = OwnershipTest.setUp
+    tearDown = OwnershipTest.tearDown
+    add_job = OwnershipTest.add_job
+
+    def post(self, path, body=None):
+        import io, json
+        h = server.H.__new__(server.H)
+        raw = json.dumps(body or {}).encode()
+        h.headers = {"Host": "localhost", "Content-Length": str(len(raw))}
+        h.path, h.rfile, h.close_connection = path, io.BytesIO(raw), False
+        sent = {}
+        h._send = lambda code, b, ctype="application/json": sent.update(code=code, body=b)
+        server.H.do_POST(h)
+        return sent["code"], sent["body"]
+
+    def test_cancel_stands_down_a_buffering_job(self):
+        self.add_job("m1", stage="buffering")
+        gen = server._play_gen
+        code, body = self.post("/api/cancel")
+        self.assertEqual(code, 200)
+        self.assertEqual(body.get("msg"), "cancelled")
+        self.assertEqual(server.job_get("m1")["stage"], "error")
+        self.assertTrue(server.superseded(gen))
+        self.assertEqual(server._cancel_gen, 1)
+
+    def test_cancel_reaches_a_play_still_resolving(self):
+        server._play_inflight = 1
+        try:
+            code, body = self.post("/api/cancel")
+        finally:
+            server._play_inflight = 0
+        self.assertEqual(code, 200)
+        self.assertEqual(body.get("msg"), "cancelled")
+        self.assertEqual(server._cancel_gen, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

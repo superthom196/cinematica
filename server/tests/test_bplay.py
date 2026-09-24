@@ -446,6 +446,18 @@ class RunBrowserJobTest(unittest.TestCase):
         self.assertIn("HEVC", msg)
         self.assertIn("H264", msg)
 
+    def test_retry_after_a_failed_round_reaches_past_the_first_five(self):
+        """A Retry skips the five that just failed. Skipping them inside the
+        first ATTEMPTS slots left nothing to try; the sixth has to be next."""
+        picks = [_pick("c%d" % n, codec="H264") for n in range(1, 8)]
+        self.preps["c6"] = {"internal": "internal://c6", "aidx": 0}
+        self.probes["internal://c6"] = REMUX_PROBE
+        job = self._run(picks, DIRECT_CAPS, skip=["c1", "c2", "c3", "c4", "c5"])
+        self.assertEqual(job.get("stage"), "playing")
+        self.assertEqual(job.get("pick", {}).get("key"), "c6")
+        # cumulative, because the page sends this straight back as its next skip
+        self.assertEqual(job.get("tried_keys"), ["c1", "c2", "c3", "c4", "c5", "c6"])
+
     def test_tried_keys_lands_on_the_job(self):
         pick = _pick("c1", codec="H264")
         self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}

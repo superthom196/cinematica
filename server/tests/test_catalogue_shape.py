@@ -215,6 +215,33 @@ class CatalogueShapeTest(unittest.TestCase):
             server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES = saved
         self.assertEqual([c["title"] for c in pool], ["Big Tier, Rated 9", "World Tier, Rated 8"])
 
+    def test_a_failing_tier_is_remembered_and_the_rest_still_build(self):
+        # The home tier times out; the others answer. The error used to be
+        # caught `as ex` -- the excluded-genres argument's name -- which Python
+        # deletes at the end of the block, so the next tier's `if ex:` raised
+        # UnboundLocalError and the whole wall 500ed.
+        def flaky_browse(kind, page=1, page_size=20, sort=None, filters=None):
+            filters = filters or {}
+            if filters.get("origin_countries"):
+                raise contract.ProviderError(contract.E_TIMEOUT, "home tier timed out")
+            if page > 1:
+                return {"entries": []}
+            return {"entries": [_entry({"id": "302", "title": "Still Here", "kind": "movie",
+                                         "ratings": {"cat": {"value": 9.0}}})]}
+
+        server.gateway.browse = flaky_browse
+        server.gateway.supports_filters = lambda role=None: {
+            "min_votes", "origin_countries", "original_language"}
+        saved = server.HOME_COUNTRIES, server.BIAS_LANG
+        server.HOME_COUNTRIES, server.BIAS_LANG = ["GB"], "en"
+        errs = []
+        try:
+            pool = server.build_pool([], "top", [], "movie", True, "k", errs=errs)
+        finally:
+            server.HOME_COUNTRIES, server.BIAS_LANG = saved
+        self.assertEqual([c["title"] for c in pool], ["Still Here"])
+        self.assertEqual([e.code for e in errs], [contract.E_TIMEOUT])
+
     # -- series ---------------------------------------------------------------
     def test_series_tile_says_tv(self):
         # The TV app and the web page both open the seasons-and-episodes page

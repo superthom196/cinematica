@@ -747,13 +747,25 @@ def probe_keyframes(url_internal, t, window=30):
     except Exception:
         return []
 
+def tc_key(c):
+    """The 40-hex id a pick's audio conversion is filed and served under.
+
+    A torrent's infoHash, exactly as before. A direct HTTP source has none --
+    it used to go through as the string "None", and /audio/None is refused by
+    the route's 40-hex check, so the TV was handed a URL that could only 400.
+    Its contract.source_key() has the same shape for exactly this reason.
+    """
+    if c.get("infoHash"):
+        return c["infoHash"]
+    return c.get("key") or contract.source_key("http", url=c.get("url"))
+
 def audio_url(c):
     """The transcoding endpoint for this pick."""
     idx = c.get("fileIdx")
     # PUBLIC_HOST, not a name baked in here: this URL is opened by the player on
     # the TV, so it has to be a name that box can resolve.
     return "http://%s:%d/audio/%s%s" % (
-        PUBLIC_HOST, PORT, c["infoHash"], ("/%d" % idx) if idx is not None else "")
+        PUBLIC_HOST, PORT, tc_key(c), ("/%d" % idx) if idx is not None else "")
 
 # ---- direct sources, and the credential boundary ----------------------------
 # A provider may hand back a plain HTTP URL that needs request headers -- an
@@ -1138,7 +1150,11 @@ def build_pool(ids, sort="top", ex=None, kind="movie", bias=False, key=None, err
                     filters["exclude_genre_ids"] = [str(g) for g in ex]
                 try:
                     d = gateway.browse(gw_kind, page, PAGE, sort, filters)
-                except contract.ProviderError as ex:
+                # Not `as ex`: that is the excluded-genres argument, and Python
+                # deletes an except target when the block ends -- the next
+                # tier's `if ex:` then raised UnboundLocalError and 500ed the
+                # very wall this handler exists to keep alive.
+                except contract.ProviderError as perr:
                     # A provider failure must never 500 a browse, so this page
                     # is abandoned like an empty one -- but it is REMEMBERED.
                     # Swallowing it outright left /api/movies answering 200 with
@@ -1147,7 +1163,7 @@ def build_pool(ids, sort="top", ex=None, kind="movie", bias=False, key=None, err
                     # genre settings while the real problem was an add-on that
                     # had stopped answering.
                     if errs is not None:
-                        errs.append(ex)
+                        errs.append(perr)
                     break
                 res = d.get("entries") or []
                 if not res:
@@ -4331,7 +4347,7 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                           % (mid, secs // 60), flush=True)
                 bps = ((pick.get("gb") or 0) * 1024 ** 3) / secs
                 job_set(mid, msg="%s audio — converting to AC3 before starting…" % acodec)
-                name = transcode_begin(pick["infoHash"], fidx, internal, bps, mid, gen, aidx=aidx)
+                name = transcode_begin(tc_key(pick), fidx, internal, bps, mid, gen, aidx=aidx)
                 if not name:
                     job_set(mid, msg="Audio conversion failed — playing as-is")
                     pick["transcoded"] = False
@@ -4570,16 +4586,22 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
         return False
     skip = set(skip or [])
     try:
+        # Skipped BEFORE the ATTEMPTS cut, not inside the loop: a Retry after
+        # a round where all five failed skips exactly those five, and skipping
+        # them within the first five left nothing to try while picks_all still
+        # held twenty more.
         picks = [p for p in (picks or []) if p]
+        # tried_keys is what the page sends back as its next skip, so it
+        # carries the earlier rounds too -- or a second Retry would bring the
+        # first five back.
+        tried_keys = [candidate_key(p) for p in picks if candidate_key(p) in skip]
+        picks = [p for p in picks if candidate_key(p) not in skip]
         total = min(len(picks), ATTEMPTS)
-        tried_keys = []
         reasons = []
         for i, pick in enumerate(picks[:ATTEMPTS], start=1):
             if stand_down():
                 return
             key = candidate_key(pick)
-            if key in skip:
-                continue        # the page already knows this one is out
             tried = []
             prep = prepare_candidate(mid, pick, runtime_min, i, total, gen, tried)
             tried_keys.append(key)
@@ -5965,6 +5987,10 @@ class H(BaseHTTPRequestHandler):
         self._send(404, {"err": "not found"})
 
     def do_POST(self):
+        # /api/cancel bumps it. Without this the += made it a local of this
+        # whole method, and every cancel that had something to cancel died
+        # with UnboundLocalError before the job was ever stood down.
+        global _cancel_gen
         p = urllib.parse.urlparse(self.path)
         note_request(p.path)
         # Addressed to a name that is not ours: rebinding, and the body is

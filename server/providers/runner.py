@@ -206,9 +206,20 @@ class _Worker:
             pass
 
     def kill(self):
+        # Reaped here as well as killed: it marks the worker closed, so the
+        # close() every caller follows it with returns at once and never
+        # waits -- and each timed-out call used to leave a zombie behind.
         self._closed = True
         try:
             self.proc.kill()
+        except Exception:
+            pass
+        try:
+            self.proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self.proc.wait(timeout=5)
         except Exception:
             pass
 

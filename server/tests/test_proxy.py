@@ -321,5 +321,25 @@ class ProxyCredentialTest(unittest.TestCase):
             self.assertIn("/src/", url)
 
 
+class AudioUrlTest(unittest.TestCase):
+    """The converted-audio URL the TV is handed. A direct HTTP source has no
+    infoHash, and it used to go out as /audio/None -- which the /audio/
+    route's 40-hex check refuses, so a converted film could never play."""
+
+    def test_an_http_source_gets_a_40_hex_audio_path(self):
+        c, _ = server.contract.normalise_candidate({
+            "transport": "http", "url": "https://media.example/film.mkv",
+            "codec": "H264", "quality": "1080p"}, "idx")
+        path = server.audio_url(c).split("/audio/", 1)[1]
+        self.assertTrue(server.contract.RE_HASH40.match(path.split("/")[0]), path)
+        self.assertEqual(path.split("/")[0], server.tc_key(c))
+
+    def test_a_torrent_keeps_its_infohash(self):
+        ih = "a" * 40
+        c = {"infoHash": ih, "fileIdx": 3, "key": "b" * 40}
+        self.assertEqual(server.tc_key(c), ih)
+        self.assertTrue(server.audio_url(c).endswith("/audio/%s/3" % ih))
+
+
 if __name__ == "__main__":
     unittest.main()
