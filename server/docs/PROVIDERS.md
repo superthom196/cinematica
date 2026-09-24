@@ -47,7 +47,7 @@ the other three roles determine.
 | `channels.play` | `id`, `video` | `{url, package, label}` | Required |
 | `channels.videos` | `id`, `page` | `{videos, next}` | Optional |
 | `channels.search` | `query`, `limit` | `{items}` (channels) | Optional |
-| `channels.popular` | `limit` | `{items}` (channels) | Optional |
+| `channels.popular` | `limit`, `seeds` | `{items}` (channels) | Optional |
 
 `resolve`, `details`, `latest` and `play` are what the role obliges. `videos`
 (paged uploads beyond the latest page), `search` and `popular` are optional
@@ -55,6 +55,12 @@ within the role -- a channels provider may have no search index or no
 separate "popular" concept at all -- and each install advertises which of
 those three it actually answers through its own `provider.describe` reply's
 `"channel_ops"` list.
+
+`channels.popular` may also get `seeds`: the local ids of the channels this
+household follows, when it follows any. It is a hint, for a provider that
+suggests channels like the ones already followed; a provider with one fixed
+popular list ignores it. Followed channels are removed from the result by
+the server either way.
 
 `channels.play` hands back `{url, package, label}`: a playable URL, the app
 to open it with, and a label for the button when it isn't. The TV opens

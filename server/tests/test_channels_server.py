@@ -110,7 +110,7 @@ class ChannelsTestBase(unittest.TestCase):
         server.gateway.cache_tag = lambda role: "prov@1"
         server.gateway.channel_latest = lambda cid: {"videos": [], "next": None}
         server.gateway.channel_details = lambda cid: _channel(cid, "Channel " + cid)
-        server.gateway.channel_popular = lambda limit=40: {"items": []}
+        server.gateway.channel_popular = lambda limit=40, seeds=None: {"items": []}
         server.gateway.channel_search = lambda q, limit=20: {"items": []}
         server.gateway.channel_resolve = lambda q: _channel("prov:resolved", "Resolved")
         server.gateway.channel_play = lambda cid, vid: {"url": "http://x/y", "package": "",
@@ -219,7 +219,7 @@ class ShelfChannelsTest(ChannelsTestBase):
 class ServerChannelsTest(ChannelsTestBase):
     def test_wall_lists_followed_then_popular_excluding_followed(self):
         shelf.follow("prov:a", True, snap={"title": "A"}, now=100)
-        server.gateway.channel_popular = lambda limit=40: {
+        server.gateway.channel_popular = lambda limit=40, seeds=None: {
             "items": [_channel("prov:a", "A"), _channel("prov:pop", "Pop")]}
         code, body = get("/api/movies?kind=channel")
         self.assertEqual(code, 200)
@@ -227,10 +227,22 @@ class ServerChannelsTest(ChannelsTestBase):
         self.assertEqual([p["id"] for p in body["popular"]], ["prov:pop"])
         self.assertIn(contract.OP_CH_VIDEOS, body["channel_ops"])
 
+    def test_popular_is_asked_with_the_followed_channels_and_refreshes_on_a_follow(self):
+        asked = []
+        server.gateway.channel_popular = lambda limit=40, seeds=None: asked.append(list(seeds)) or {
+            "items": [_channel("prov:pop", "Pop")]}
+        shelf.follow("prov:a", True, snap={"title": "A"}, now=100)
+        get("/api/movies?kind=channel")
+        get("/api/movies?kind=channel")
+        self.assertEqual(asked, [["prov:a"]], "seeded, and cached while the follows are unchanged")
+        shelf.follow("prov:b", True, snap={"title": "B"}, now=101)
+        get("/api/movies?kind=channel")
+        self.assertEqual(asked[-1], ["prov:a", "prov:b"], "a new follow is not stuck behind the cache")
+
     def test_popular_omitted_when_channel_ops_lacks_it(self):
         server.gateway.channel_ops = lambda: {contract.OP_CH_VIDEOS}
         called = []
-        server.gateway.channel_popular = lambda limit=40: called.append(1) or {"items": []}
+        server.gateway.channel_popular = lambda limit=40, seeds=None: called.append(1) or {"items": []}
         code, body = get("/api/movies?kind=channel")
         self.assertEqual(body["popular"], [])
         self.assertEqual(called, [])   # never even asked

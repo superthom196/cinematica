@@ -688,7 +688,7 @@ async function loadWatchlist(){
 }
 
 // The channels tab: followed channels (server-sorted, new uploads first),
-// then a full-width "Popular" divider and the popular list, if there is one.
+// then a full-width "Suggested" divider and the provider's suggestions, if any.
 // Self-contained (clears/rebuilds the grid itself) because it is also called
 // to refresh the wall after a follow/unfollow inside the modal, not only on
 // tab switch.
@@ -716,7 +716,7 @@ async function loadChannels(){
     render(followed,false);
     if(popular.length){
       const h=document.createElement('div');
-      h.className='chsection'; h.textContent='Popular';
+      h.className='chsection'; h.textContent='Suggested';
       grid.appendChild(h);
       popular.forEach(x=>seenIds.add(x.id));
       render(popular,true);

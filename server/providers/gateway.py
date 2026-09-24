@@ -448,9 +448,20 @@ def channel_search(query, limit=20):
     return _invoke(pid, contract.OP_CH_SEARCH, lambda inst: _channel_call(inst, contract.OP_CH_SEARCH, params))
 
 
-def channel_popular(limit=40):
+def channel_popular(limit=40, seeds=None):
+    """`seeds`: the channels this household follows, qualified, as a hint
+    for a provider that suggests channels like them. Ids another provider
+    minted are dropped rather than refused -- a hint is not worth an error."""
     pid = _resolve_or_raise(contract.ROLE_CHANNELS, contract.OP_CH_POPULAR)
     params = {"limit": limit}
+    local = []
+    for qid in seeds or ():
+        try:
+            local.append(_local_id_for(qid, pid, contract.OP_CH_POPULAR))
+        except contract.ProviderError:
+            pass
+    if local:
+        params["seeds"] = local
     return _invoke(pid, contract.OP_CH_POPULAR, lambda inst: _channel_call(inst, contract.OP_CH_POPULAR, params))
 
 

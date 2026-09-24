@@ -4969,18 +4969,21 @@ def _channel_item(ch, cid=None):
     }
 
 
-def channel_popular(limit=40):
-    """Cached 6h, same TTL as the catalogue's own popular list. Errors are
-    never cached -- an empty result here is what a not-yet-usable index
-    looks like, and caching that would keep the wall's Popular row empty for
-    6 hours after the provider recovers."""
-    tag = gateway.cache_tag(contract.ROLE_CHANNELS)
+def channel_popular(limit=40, seeds=()):
+    """Cached 6h, same TTL as the catalogue's own popular list, and keyed on
+    the followed channels (`seeds`) as well as the provider: a provider may
+    suggest channels like the ones followed, so following one more must not
+    wait six hours to count. Errors are never cached -- an empty result here
+    is what a not-yet-usable index looks like, and caching that would keep
+    the wall's Popular row empty for 6 hours after the provider recovers."""
+    seeds = sorted(seeds)
+    tag = "%s|%s" % (gateway.cache_tag(contract.ROLE_CHANNELS), ",".join(seeds))
     with _lock:
         c = _channel_popular_cache
         if c["data"] and c.get("tag") == tag and time.time() - c["at"] < TTL_LIST:
             return c["data"]
     try:
-        items = gateway.channel_popular(limit)["items"]
+        items = gateway.channel_popular(limit, seeds=seeds)["items"]
     except contract.ProviderError:
         return []
     with _lock:
@@ -5560,7 +5563,7 @@ class H(BaseHTTPRequestHandler):
                     popular = []
                     if contract.OP_CH_POPULAR in ops:
                         followed_ids = {m["id"] for m in movies}
-                        popular = [_channel_item(ch) for ch in channel_popular()
+                        popular = [_channel_item(ch) for ch in channel_popular(seeds=followed_ids)
                                   if ch.get("id") not in followed_ids]
                     return self._send(200, {"movies": movies, "popular": popular, "more": False,
                                             "offset": 0, "limit": len(movies), "err": None,

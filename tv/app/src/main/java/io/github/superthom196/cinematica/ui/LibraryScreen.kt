@@ -206,7 +206,8 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "popular-label") {
                     Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp)) {
                         Text(
-                            "Popular",
+                            // Channels like the ones followed, when the provider can tell.
+                            "Suggested",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = CinematicaColors.Muted,
                         )
