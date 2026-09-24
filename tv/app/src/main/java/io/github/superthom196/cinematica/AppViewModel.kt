@@ -100,6 +100,15 @@ internal fun buildPlayerReport(
     PlayStatus.Idle -> if (jobId != null) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("idle")
 }
 
+/**
+ * The last heartbeat for a film cut short by Home or the TV going to standby. It is paused where it
+ * stands, not "ended": to the server "ended" means the film finished, which marks it watched,
+ * throws its resume point away and starts the next episode. A film that really had finished (or
+ * failed) still says so.
+ */
+internal fun backgroundReport(report: PlayerReport): PlayerReport =
+    if (report.state == "playing") report.copy(state = "paused") else report
+
 /** What [AppViewModel.startResume]'s wait loop does on one tick of the player's current state. */
 internal enum class ResumeAction { STOP_LOOP, SEEK, SILENT_WAIT, SEEK_LIVE, HOLD }
 
@@ -308,16 +317,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (pinEnabled.value) _ui.update { it.copy(locked = true) }
         // Home, mid-film. libVLC would carry on decoding with no surface to draw on, the server
         // would go on converting audio for a film nobody is watching, and the cache could never be
-        // emptied. So the film ends here: one last heartbeat saying so, then /api/stop. Coming back
-        // and playing it again is a fresh play, which is what the server's cache does anyway.
+        // emptied. So the film stops here: one last heartbeat with where it got to, then /api/stop.
+        // Coming back and playing it again is a fresh play, from the resume point that beat left.
         val playing = engine.state.value.active || jobId != null
         if (!playing) {
             link.stop()
             return
         }
-        val ended = buildReport().copy(state = "ended")
+        val last = backgroundReport(buildReport())
         stopPlayback(tellServer = false)
-        link.stop(finalReport = ended, onSettled = ::tellServerToStop)
+        link.stop(finalReport = last, onSettled = ::tellServerToStop)
     }
 
     /**

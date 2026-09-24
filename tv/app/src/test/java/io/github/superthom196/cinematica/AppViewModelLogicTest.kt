@@ -82,6 +82,27 @@ class AppViewModelLogicTest {
         )
     }
 
+    // ---- backgroundReport -------------------------------------------------------
+
+    @Test
+    fun `Home mid-film reports paused with the position, never ended`() {
+        // "ended" would mark the film watched and drop its resume point on the server.
+        assertEquals(
+            PlayerReport("paused", "job1", "Heat", 1200.0, 7200.0),
+            backgroundReport(PlayerReport("playing", "job1", "Heat", 1200.0, 7200.0)),
+        )
+    }
+
+    @Test
+    fun `Home after a real ending or a failure still says so`() {
+        val ended = PlayerReport("ended", "job1", "Heat", 7200.0, 7200.0)
+        val paused = PlayerReport("paused", "job1", "Heat", 30.0, 7200.0)
+        val error = PlayerReport("error", "job1", "Heat", err = "no")
+        assertEquals(ended, backgroundReport(ended))
+        assertEquals(paused, backgroundReport(paused))
+        assertEquals(error, backgroundReport(error))
+    }
+
     // ---- resumeStep ---------------------------------------------------------------
 
     @Test

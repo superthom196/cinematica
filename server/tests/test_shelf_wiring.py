@@ -130,6 +130,18 @@ class ShelfWiringTest(unittest.TestCase):
         self.assertTrue(v["watched"])
         self.assertFalse(v["pinned"])
 
+    def test_the_tv_going_home_mid_film_leaves_a_resume_point(self):
+        """What the TV app now sends when Home or standby cuts a film short:
+        paused where it stands, then idle. It used to send "ended", which
+        marked a film 20 minutes in as watched and threw its place away."""
+        server.job_set("cinemeta:tt3", shelf_kind="movie", runtime_s=7200)
+        self.beat(state="playing", job="cinemeta:tt3", position_s=1200, duration_s=7200)
+        self.beat(state="paused", job="cinemeta:tt3", position_s=1200, duration_s=7200)
+        self.beat(state="idle")
+        v = shelf.view("cinemeta:tt3")
+        self.assertFalse(v["watched"])
+        self.assertEqual(v["resume_s"], 1200 - shelf.RESUME_BACK_S)
+
     def test_a_position_below_the_resume_point_is_ignored(self):
         """The TV reports where it is before it has seeked. 200s would be a
         perfectly recordable position for any other job."""

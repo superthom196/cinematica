@@ -146,6 +146,8 @@ class PlayerEngine(private val context: Context) {
             debugRateCycle(true)
         }
     }
+    // Unregistering a receiver twice throws, so release() has to know whether it still is.
+    private var rateCycleRegistered = false
 
     init {
         // SPIKE: remove after Phase 0
@@ -156,6 +158,7 @@ class PlayerEngine(private val context: Context) {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             context.registerReceiver(rateCycleReceiver, filter)
         }
+        rateCycleRegistered = true
     }
 
     /** Settings the user can change while the app is up. Returns true if the engine was rebuilt. */
@@ -466,8 +469,19 @@ class PlayerEngine(private val context: Context) {
         // SPIKE: remove after Phase 0
         rateCycleRunnable?.let { rateCycleHandler?.removeCallbacks(it) }
         rateCycleRunnable = null
-        context.unregisterReceiver(rateCycleReceiver)
+        if (rateCycleRegistered) {
+            context.unregisterReceiver(rateCycleReceiver)
+            rateCycleRegistered = false
+        }
+        releasePlayer()
+    }
 
+    /**
+     * The player and its LibVLC, and nothing else: what a settings rebuild throws away. The engine
+     * itself carries on, so the receiver registered in init stays — ensurePlayer() used to call
+     * release() for this, which unregistered it, and the real release() at teardown then threw.
+     */
+    private fun releasePlayer() {
         pending?.release()
         pending = null
         val mp = player
@@ -493,7 +507,7 @@ class PlayerEngine(private val context: Context) {
         if (optionsStale && player != null && !(_state.value.active)) {
             // Caching and verbosity live on the LibVLC instance, so a settings change is honoured
             // by rebuilding — but never underneath a film that is on screen.
-            release()
+            releasePlayer()
             optionsStale = false
         }
         player?.let { return it }

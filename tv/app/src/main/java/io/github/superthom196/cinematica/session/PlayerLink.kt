@@ -82,8 +82,8 @@ class PlayerLink(
 
     /**
      * Stand the link down. [finalReport], when given, is sent first — with `idle` behind it — so a
-     * film torn down as the activity stops still tells the server it ended rather than leaving the
-     * job looking alive until the heartbeat ages out.
+     * film torn down as the activity stops still tells the server where it got to rather than
+     * leaving the job looking alive until the heartbeat ages out.
      */
     fun stop(finalReport: PlayerReport? = null, onSettled: (() -> Unit)? = null) {
         loop?.cancel()
