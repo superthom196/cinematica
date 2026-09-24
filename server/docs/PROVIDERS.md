@@ -21,7 +21,9 @@ There are two ways to add a provider:
   data from that service over HTTP. The add-on's code runs on its own server.
 - **Python package:** upload an integration archive. Its code runs on your server
   with the service account's permissions. Only install packages from authors you
-  trust; a separate Python process is not a security sandbox.
+  trust; a separate Python process is not a security sandbox. The service account
+  is in the Docker group, which is equivalent to root, so a package can take full
+  control of the machine.
 
 Cinematica bundles no integrations. Any service can supply any of the three
 roles if it meets the compatibility requirements below.

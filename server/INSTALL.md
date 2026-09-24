@@ -60,7 +60,8 @@ account, and the box distinguishes them. Re-running the installer is safe.
 | `--skip-systemd` | Leave service setup to you |
 
 The service account belongs to the Docker group so it can run the audio tools
-inside the container. That grants it administrator-level access through Docker.
+inside the container. That grants it administrator-level access through Docker,
+and the same access extends to any Python provider package you install.
 
 ## Adding providers
 
