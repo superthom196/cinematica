@@ -66,6 +66,74 @@ sealed class Phase {
 
 data class Toast(val text: String, val isError: Boolean = false, val urgent: Boolean = false)
 
+/**
+ * The state half of the heartbeat, minus the hifi/seek fields [AppViewModel.buildReport] appends
+ * afterwards: what the server reads to decide a resume/error/ended transition landed. Pulled out
+ * of [AppViewModel] so this state mapping can be covered by a JVM unit test.
+ */
+internal fun buildPlayerReport(
+    status: PlayStatus,
+    positionS: Double?,
+    durationS: Double?,
+    jobId: String?,
+    jobTitle: String?,
+    resumeHolding: Boolean,
+    endedReported: Boolean,
+    errorReported: Boolean,
+): PlayerReport = when (status) {
+    // Report `job` from the moment the stream starts opening, not once the first frame is up:
+    // launch() waits up to APP_HANDOFF_SECS for exactly that and fails the play without it.
+    PlayStatus.Opening, is PlayStatus.Buffering -> PlayerReport("buffering", jobId, jobTitle, positionS, durationS)
+    // Held for a resume: "buffering" with no position, because the position it is holding at is
+    // 0:00 and the server would record that as where the viewer got to.
+    PlayStatus.Playing ->
+        if (resumeHolding) PlayerReport("buffering", jobId, jobTitle)
+        else PlayerReport("playing", jobId, jobTitle, positionS, durationS)
+    PlayStatus.Paused ->
+        if (resumeHolding) PlayerReport("buffering", jobId, jobTitle)
+        else PlayerReport("paused", jobId, jobTitle, positionS, durationS)
+    // "ended" is the falling edge the server's cache watcher looks for; it is said once and then
+    // the app is simply idle again.
+    PlayStatus.Ended -> if (endedReported) PlayerReport("idle") else PlayerReport("ended", jobId, jobTitle, positionS, durationS)
+    is PlayStatus.Error ->
+        if (errorReported) PlayerReport("idle") else PlayerReport("error", jobId, jobTitle, err = status.msg)
+    PlayStatus.Idle -> if (jobId != null) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("idle")
+}
+
+/** What [AppViewModel.startResume]'s wait loop does on one tick of the player's current state. */
+internal enum class ResumeAction { STOP_LOOP, SEEK, SILENT_WAIT, SEEK_LIVE, HOLD }
+
+/**
+ * The branch of [AppViewModel.startResume]'s wait loop for the player's current state: seek at
+ * once, keep silently waiting for a seekable length, seek past a converted margin, or hold for a
+ * resume point that is not converted far enough yet. The give-up timeout itself is checked by the
+ * caller, since it also decides whether to speak the "still converting" line on the same tick.
+ */
+internal fun resumeStep(active: Boolean, isLive: Boolean, seekable: Boolean, lengthMs: Long, targetMs: Long, marginMs: Long): ResumeAction =
+    when {
+        !active -> ResumeAction.STOP_LOOP
+        !isLive -> if (seekable) ResumeAction.SEEK else ResumeAction.SILENT_WAIT
+        lengthMs > targetMs + marginMs -> ResumeAction.SEEK_LIVE
+        else -> ResumeAction.HOLD
+    }
+
+/** The outcome of one [AppViewModel.checkPin] attempt against the throttle. */
+internal data class PinAttempt(val failuresAfter: Int, val retryAt: Long?)
+
+/**
+ * One PIN attempt against the throttle: past [maxTries] wrong answers in a row, nothing counts for
+ * [waitMs] — a D-pad cannot type ten thousand PINs, but a remote's number keys and a patient child
+ * can. [PinAttempt.retryAt] is null when the UI's existing throttle should be left alone (an
+ * ordinary wrong answer that hasn't tripped the limit); 0L on a correct answer, to clear any
+ * throttle in force.
+ */
+internal fun evaluatePinAttempt(matched: Boolean, failuresBefore: Int, nowMs: Long, maxTries: Int, waitMs: Long): PinAttempt {
+    if (matched) return PinAttempt(failuresAfter = 0, retryAt = 0L)
+    val failures = failuresBefore + 1
+    return if (failures >= maxTries) PinAttempt(failuresAfter = 0, retryAt = nowMs + waitMs)
+    else PinAttempt(failuresAfter = failures, retryAt = null)
+}
+
 data class UiState(
     val phase: Phase = Phase.Connecting,
     val host: String = Prefs.DEFAULT_HOST,
@@ -304,27 +372,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             var saidAt = 0L
             while (true) {
                 val s = engine.state.value
-                if (!s.active) break
-                if (!s.isLive) {
+                when (resumeStep(s.active, s.isLive, s.seekable, s.lengthMs, targetMs, RESUME_MARGIN_MS)) {
+                    ResumeAction.STOP_LOOP -> break
                     // A trustworthy length, converted or not: an ordinary seek, the moment one works.
-                    if (s.seekable) { endResume(); seekTo(targetMs); break }
-                } else if (s.lengthMs > targetMs + RESUME_MARGIN_MS) {
-                    endResume()
-                    seekTo(targetMs, force = true)
-                    engine.play()
-                    break
-                } else {
-                    resumeHolding = true
-                    val now = android.os.SystemClock.uptimeMillis()
-                    if (now - saidAt > RESUME_SAY_EVERY_MS) {
-                        saidAt = now
-                        engine.say("Resuming at $at — still converting")
-                    }
-                    if (now > giveUpAt) {
+                    ResumeAction.SEEK -> { endResume(); seekTo(targetMs); break }
+                    ResumeAction.SILENT_WAIT -> Unit
+                    ResumeAction.SEEK_LIVE -> {
                         endResume()
+                        seekTo(targetMs, force = true)
                         engine.play()
-                        engine.say("Still converting — starting from the beginning")
                         break
+                    }
+                    ResumeAction.HOLD -> {
+                        resumeHolding = true
+                        val now = android.os.SystemClock.uptimeMillis()
+                        if (now - saidAt > RESUME_SAY_EVERY_MS) {
+                            saidAt = now
+                            engine.say("Resuming at $at — still converting")
+                        }
+                        if (now > giveUpAt) {
+                            endResume()
+                            engine.play()
+                            engine.say("Still converting — starting from the beginning")
+                            break
+                        }
                     }
                 }
                 delay(500)
@@ -459,22 +530,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val s = engine.state.value
         val pos = if (s.active) engine.livePositionMs() / 1000.0 else null
         val dur = if (s.active && s.lengthMs > 0L) s.lengthMs / 1000.0 else null
-        val report = when (val st = s.status) {
-            // Report `job` from the moment the stream starts opening, not once the first frame is
-            // up: launch() waits up to APP_HANDOFF_SECS for exactly that and fails the play without it.
-            PlayStatus.Opening, is PlayStatus.Buffering -> PlayerReport("buffering", jobId, jobTitle, pos, dur)
-            // Held for a resume: "buffering" with no position, because the position it is holding
-            // at is 0:00 and the server would record that as where the viewer got to.
-            PlayStatus.Playing -> if (resumeHolding) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("playing", jobId, jobTitle, pos, dur)
-            PlayStatus.Paused -> if (resumeHolding) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("paused", jobId, jobTitle, pos, dur)
-            // "ended" is the falling edge the server's cache watcher looks for; it is said once and
-            // then the app is simply idle again.
-            PlayStatus.Ended -> if (endedReported) PlayerReport("idle") else PlayerReport("ended", jobId, jobTitle, pos, dur)
-            is PlayStatus.Error ->
-                if (errorReported) PlayerReport("idle")
-                else PlayerReport("error", jobId, jobTitle, err = st.msg)
-            PlayStatus.Idle -> if (jobId != null) PlayerReport("buffering", jobId, jobTitle) else PlayerReport("idle")
-        }
+        val report = buildPlayerReport(s.status, pos, dur, jobId, jobTitle, resumeHolding, endedReported, errorReported)
         return report.copy(
             hifi = if (jobId != null) _ui.value.hifi else hifiAudio.value,
             hifiPlayer = hifiPlayerUrl.value, hifiDelayMs = hifiDelayMs.value, seekSeq = userSeekSeq,
@@ -706,13 +762,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun checkPin(pin: String): Boolean {
         if (System.currentTimeMillis() < _ui.value.pinRetryAt) return false
         val ok = PinLock.matches(pin, prefs.currentPinRecord())
-        if (ok) {
-            pinFailures = 0
-            _ui.update { it.copy(pinRetryAt = 0L) }
-        } else if (++pinFailures >= PIN_MAX_TRIES) {
-            pinFailures = 0
-            _ui.update { it.copy(pinRetryAt = System.currentTimeMillis() + PIN_WAIT_MS) }
-        }
+        val result = evaluatePinAttempt(ok, pinFailures, System.currentTimeMillis(), PIN_MAX_TRIES, PIN_WAIT_MS)
+        pinFailures = result.failuresAfter
+        if (result.retryAt != null) _ui.update { it.copy(pinRetryAt = result.retryAt) }
         return ok
     }
 

@@ -27,8 +27,41 @@ private const val DEFAULT_PORT = 8090
  * this first. `URLEncoder` is form encoding (space -> "+"), which is wrong for a path segment, so
  * that one substitution is undone.
  */
-private fun encodePathSegment(id: String): String =
+internal fun encodePathSegment(id: String): String =
     java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")
+
+/**
+ * The `/api/movies` query string. [genres] and [exclude] are only appended when non-empty,
+ * `kind=tv` only when [kind] is "tv", and `bias` is always said explicitly so the grid never
+ * depends on the server's default.
+ */
+internal fun buildMoviesQuery(
+    offset: Int,
+    limit: Int,
+    sort: String,
+    genres: Set<String>,
+    exclude: Set<String>,
+    kind: String = "movie",
+    bias: Boolean = true,
+): String = buildString {
+    append("/api/movies?offset=").append(offset)
+    append("&limit=").append(limit)
+    append("&sort=").append(sort)
+    if (genres.isNotEmpty()) append("&genres=").append(genres.joinToString(","))
+    if (exclude.isNotEmpty()) append("&exclude=").append(exclude.joinToString(","))
+    if (kind == "tv") append("&kind=tv")
+    append("&bias=").append(if (bias) 1 else 0)
+}
+
+/** Same view parameters as [buildMoviesQuery]: the `/api/movies/progress` query string. */
+internal fun buildProgressQuery(sort: String, genres: Set<String>, exclude: Set<String>, kind: String, bias: Boolean): String =
+    buildString {
+        append("/api/movies/progress?sort=").append(sort)
+        if (genres.isNotEmpty()) append("&genres=").append(genres.joinToString(","))
+        if (exclude.isNotEmpty()) append("&exclude=").append(exclude.joinToString(","))
+        if (kind == "tv") append("&kind=tv")
+        append("&bias=").append(if (bias) 1 else 0)
+    }
 
 /** Normalises whatever the user typed ("cinematica.lan:8090", "192.168.1.50", a pasted URL) into "http://host[:port]". */
 fun normaliseBaseUrl(raw: String): String {
@@ -153,31 +186,11 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
         exclude: Set<String>,
         kind: String = "movie",
         bias: Boolean = true,
-    ): MoviesPage {
-        val q = buildString {
-            append("/api/movies?offset=").append(offset)
-            append("&limit=").append(limit)
-            append("&sort=").append(sort)
-            if (genres.isNotEmpty()) append("&genres=").append(genres.joinToString(","))
-            if (exclude.isNotEmpty()) append("&exclude=").append(exclude.joinToString(","))
-            if (kind == "tv") append("&kind=tv")
-            // Always said explicitly so the grid never depends on the server's default.
-            append("&bias=").append(if (bias) 1 else 0)
-        }
-        return get(longReadClient, q)
-    }
+    ): MoviesPage = get(longReadClient, buildMoviesQuery(offset, limit, sort, genres, exclude, kind, bias))
 
     /** Same view parameters as [movies]: what that request is doing right now. Cheap. */
-    suspend fun progress(sort: String, genres: Set<String>, exclude: Set<String>, kind: String, bias: Boolean): ViewProgress {
-        val q = buildString {
-            append("/api/movies/progress?sort=").append(sort)
-            if (genres.isNotEmpty()) append("&genres=").append(genres.joinToString(","))
-            if (exclude.isNotEmpty()) append("&exclude=").append(exclude.joinToString(","))
-            if (kind == "tv") append("&kind=tv")
-            append("&bias=").append(if (bias) 1 else 0)
-        }
-        return get(shortReadClient, q)
-    }
+    suspend fun progress(sort: String, genres: Set<String>, exclude: Set<String>, kind: String, bias: Boolean): ViewProgress =
+        get(shortReadClient, buildProgressQuery(sort, genres, exclude, kind, bias))
 
     suspend fun movie(id: String): MovieDetail = get(shortReadClient, "/api/movie/${encodePathSegment(id)}")
 
@@ -288,33 +301,10 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
             try {
                 call.execute().use { response ->
                     val source = response.body.source()
-                    var event: String? = null
-                    var data: String? = null
-                    while (!source.exhausted()) {
-                        val line = source.readUtf8Line() ?: break
-                        when {
-                            line.startsWith("event:") -> event = line.removePrefix("event:").trim()
-                            line.startsWith("data:") -> data = line.removePrefix("data:").trim()
-                            line.isBlank() -> {
-                                val ev = event; val dt = data
-                                event = null; data = null
-                                if (ev != null && dt != null) {
-                                    val parsed = runCatching {
-                                        when (ev) {
-                                            "found" -> SearchEvent.Found(json.decodeFromString(dt))
-                                            "movie" -> SearchEvent.Movie(json.decodeFromString(dt))
-                                            "done" -> SearchEvent.Done(json.decodeFromString(dt))
-                                            "fail" -> SearchEvent.Fail(json.decodeFromString<Map<String, String>>(dt)["err"])
-                                            else -> null
-                                        }
-                                    }.getOrNull()
-                                    if (parsed != null) {
-                                        trySend(parsed)
-                                        if (parsed is SearchEvent.Done || parsed is SearchEvent.Fail) break
-                                    }
-                                }
-                            }
-                        }
+                    val lines = generateSequence { if (source.exhausted()) null else source.readUtf8Line() }
+                    for (parsed in parseSseSearchEvents(lines)) {
+                        trySend(parsed)
+                        if (parsed is SearchEvent.Done || parsed is SearchEvent.Fail) break
                     }
                 }
             } catch (_: IOException) {
@@ -325,5 +315,48 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
             }
         }
         awaitClose { call.cancel(); job.cancel() }
+    }
+}
+
+/**
+ * Decodes one complete SSE event ([event]/[data] pair) into a [CinematicaApi.SearchEvent]. Null
+ * for an event name the client doesn't know, or a body that fails to decode as that event's shape
+ * — the same "silently drop it" outcome [CinematicaApi.searchStream]'s read loop always had.
+ */
+internal fun decodeSearchEvent(event: String, data: String): CinematicaApi.SearchEvent? = runCatching {
+    when (event) {
+        "found" -> CinematicaApi.SearchEvent.Found(json.decodeFromString(data))
+        "movie" -> CinematicaApi.SearchEvent.Movie(json.decodeFromString(data))
+        "done" -> CinematicaApi.SearchEvent.Done(json.decodeFromString(data))
+        "fail" -> CinematicaApi.SearchEvent.Fail(json.decodeFromString<Map<String, String>>(data)["err"])
+        else -> null
+    }
+}.getOrNull()
+
+/**
+ * Groups raw SSE [lines] into event/data pairs on each blank line and decodes them via
+ * [decodeSearchEvent], lazily so a live read loop can send each one the moment it is parsed rather
+ * than waiting for the whole response. Stops after the first terminal event ("done" or "fail"),
+ * the same early-exit [CinematicaApi.searchStream] applies to a live connection.
+ */
+internal fun parseSseSearchEvents(lines: Sequence<String>): Sequence<CinematicaApi.SearchEvent> = sequence {
+    var event: String? = null
+    var data: String? = null
+    for (line in lines) {
+        when {
+            line.startsWith("event:") -> event = line.removePrefix("event:").trim()
+            line.startsWith("data:") -> data = line.removePrefix("data:").trim()
+            line.isBlank() -> {
+                val ev = event; val dt = data
+                event = null; data = null
+                if (ev != null && dt != null) {
+                    val parsed = decodeSearchEvent(ev, dt)
+                    if (parsed != null) {
+                        yield(parsed)
+                        if (parsed is CinematicaApi.SearchEvent.Done || parsed is CinematicaApi.SearchEvent.Fail) return@sequence
+                    }
+                }
+            }
+        }
     }
 }
