@@ -5,6 +5,8 @@ import android.view.KeyEvent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.superthom196.cinematica.api.AppCmd
+import io.github.superthom196.cinematica.api.ChannelInfo
+import io.github.superthom196.cinematica.api.ChannelVideosResp
 import io.github.superthom196.cinematica.api.CinematicaApi
 import io.github.superthom196.cinematica.api.DISCOVERY_WINDOW_MS
 import io.github.superthom196.cinematica.api.FoundServer
@@ -31,6 +33,7 @@ import io.github.superthom196.cinematica.data.PinLock
 import io.github.superthom196.cinematica.data.Prefs
 import io.github.superthom196.cinematica.player.PlayStatus
 import io.github.superthom196.cinematica.player.AUDIO_LANGUAGES
+import io.github.superthom196.cinematica.player.ExternalLaunch
 import io.github.superthom196.cinematica.player.LipSync
 import io.github.superthom196.cinematica.player.PlayerEngine
 import io.github.superthom196.cinematica.player.PlayerState
@@ -162,6 +165,10 @@ data class UiState(
     /** After too many wrong PINs, no attempt counts until this wall-clock time (ms); 0 when not throttled. */
     val pinRetryAt: Long = 0L,
 )
+
+/** True once the server has a channels-capable provider set up and healthy — the Channels tab's gate. */
+val UiState.channelsReady: Boolean
+    get() = health?.providers?.roles?.get("channels")?.ready == true
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -310,6 +317,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // means to the server, and that is exactly the right answer when nobody is watching.
         if (foreground) {
             link.start()
+            // Coming back from the external app that played a channel's video: NEW badges and
+            // opened dims may have moved on the server while it had the screen.
+            val phase = _ui.value.phase
+            if ((phase is Phase.Library || phase is Phase.Detail) && library.state.value.kind == LibraryStore.KIND_CHANNEL) {
+                library.refreshShelf()
+            }
             return
         }
         // The lock re-arms every time the app leaves the screen: coming back from Home, or from the
@@ -645,6 +658,54 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { runCatching { api.setWatched(id, on, s, e) } }
     }
 
+    // ---- channels -------------------------------------------------------------
+    // Same optimistic shape as the shelf above: the grid's own copy changes first, through
+    // library.patchChannel, and the request follows it.
+
+    /** Follow/unfollow, from a channel tile or its own detail screen. Reverted on failure. */
+    fun followChannel(id: String, on: Boolean) {
+        library.patchChannel(id) { it.copy(followed = on, new = 0) }
+        viewModelScope.launch {
+            runCatching { api.followChannel(id, on) }
+                .onFailure {
+                    library.patchChannel(id) { it.copy(followed = !on) }
+                    toast("Couldn't ${if (on) "follow" else "unfollow"} that channel", isError = true)
+                }
+        }
+    }
+
+    /** Opening a channel's video list: clears its NEW badge, locally and on the server. */
+    fun channelSeen(id: String) {
+        library.patchChannel(id) { it.copy(new = 0) }
+        viewModelScope.launch { runCatching { api.channelSeen(id) } }
+    }
+
+    /** Marks one video opened (or not), after it was handed to the external app that plays it. */
+    fun setVideoOpened(id: String, video: String, on: Boolean) {
+        viewModelScope.launch {
+            runCatching { api.channelOpened(id, video, on) }
+                .onFailure { toast("Couldn't update that video", isError = true) }
+        }
+    }
+
+    /**
+     * Resolves a channel video's play link and hands it to the external app that plays it —
+     * Cinematica never plays a channel video itself. [onOpened] lets the caller mark the video
+     * opened once the external app has actually been launched, not merely resolved.
+     */
+    fun playChannelVideo(id: String, video: String, onOpened: () -> Unit = {}) {
+        viewModelScope.launch {
+            val resp = runCatching { api.channelPlay(id, video) }.getOrNull()
+            val play = resp?.play
+            if (resp?.ok == true && play != null) {
+                if (ExternalLaunch.open(getApplication(), play)) onOpened()
+                else toast("Needs ${play.label} installed to play this", isError = true)
+            } else {
+                toast(resp?.msg ?: "Could not play this", isError = true)
+            }
+        }
+    }
+
     /** Back out of Detail: to Search with its results intact if that's where it was opened from,
      *  otherwise to the grid. No search.open() call here — that would wipe the results just restored. */
     fun backFromDetail() {
@@ -679,6 +740,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** `/api/tv/{id}/season/{n}`: one season's episodes. */
     suspend fun tvSeason(id: String, n: Int): Result<SeasonResp> = runCatching { api.tvSeason(id, n) }
+
+    /** `/api/channel`: one wall item plus the ops this server's channel provider supports. */
+    suspend fun channel(id: String): Result<ChannelInfo> = runCatching { api.channel(id) }
+
+    /** `/api/channel/videos`; [page] null for the first page, `""` to continue where `next` left off. */
+    suspend fun channelVideos(id: String, page: String? = null): Result<ChannelVideosResp> =
+        runCatching { api.channelVideos(id, page) }
 
     /** SeriesDetailScreen has no other way at the autoplay-next setting. */
     suspend fun currentAutoplayNext(): Boolean = prefs.currentAutoplayNext()

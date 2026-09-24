@@ -44,6 +44,10 @@ data class LibraryState(
     val bias: Boolean = true,
     /** While the grid is empty and a request is out: what the server says it is doing. */
     val progress: ViewProgress? = null,
+    /** Channels only: channels not yet followed, offered as discovery below [movies]. */
+    val popular: List<Movie> = emptyList(),
+    /** Channels only: the `channel_ops` this server's channel provider supports. */
+    val channelOps: Set<String> = emptySet(),
 )
 
 /**
@@ -73,6 +77,11 @@ class LibraryStore(
          * start always lands on a pool, so a server with no shelf can never open on an empty wall.
          */
         const val KIND_FAV = "fav"
+
+        /** The fourth segment of the header switch: followed channels plus a discovery row. Like
+         *  [KIND_FAV] it is a place to visit, not a pool with genres of its own — but unlike it,
+         *  the choice is persisted, the same as "movie"/"tv". */
+        const val KIND_CHANNEL = "channel"
     }
 
     private val _state = MutableStateFlow(LibraryState())
@@ -107,8 +116,8 @@ class LibraryStore(
      */
     fun loadGenres() {
         val kind = _state.value.kind
-        // The watchlist is not a pool and has no genre menu of its own.
-        if (kind == KIND_FAV) return
+        // Neither the watchlist nor the channels list is a pool with a genre menu of its own.
+        if (kind == KIND_FAV || kind == KIND_CHANNEL) return
         scope.launch {
             val resp = withTimeoutOrNull(20_000) { runCatching { api.genres(kind) }.getOrNull() }
             val genres = resp?.genres.orEmpty().filter { it.id != null && it.name != null }
@@ -185,6 +194,7 @@ class LibraryStore(
     fun pump() {
         if (pumpJob?.isActive == true) return
         if (_state.value.kind == KIND_FAV) { pumpShelf(); return }
+        if (_state.value.kind == KIND_CHANNEL) { pumpChannels(); return }
         if (!needMore()) { drip(); return }
         val gen = loadGen
         pumpJob = scope.launch {
@@ -249,6 +259,38 @@ class LibraryStore(
     }
 
     /**
+     * Channels: one request for the lot, like the watchlist — the server does its own ranking of
+     * followed vs. discovery internally and hands back both at once, so there is no paging here
+     * either. [LibraryState.movies] ends up the followed channels, [LibraryState.popular] the
+     * discovery row beneath them.
+     */
+    private fun pumpChannels() {
+        if (_state.value.exhausted) return
+        val gen = loadGen
+        pumpJob = scope.launch {
+            _state.update { it.copy(loading = true, failed = false) }
+            val s = _state.value
+            val resp = runCatching { api.movies(0, 50, "top", emptySet(), emptySet(), KIND_CHANNEL, s.bias) }
+            if (gen != loadGen) return@launch
+            val value = resp.getOrNull()
+            if (value == null) {
+                _state.update { it.copy(loading = false, failed = true) }
+                return@launch
+            }
+            _state.update {
+                it.copy(
+                    movies = value.movies.orEmpty(),
+                    popular = value.popular,
+                    channelOps = value.channel_ops.toSet(),
+                    loading = false,
+                    exhausted = true,
+                    failed = false,
+                )
+            }
+        }
+    }
+
+    /**
      * A shelf change made elsewhere — the ♥ on a detail screen, a long-press on a tile. The grid's
      * own copy follows at once so the tile says what just happened without waiting for a page.
      */
@@ -259,12 +301,22 @@ class LibraryStore(
     }
 
     /**
+     * A channel change made elsewhere — follow/unfollow, or clearing a NEW badge once its videos
+     * have been seen. Applies to both [LibraryState.movies] (followed) and [LibraryState.popular]
+     * (discovery); when [transform] flips `followed`, the channel also moves to the list that now
+     * matches it, so a follow/unfollow shows up on the right row without waiting for a reload.
+     */
+    fun patchChannel(id: String, transform: (Movie) -> Movie) {
+        _state.update { applyChannelPatch(it, id, transform) }
+    }
+
+    /**
      * Back from a film: ask for the first page again — the server has just served it, so it is
      * cheap — and let its fresh `shelf` objects land on the tiles already on screen, with anything
      * newly pinned going in front. Never re-pages and never empties the grid.
      */
     fun refreshShelf() {
-        if (_state.value.kind == KIND_FAV) { reload(); return }
+        if (_state.value.kind == KIND_FAV || _state.value.kind == KIND_CHANNEL) { reload(); return }
         val gen = loadGen
         scope.launch {
             val s = _state.value
@@ -299,5 +351,31 @@ class LibraryStore(
         val row = ArrayList<Movie>(take)
         repeat(take) { row += pending.removeAt(0) }
         _state.update { it.copy(movies = it.movies + row) }
+    }
+}
+
+/**
+ * The pure half of [LibraryStore.patchChannel], pulled out so it can be covered by a plain JVM
+ * test without a [LibraryStore] (which needs a real [Prefs], and so a [android.content.Context]).
+ * A channel not found in either list leaves [state] untouched.
+ */
+internal fun applyChannelPatch(state: LibraryState, id: String, transform: (Movie) -> Movie): LibraryState {
+    val before = state.movies.firstOrNull { it.id == id } ?: state.popular.firstOrNull { it.id == id } ?: return state
+    val after = transform(before)
+    val wasFollowed = before.followed == true
+    val nowFollowed = after.followed == true
+    return when {
+        wasFollowed == nowFollowed -> state.copy(
+            movies = state.movies.map { if (it.id == id) after else it },
+            popular = state.popular.map { if (it.id == id) after else it },
+        )
+        nowFollowed -> state.copy(
+            movies = state.movies.filterNot { it.id == id } + after,
+            popular = state.popular.filterNot { it.id == id },
+        )
+        else -> state.copy(
+            movies = state.movies.filterNot { it.id == id },
+            popular = state.popular.filterNot { it.id == id } + after,
+        )
     }
 }

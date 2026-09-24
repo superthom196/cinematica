@@ -47,6 +47,7 @@ enum class StreamProbe { Pending, Answered, Unreachable }
 @Composable
 fun DetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     if (movie.kind == "tv") { SeriesDetailScreen(vm, ui, movie); return }
+    if (movie.kind == "channel") { ChannelDetailScreen(vm, ui, movie); return }
 
     val id = movie.id
     val playJob by vm.play.job.collectAsStateWithLifecycle()

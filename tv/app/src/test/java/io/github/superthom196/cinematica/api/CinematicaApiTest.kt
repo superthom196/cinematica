@@ -95,6 +95,26 @@ class CinematicaApiTest {
         assertEquals("/api/movies/progress?sort=top&genres=28&kind=tv&bias=1", q)
     }
 
+    @Test
+    fun `buildMoviesQuery and buildProgressQuery send kind=channel for the channels pool`() {
+        assertEquals(
+            "/api/movies?offset=0&limit=50&sort=top&kind=channel&bias=1",
+            buildMoviesQuery(0, 50, "top", emptySet(), emptySet(), kind = "channel"),
+        )
+        assertEquals(
+            "/api/movies/progress?sort=top&kind=channel&bias=1",
+            buildProgressQuery("top", emptySet(), emptySet(), "channel", true),
+        )
+    }
+
+    // ---- encodeQueryValue -------------------------------------------------------
+
+    @Test
+    fun `encodeQueryValue form-encodes a channel id's colon and space, unlike encodePathSegment`() {
+        assertEquals("cinemeta%3AUC1234", encodeQueryValue("cinemeta:UC1234"))
+        assertEquals("Some+Channel", encodeQueryValue("Some Channel"))
+    }
+
     // ---- decodeSearchEvent ------------------------------------------------------
 
     @Test

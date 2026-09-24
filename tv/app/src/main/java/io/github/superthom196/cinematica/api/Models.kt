@@ -95,6 +95,11 @@ data class Movie(
     val boost: Double? = null,
     val kind: String? = null,
     val shelf: Shelf? = null,
+    /** Channel wall items only: subscriber count, last upload time, follow state, unseen-upload count. */
+    val subscribers: Long? = null,
+    val latest_at: Long? = null,
+    val followed: Boolean? = null,
+    val new: Int? = null,
 )
 
 @Serializable
@@ -112,6 +117,10 @@ data class MoviesPage(
     val sort: String? = null,
     val checked: Int? = null,
     val pool: Int? = null,
+    /** Channel pool only: channels not yet followed, offered below the followed ones. */
+    val popular: List<Movie> = emptyList(),
+    val channel_ops: List<String> = emptyList(),
+    val err: String? = null,
 )
 
 /** `/api/movies/progress`: what a cold view is doing, for the ring over an empty grid. */
@@ -293,6 +302,14 @@ data class Health(
 data class ProvidersHealth(
     val configured: Boolean? = null,
     val message: String? = null,
+    val roles: Map<String, RoleHealth> = emptyMap(),
+)
+
+/** One role's provider assignment, keyed by role name ("catalogue", "channels", …) in [ProvidersHealth.roles]. */
+@Serializable
+data class RoleHealth(
+    val provider: String? = null,
+    val ready: Boolean? = null,
 )
 
 @Serializable
@@ -460,3 +477,78 @@ data class WatchedReq(val id: String, val on: Boolean, val s: Int? = null, val e
 
 @Serializable
 data class DropReq(val job: String)
+
+// ---- channels -----------------------------------------------------------
+
+/** One upload on `/api/channel/videos`. */
+@Serializable
+data class ChannelVideo(
+    val id: String? = null,
+    val title: String? = null,
+    /** Epoch seconds. */
+    val published: Long? = null,
+    val duration_s: Int? = null,
+    val thumb: String? = null,
+    val description: String? = null,
+    val views: Long? = null,
+    val opened: Boolean? = null,
+    val new: Boolean? = null,
+)
+
+/** `next == ""` means "there is more, ask again with an empty page token"; `null` means no more. */
+@Serializable
+data class ChannelVideosResp(
+    val videos: List<ChannelVideo> = emptyList(),
+    val next: String? = null,
+)
+
+/** `/api/channel`: one wall item plus the ops this server's channel provider supports. */
+@Serializable
+data class ChannelInfo(
+    val id: String? = null,
+    val kind: String? = null,
+    val title: String? = null,
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val overview: String? = null,
+    val subscribers: Long? = null,
+    val latest_at: Long? = null,
+    val followed: Boolean? = null,
+    val new: Int? = null,
+    val channel_ops: List<String> = emptyList(),
+)
+
+/** What `/api/channel/play` hands back: the link, which app should open it, and its name for a toast. */
+@Serializable
+data class ChannelPlay(
+    val url: String,
+    @SerialName("package") val pkg: String = "",
+    val label: String = "another app",
+)
+
+/** 502 (the external app's link could not be resolved) decodes the same shape, with `ok=false` and [msg]. */
+@Serializable
+data class ChannelPlayResp(
+    val ok: Boolean = false,
+    val play: ChannelPlay? = null,
+    val msg: String? = null,
+)
+
+/** `/api/channel/follow`: the channel's own wall item as the server now has it. */
+@Serializable
+data class ChannelFollowResp(
+    val ok: Boolean? = null,
+    val channel: Movie? = null,
+)
+
+@Serializable
+data class ChannelIdReq(val id: String)
+
+@Serializable
+data class ChannelFollowReq(val id: String, val on: Boolean)
+
+@Serializable
+data class ChannelOpenedReq(val id: String, val video: String, val on: Boolean)
+
+@Serializable
+data class ChannelPlayReq(val id: String, val video: String)

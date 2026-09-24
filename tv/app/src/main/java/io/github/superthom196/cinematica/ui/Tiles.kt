@@ -6,14 +6,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,11 +44,16 @@ fun MovieTile(
 ) {
     val pick: Pick? = movie.stream?.pick
     val isTv = movie.kind == "tv"
+    val isChannel = movie.kind == "channel"
     val shelf = movie.shelf
     // A pinned or saved tile is built from the server's stored snapshot, which carries no
     // stream, rating or quality at all. Unknown is not the same answer as "no stream".
     val snapshot = pick == null && shelf != null
     GridTile(onClick = onClick, onLongClick = onLongClick, modifier = modifier) { focused ->
+        if (isChannel) {
+            ChannelTile(movie)
+            return@GridTile
+        }
         Column(Modifier.padding(4.dp)) {
             Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
                 // Watched: the poster steps back so the wall reads as what is left to see. Under
@@ -109,6 +118,53 @@ fun MovieTile(
             }
         }
     }
+}
+
+/**
+ * A followed or discoverable channel, in place of the poster tile: there is no poster art for a
+ * channel, so the avatar stands in for it, on the frame's own surface colour rather than an image.
+ */
+@Composable
+private fun ChannelTile(movie: Movie) {
+    Column(Modifier.padding(4.dp)) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                .background(CinematicaColors.Surface, RoundedCornerShape(6.dp)),
+        ) {
+            Column(
+                Modifier.fillMaxSize().padding(top = 16.dp, start = 8.dp, end = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(Modifier.fillMaxWidth(0.64f).aspectRatio(1f).clip(CircleShape)) {
+                    PosterImage(movie.poster, Modifier.fillMaxSize(), corner = 0.dp)
+                }
+                VSpace(6.dp)
+                Text(
+                    movie.title.orEmpty(),
+                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val newCount = movie.new ?: 0
+            if (newCount > 0) {
+                NewBadge(newCount, Modifier.align(Alignment.TopStart).padding(3.dp))
+            }
+        }
+    }
+}
+
+/** The unseen-upload count on a followed channel's tile. Sits top-start, like the other badges. */
+@Composable
+private fun NewBadge(n: Int, modifier: Modifier = Modifier) {
+    Text(
+        "$n NEW",
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+        color = Color.White,
+        modifier = modifier
+            .background(CinematicaColors.Accent, RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 1.dp),
+    )
 }
 
 /** Marks a series tile. Sits before the quality badge when both apply. */

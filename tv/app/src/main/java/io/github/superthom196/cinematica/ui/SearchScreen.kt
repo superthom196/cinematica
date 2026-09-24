@@ -56,7 +56,10 @@ fun SearchScreen(vm: AppViewModel) {
             TvTextField(
                 state.query,
                 { vm.search.setQuery(it) },
-                placeholder = "Search for a movie…",
+                placeholder = if (kind == LibraryStore.KIND_CHANNEL) {
+                    if ("channels.search" in libraryState.channelOps) "Search channels, or paste a link or @handle"
+                    else "Paste a channel's link or @handle"
+                } else "Search for a movie…",
                 imeAction = ImeAction.Search,
                 onDone = { vm.search.search(kind = kind) },
                 modifier = Modifier.width(560.dp).focusRequester(field),

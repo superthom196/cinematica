@@ -31,9 +31,16 @@ internal fun encodePathSegment(id: String): String =
     java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20")
 
 /**
+ * A channel id ("some-provider:abc123") carries a colon too, but channel routes take it as a query
+ * value, not a path segment, so form encoding (space -> "+") is correct here and nothing is
+ * undone afterwards, unlike [encodePathSegment].
+ */
+internal fun encodeQueryValue(v: String): String = java.net.URLEncoder.encode(v, "UTF-8")
+
+/**
  * The `/api/movies` query string. [genres] and [exclude] are only appended when non-empty,
- * `kind=tv` only when [kind] is "tv", and `bias` is always said explicitly so the grid never
- * depends on the server's default.
+ * `kind=tv`/`kind=channel` only when [kind] says so, and `bias` is always said explicitly so the
+ * grid never depends on the server's default.
  */
 internal fun buildMoviesQuery(
     offset: Int,
@@ -49,7 +56,7 @@ internal fun buildMoviesQuery(
     append("&sort=").append(sort)
     if (genres.isNotEmpty()) append("&genres=").append(genres.joinToString(","))
     if (exclude.isNotEmpty()) append("&exclude=").append(exclude.joinToString(","))
-    if (kind == "tv") append("&kind=tv")
+    if (kind == "tv") append("&kind=tv") else if (kind == "channel") append("&kind=channel")
     append("&bias=").append(if (bias) 1 else 0)
 }
 
@@ -59,7 +66,7 @@ internal fun buildProgressQuery(sort: String, genres: Set<String>, exclude: Set<
         append("/api/movies/progress?sort=").append(sort)
         if (genres.isNotEmpty()) append("&genres=").append(genres.joinToString(","))
         if (exclude.isNotEmpty()) append("&exclude=").append(exclude.joinToString(","))
-        if (kind == "tv") append("&kind=tv")
+        if (kind == "tv") append("&kind=tv") else if (kind == "channel") append("&kind=channel")
         append("&bias=").append(if (bias) 1 else 0)
     }
 
@@ -261,6 +268,47 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
     suspend fun drop(job: String): OkResp =
         post(shortReadClient, "/api/shelf/drop", json.encodeToString(DropReq.serializer(), DropReq(job)))
 
+    // ---- channels -------------------------------------------------------------
+    // A channel id ("some-provider:abc123") always travels URL-encoded in the query string here, never
+    // the path, per encodeQueryValue's own note.
+
+    suspend fun channel(id: String): ChannelInfo =
+        get(shortReadClient, "/api/channel?id=${encodeQueryValue(id)}")
+
+    /** [page] null asks for the first page; `""` continues where a `next == ""` left off. */
+    suspend fun channelVideos(id: String, page: String? = null): ChannelVideosResp {
+        val pageParam = when (page) {
+            null -> ""
+            else -> "&page=${encodeQueryValue(page)}"
+        }
+        return get(shortReadClient, "/api/channel/videos?id=${encodeQueryValue(id)}$pageParam")
+    }
+
+    suspend fun followChannel(id: String, on: Boolean): ChannelFollowResp =
+        post(shortReadClient, "/api/channel/follow", json.encodeToString(ChannelFollowReq.serializer(), ChannelFollowReq(id, on)))
+
+    suspend fun channelSeen(id: String): OkResp =
+        post(shortReadClient, "/api/channel/seen", json.encodeToString(ChannelIdReq.serializer(), ChannelIdReq(id)))
+
+    suspend fun channelOpened(id: String, video: String, on: Boolean): OkResp =
+        post(
+            shortReadClient,
+            "/api/channel/opened",
+            json.encodeToString(ChannelOpenedReq.serializer(), ChannelOpenedReq(id, video, on)),
+        )
+
+    /**
+     * A 502 (the external app's link could not be resolved) decodes as [ChannelPlayResp] with
+     * `ok=false` and a [ChannelPlayResp.msg], the same allowNonSuccess contract as [play].
+     */
+    suspend fun channelPlay(id: String, video: String): ChannelPlayResp =
+        post(
+            shortReadClient,
+            "/api/channel/play",
+            json.encodeToString(ChannelPlayReq.serializer(), ChannelPlayReq(id, video)),
+            allowNonSuccess = true,
+        )
+
     /**
      * The lip-sync trim, in ms, positive when the sound should be heard later. Sent the moment the
      * viewer presses the key rather than waiting for the next heartbeat: the server hands it to the
@@ -289,7 +337,7 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
      */
     fun searchStream(q: String, limit: Int = 24, kind: String = "movie"): Flow<SearchEvent> = callbackFlow {
         val url = "$base/api/search/stream?q=${java.net.URLEncoder.encode(q, "UTF-8")}&limit=$limit" +
-            if (kind == "tv") "&kind=tv" else ""
+            if (kind == "tv") "&kind=tv" else if (kind == "channel") "&kind=channel" else ""
         val request = Request.Builder().url(url).get().build()
         val call = longReadClient.newCall(request)
 
