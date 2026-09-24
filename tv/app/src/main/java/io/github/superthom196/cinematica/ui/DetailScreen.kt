@@ -207,7 +207,7 @@ fun StreamLine(stream: StreamInfo?, probe: StreamProbe) {
         }
         if (!err.isNullOrBlank()) {
             add(err to CinematicaColors.Warn)
-            // A 403 is not this film's fault: the Mullvad exit has moved and everything is degraded.
+            // A 403 is not this film's fault: the provider is refusing this server's address, so everything is degraded.
             if (err.contains("403")) add("The server cannot reach the stream provider right now." to CinematicaColors.Warn)
         }
     }

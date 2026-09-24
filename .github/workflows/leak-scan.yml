@@ -1,0 +1,39 @@
+name: Leak Scan
+
+# server/deploy/package.sh refuses to build a tarball that names the author's
+# machine, home directory or hardware -- but it only sees server/, and only
+# when a release is cut. A comment in the TV app naming the home VPN sat in
+# the public tree for days that way. This runs the same patterns over every
+# tracked file on every push. Keep the list in step with package.sh's.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse identifying details in the tree
+        # package.sh and this file hold the patterns themselves, so they are
+        # the only two files left out.
+        run: |
+          fail=0
+          for pat in 'serverpi' '\bthom\b' '/home/thom' \
+                     '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' \
+                     'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.'; do
+            hits=$(git ls-files -z \
+                     | grep -zv -E '^(server/deploy/package\.sh|\.github/workflows/leak-scan\.yml)$' \
+                     | xargs -0 grep -EIni -- "$pat" || true)
+            if [ -n "$hits" ]; then
+              echo "::error::'$pat' appears in the tree:"
+              printf '%s\n' "$hits" | head -5
+              fail=1
+            fi
+          done
+          exit "$fail"
