@@ -57,7 +57,7 @@ need() {
 # own Python 3.12 venv, that install.sh sets up from deploy/install-sendspin.sh
 # and deploy/cinematica-sendspin.service.in. It must sit beside server.py --
 # the rendered unit's ExecStart is @DIR@/sendspin_bridge.py.
-for f in install.sh server.py browser_play.py sendspin_bridge.py index.html \
+for f in install.sh server.py browser_play.py shelf.py sendspin_bridge.py index.html \
          INSTALL.md README.md; do
     need "$SERVER_DIR/$f"
     cp -p "$SERVER_DIR/$f" "$ROOT/$f"
