@@ -92,6 +92,32 @@ jobs:
           tar tzf "dist/cinematica-server-${VERSION}.tar.gz" \
             | grep -qx 'cinematica-server/install.sh'
 
+      - name: Install the tarball on this clean runner and ask it for /api/health
+        # The tests import server.py from the checkout, where every module sits
+        # beside it, so they cannot see what install.sh leaves behind. v1.1.1
+        # and v1.2.0 passed every check here and installed a service that
+        # crash-looped on ModuleNotFoundError. This installs the built tarball the
+        # way INSTALL.md tells a stranger to, on a runner VM that has never had
+        # Cinematica on it, under the real systemd unit, and asks the running
+        # server for /api/health. Before the upload, so a failure publishes
+        # nothing. --skip-docker: the Stremio container is not under test here.
+        run: |
+          work=$(mktemp -d)
+          tar xzf "dist/cinematica-server-${VERSION}.tar.gz" -C "$work"
+          cd "$work/cinematica-server"
+          sudo ./install.sh --non-interactive --skip-docker --host 127.0.0.1
+          for i in $(seq 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8090/api/health; then
+              echo "/api/health answered after ${i}s."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the installed server never answered /api/health."
+          sudo systemctl status cinematica --no-pager || true
+          sudo journalctl -u cinematica --no-pager -n 80 || true
+          exit 1
+
       - name: Attach the tarball and its checksum to the release
         env:
           GH_TOKEN: ${{ github.token }}
