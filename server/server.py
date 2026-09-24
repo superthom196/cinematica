@@ -375,6 +375,22 @@ def rating_of(entry, name="imdb"):
     return (v, r.get("votes")) if v is not None else None
 
 
+def own_rating(entry):
+    """(value, votes) of the catalogue's own rating -- the first one it reports
+    that is not IMDb's -- else IMDb's, else None.
+
+    This is what `vote`/`votes` always meant to the clients: the catalogue's
+    number, shown on the detail pages and used by rank() when a title has no
+    IMDb rating. The contract files it under the catalogue's own name.
+    """
+    names = [n for n in ((entry or {}).get("ratings") or {}) if n != "imdb"]
+    for name in names + ["imdb"]:
+        r = rating_of(entry, name)
+        if r:
+            return r
+    return None
+
+
 def passes_rating_floor(entry):
     """Whether a title clears the quality floor for the balanced/recent sorts.
 
@@ -871,11 +887,13 @@ def tv_detail(tid):
             return e
     entry = gateway.details(tid, contract.KIND_SERIES)
     ext = entry.get("external_ids") or {}
+    tr = own_rating(entry)    # the series page's ★, as before providers
     e = {"at": time.time(), "id": entry.get("id"), "local_id": entry.get("local_id"),
          "kind": "tv",
          "title": entry.get("title"), "overview": entry.get("overview"),
          "tagline": entry.get("tagline"), "year": entry.get("year"),
          "runtime": entry.get("runtime"),
+         "vote": tr[0] if tr else None, "votes": tr[1] if tr else None,
          "first_air": entry.get("first_air"), "last_air": entry.get("last_air"),
          "status": entry.get("status"),
          "genres": entry.get("genres") or [],
@@ -905,10 +923,12 @@ def tv_season(tid, n):
         air = ep.get("air")
         if not air or air > today:
             continue
+        tr = own_rating(ep)   # each episode row's ★, as before providers
         episodes.append({"season": ep.get("season"), "episode": ep.get("episode"),
                           "name": ep.get("name"), "overview": ep.get("overview"),
                           "runtime": ep.get("runtime"), "air": air,
-                          "still": ep.get("still"), "ratings": ep.get("ratings") or {}})
+                          "still": ep.get("still"), "vote": tr[0] if tr else None,
+                          "ratings": ep.get("ratings") or {}})
     e = {"at": time.time(), "episodes": episodes}
     with _lock:
         _tvseason[key] = e
@@ -1137,7 +1157,7 @@ def build_pool(ids, sort="top", ex=None, kind="movie", bias=False, key=None, err
                     if r["id"] in in_block:
                         continue
                     in_block.add(r["id"])
-                    c = dict(r)
+                    c = _api_entry(r, kind)
                     c["home"] = home
                     block.append(c)
                     taken += 1
@@ -1173,6 +1193,44 @@ def view_key(genres=None, sort="top", exclude=None, kind="movie", bias=None):
     # bias: None means "the server's default" (BIAS)
     bias = BIAS if bias is None else bool(bias)
     return ids, ex, bias, _key(ids, sort, ex, kind, bias)
+
+def _api_entry(e, kind):
+    """A catalogue entry in the clients' vocabulary, which is the one they
+    were written against before providers were split out:
+
+      * kind "tv", not the contract's "series". Both the TV app and the web
+        page open the seasons-and-episodes page on kind == "tv"; given
+        "series" they opened every series as a film.
+      * vote/votes flat on the entry: the catalogue's own rating, which the
+        tiles show and rank() falls back to when there is no IMDb rating.
+        The contract files it by name under ratings, where no client looks.
+      * numeric genre ids as numbers: the TV's model is List<Int>, and the
+        contract turns every id into a string.
+    """
+    e = dict(e)
+    e["kind"] = kind
+    e["genre_ids"] = [int(g) if str(g).isdigit() else g for g in (e.get("genre_ids") or [])]
+    if e.get("vote") is None:
+        tr = own_rating(e)
+        if tr:
+            e["vote"], e["votes"] = tr
+    return e
+
+def _tile(m, r):
+    """Entry `m` plus its resolved stream entry `r`, as a wall/search tile.
+
+    A list entry has no IMDb id, so its IMDb rating comes from the details
+    get_stream()/get_stream_tv() fetched -- which is where the pre-provider
+    server took both from, too. Merged into m's ratings before anything reads
+    them, so the rating floor and rank() see the same numbers the tile shows.
+    """
+    m = dict(m)
+    m["ratings"] = dict(m.get("ratings") or {}, **(r.get("ratings") or {}))
+    ir = rating_of(m, "imdb")
+    m["imdb"] = {"rating": ir[0], "votes": ir[1],
+                 "id": (m.get("external_ids") or {}).get("imdb") or r.get("imdb_id")} if ir else None
+    m["stream"] = {"pick": r["pick"], "count": r.get("count"), "url": stream_url(r["pick"])}
+    return m
 
 def get_page(genres=None, offset=0, limit=None, sort="top", exclude=None, kind="movie", bias=None):
     """
@@ -1226,10 +1284,9 @@ def get_page(genres=None, offset=0, limit=None, sort="top", exclude=None, kind="
             st["cursor"] += len(chunk)
             if not chunk:
                 return
-            # entry=x: these candidates are already the catalogue's own
-            # normalised entries (title/year/runtime/external_ids and all),
-            # so get_stream()/get_stream_tv() build identity straight from
-            # them instead of a second details() round trip per candidate.
+            # entry=x: get_stream() builds the identity straight from the
+            # catalogue's own entry when it already carries the IMDb id and
+            # runtime, and fetches details when it does not.
             with ThreadPoolExecutor(max_workers=3) as ex:
                 if kind == "tv":
                     results = list(ex.map(lambda x: get_stream_tv(x["id"], 1, 1), chunk))
@@ -1238,6 +1295,7 @@ def get_page(genres=None, offset=0, limit=None, sort="top", exclude=None, kind="
             for m, r in zip(chunk, results):
                 if not r.get("pick"):
                     continue
+                m = _tile(m, r)
                 if sort in ("balanced", "recent") and not passes_rating_floor(m):
                     # a recency bonus must never be a route in for badly-rated
                     # films -- but passes_rating_floor() already lets a title
@@ -1245,11 +1303,6 @@ def get_page(genres=None, offset=0, limit=None, sort="top", exclude=None, kind="
                     # reports ratings at all cannot empty the whole pool the
                     # way a hard floor used to.
                     continue
-                m = dict(m)
-                m["stream"] = {"pick": r["pick"], "count": r["count"], "url": stream_url(r["pick"])}
-                ir = rating_of(m, "imdb")
-                m["imdb"] = {"rating": ir[0], "votes": ir[1],
-                             "id": (m.get("external_ids") or {}).get("imdb")} if ir else None
                 m["boost"] = round((recency_bonus(m.get("year")) if sort == "balanced" else 0)
                                    + (home_bonus(m) if bias else 0), 2)
                 st["buf"].append(m)
@@ -1368,12 +1421,7 @@ def search_movies(q, limit=24, on_found=None, on_movie=None, kind="movie"):
             for m, r in zip(chunk, ex.map(fn, chunk)):
                 if not r.get("pick"):
                     continue                  # unplayable: hidden, not shown greyed
-                m = dict(m)
-                m["stream"] = {"pick": r["pick"], "count": r.get("count"),
-                               "url": stream_url(r["pick"])}
-                ir = rating_of(m, "imdb")
-                m["imdb"] = {"rating": ir[0], "votes": ir[1],
-                             "id": (m.get("external_ids") or {}).get("imdb")} if ir else None
+                m = _tile(_api_entry(m, kind), r)
                 m["boost"] = 0
                 out.append(m)
                 if on_movie:
@@ -1396,7 +1444,18 @@ def get_stream(mid, force=False, entry=None):
         if e and not force and time.time() - e["at"] < entry_ttl(e):
             return e
     try:
-        det = entry if entry is not None else gateway.details(mid, contract.KIND_MOVIE)
+        det = entry
+        # A list entry stands in for the details only when it carries what the
+        # lookup needs: the IMDb id (the key a stream index is most likely to
+        # accept, and for some the only one) and the runtime (the bitrate
+        # check's divisor). A catalogue's browse and search results commonly
+        # carry neither, and trusting them sent every film to the streams
+        # provider id-less -- an empty wall, a Play that failed, and a
+        # calibration with nothing to measure. Before providers were split out,
+        # every film's details were fetched here.
+        if det is None or not (det.get("external_ids") or {}).get("imdb") \
+                or not det.get("runtime"):
+            det = gateway.details(mid, contract.KIND_MOVIE)
         ext = det.get("external_ids") or {}
         identity = {"id": mid, "local_id": det.get("local_id"), "kind": contract.KIND_MOVIE,
                     "title": det.get("title"), "year": det.get("year"),
@@ -1413,6 +1472,9 @@ def get_stream(mid, force=False, entry=None):
              "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
              "rejected": rejected,
              "imdb_id": ext.get("imdb"), "runtime": det.get("runtime"), "title": det.get("title"),
+             # A list entry has no IMDb id, so no IMDb rating either: the
+             # wall takes it from the details fetched here (_tile()).
+             "ratings": det.get("ratings") or {},
              "soft": True,
              "err": None if ranked else stream_miss(n, rejected)}
     except contract.ProviderError as ex:
@@ -1459,6 +1521,7 @@ def get_stream_tv(tid, s, e, force=False, entry=None):
                "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
                "rejected": rejected,
                "imdb_id": ext.get("imdb"), "runtime": runtime, "title": title,
+               "ratings": det.get("ratings") or {},
                "soft": True,
                "err": None if ranked else stream_miss(n, rejected),
                "kind": "tv", "season": s, "episode": e}
@@ -5370,12 +5433,14 @@ class H(BaseHTTPRequestHandler):
             if p.path.startswith("/api/movie/"):
                 tid = self._id(p.path.rsplit("/", 1)[-1])
                 d = gateway.details(tid, contract.KIND_MOVIE)
-                ir = rating_of(d, "imdb")
+                # The catalogue's own rating, as it always was here; the IMDb
+                # one is the tile's badge (imdb.rating), not this.
+                tr = own_rating(d)
                 return self._send(200, shelf.decorate({
                     "id": d.get("id"), "title": d.get("title"),
                     "tagline": d.get("tagline"), "overview": d.get("overview"),
-                    "runtime": d.get("runtime"), "vote": ir[0] if ir else None,
-                    "votes": ir[1] if ir else None, "release": d.get("release_date"),
+                    "runtime": d.get("runtime"), "vote": tr[0] if tr else None,
+                    "votes": tr[1] if tr else None, "release": d.get("release_date"),
                     # `year` as well as `release`: a provider may know a title's
                     # year without knowing its exact release date, and the grid
                     # shows the year. Deriving it from `release` on the client
