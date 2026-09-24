@@ -30,11 +30,11 @@ can install missing dependencies. A Sendspin player is optional.
 ### 1. Install the server
 
 Download the server archive and its checksum from
-[Releases](https://github.com/superthom196/cinematica/releases). For version 1.2.3:
+[Releases](https://github.com/superthom196/cinematica/releases). For version 1.2.4:
 
 ```bash
-sha256sum -c cinematica-server-1.2.3.tar.gz.sha256
-tar xzf cinematica-server-1.2.3.tar.gz
+sha256sum -c cinematica-server-1.2.4.tar.gz.sha256
+tar xzf cinematica-server-1.2.4.tar.gz
 cd cinematica-server
 sudo ./install.sh
 ```
