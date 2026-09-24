@@ -57,6 +57,10 @@ header{
   .controls{gap:.3rem}
   .controls button{padding:.4rem .45rem}
   .controls .wide{display:none}
+  /* a 4th pill button (Channels) is the tightest fit on a ~390px phone --
+     tighten the pill itself rather than truncate any of its labels */
+  .kwrap{gap:1px;padding:2px}
+  .kwrap button{padding:.35rem .4rem;font-size:.7rem}
 }
 .status{font-size:.72rem;color:var(--dim);white-space:nowrap;margin-left:auto}
 .dot{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;margin-right:.3rem;vertical-align:middle}
@@ -86,6 +90,20 @@ main{max-width:1180px;margin:0 auto}
 .rate{position:absolute;bottom:.25rem;right:.25rem;background:#000c;color:#fff;font-size:.62rem;
       padding:.1rem .3rem;border-radius:4px;font-weight:700;font-variant-numeric:tabular-nums}
 .rate .bo{color:#7dd3fc;font-weight:600}
+/* Channel tiles: no poster art exists, so a circular avatar plus the title
+   fill the same frame a movie poster would occupy. */
+.chposter{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:.5rem;padding:.6rem .5rem;text-align:center}
+.chposter .chavatar{width:58%;max-width:5rem;aspect-ratio:1/1;border-radius:50%;
+  object-fit:cover;display:block}
+.chposter .chavatar-blank{background:var(--line)}
+.chposter .cht{font-size:.72rem;font-weight:600;line-height:1.25;color:var(--text);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+/* the divider between followed channels and the popular list beneath them --
+   spans every column, so it needs the grid itself, not a card */
+.chsection{grid-column:1/-1;font-size:.72rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--dim);padding:.6rem 0 .1rem;border-top:1px solid var(--line);
+  margin-top:.3rem}
 .meta{padding:.35rem .4rem .45rem;display:flex;flex-direction:column;gap:.1rem;min-width:0}
 .t{font-size:.7rem;font-weight:600;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;
    -webkit-box-orient:vertical;overflow:hidden}
@@ -240,6 +258,15 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 #mfav{white-space:nowrap}
 #mfav.on{background:var(--accent);color:#fff;border-color:transparent}
 #mstart{color:var(--dim);background:transparent}
+/* the channel video list reuses .eprow's row/hover/sel/watched(=opened) look,
+   plus a thumbnail and a static (non-poster) badge */
+.chvidrow{display:flex;align-items:center;gap:.6rem}
+.chvidrow .vthumb{width:5rem;flex:none;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:var(--line)}
+.chvidrow .vinfo{flex:1;min-width:0}
+.chvidrow .vt{font-size:.82rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.chvidrow .vm{font-size:.72rem;color:var(--dim);margin-top:.15rem}
+.chvidrow .badge{position:static;flex:none}
 #mclose{position:absolute;top:.6rem;right:.6rem;z-index:2;background:#000a;color:#fff;border:none;
   border-radius:999px;width:2rem;height:2rem;font-size:1rem;line-height:1}
 /* ---- provider settings / setup ---- */
@@ -304,6 +331,7 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
     <h1>Cinematica</h1>
   </div>
   <div class="kwrap"><button id="kmovie" class="on">Movies</button><button id="ktv">Series</button>
+    <button id="kchan" hidden>Channels</button>
     <button id="kfav" title="Watchlist" aria-label="Watchlist">&#9829;</button></div>
   <div class="controls">
     <button id="qbtn" title="Search">&#128269;<span class="wide"> Search</span></button>
@@ -442,6 +470,17 @@ function render(list, append){
   if(!append) grid.innerHTML='';
   (list||movies).forEach(m=>{
     const c=document.createElement('div'); c.className='card';
+    if(m.kind==='channel'){
+      c.innerHTML=`<div class="poster chposter">${m.poster?`<img loading="lazy" class="chavatar" src="${esc(m.poster)}" alt="">`:'<div class="chavatar chavatar-blank"></div>'}
+          <div class="cht">${esc(m.title)}</div>
+          <span class="badge" id="b${m.id}" hidden></span></div>`;
+      c.onclick=()=>openModal(m);
+      grid.appendChild(c);
+      const poster=c.querySelector('.poster');
+      tiles.set(String(m.id), {el:c, poster, m});
+      paint(m);
+      return;
+    }
     const rate = m.imdb ? `<span class="rate">${m.imdb.rating.toFixed(1)}${m.boost?`<span class="bo"> +${m.boost.toFixed(1)}</span>`:''}</span>` : '';
     const tv = m.kind==='tv' ? '<span class="badge tvbadge">TV</span>' : '';
     c.innerHTML=`<div class="poster">${m.poster?`<img loading="lazy" src="${esc(m.poster)}" alt="">`:''}
@@ -492,7 +531,8 @@ const ROWS_AHEAD=3;   // how many rows to keep buffered beyond what is on screen
 const gbtn=document.getElementById('gbtn'), gmenu=document.getElementById('gmenu'),
       gcount=document.getElementById('gcount');
 const sbtn=document.getElementById('sbtn'), smenu=document.getElementById('smenu');
-const kmovie=document.getElementById('kmovie'), ktv=document.getElementById('ktv'), kfav=document.getElementById('kfav');
+const kmovie=document.getElementById('kmovie'), ktv=document.getElementById('ktv'),
+      kchan=document.getElementById('kchan'), kfav=document.getElementById('kfav');
 const npdot=document.getElementById('npdot'), nptext=document.getElementById('nptext');
 
 // The bar carried no state at all, so there was no way to tell what the TV was
@@ -507,6 +547,16 @@ setInterval(pollNowPlaying, 6000);
 
 /* every film in the list is already known-playable, so paint from its data */
 function paint(m){
+  if(m.kind==='channel'){
+    // No stream to check -- the one badge slot instead carries the unseen-
+    // uploads count, cleared once the channel has been opened.
+    const b=document.getElementById('b'+m.id);
+    if(b){
+      if(m.new>0){ b.hidden=false; b.textContent=m.new+' NEW'; b.classList.remove('k4'); }
+      else { b.hidden=true; b.textContent=''; }
+    }
+    return;
+  }
   const d = m.stream ? {pick:m.stream.pick, count:m.stream.count, url:m.stream.url}
                      : streamCache[m.id];
   const s=document.getElementById('s'+m.id), b=document.getElementById('b'+m.id);
@@ -627,6 +677,51 @@ async function loadWatchlist(){
   }
 }
 
+// The channels tab: followed channels (server-sorted, new uploads first),
+// then a full-width "Popular" divider and the popular list, if there is one.
+// Self-contained (clears/rebuilds the grid itself) because it is also called
+// to refresh the wall after a follow/unfollow inside the modal, not only on
+// tab switch.
+let lastChannelOps=[];
+async function loadChannels(){
+  const lm=document.getElementById('loadmore');
+  exhausted=true;
+  const gen=loadGen;
+  grid.innerHTML=''; movies=[]; seenIds=new Set(); tiles.clear();
+  lm.textContent='Loading channels\u2026';
+  try{
+    const d=await (await fetch('/api/movies?kind=channel')).json();
+    if(gen!==loadGen) return;
+    lastChannelOps=d.channel_ops||[];
+    const followed=(d.movies||[]).map(x=>{ x.kind='channel'; return x; });
+    const popular=(d.popular||[]).map(x=>{ x.kind='channel'; return x; });
+    if(!followed.length && !popular.length){
+      lm.textContent = lastChannelOps.includes('channels.search')
+        ? 'Search to find a channel and follow it'
+        : 'Paste a channel\u2019s link or @handle into Search to follow it';
+      return;
+    }
+    movies=followed.concat(popular);
+    followed.forEach(x=>seenIds.add(x.id));
+    render(followed,false);
+    if(popular.length){
+      const h=document.createElement('div');
+      h.className='chsection'; h.textContent='Popular';
+      grid.appendChild(h);
+      popular.forEach(x=>seenIds.add(x.id));
+      render(popular,true);
+    }
+    lm.textContent='';
+    const total=followed.length+popular.length;
+    msg.textContent=total+' channel'+(total===1?'':'s');
+  }catch(e){
+    // old server / no route yet: same guidance as "nothing followed"
+    if(gen!==loadGen) return;
+    lastChannelOps=[];
+    lm.textContent='Paste a channel\u2019s link or @handle into Search to follow it';
+  }
+}
+
 function drip(){
   const c=cols();
   // Hold back a short row unless the list is genuinely finished. Requests ask
@@ -713,15 +808,17 @@ function loadGenres(){
     .catch(()=>{ /* menu stays empty; the grid does not depend on it */ });
 }
 
-/* ---------- Movies / Series / Watchlist toggle ---------- */
+/* ---------- Movies / Series / Channels / Watchlist toggle ---------- */
+let channelsReady=false;   // answered once by checkChannelsHealth(), below
 function syncKindUI(){
   kmovie.classList.toggle('on', kind==='movie');
   ktv.classList.toggle('on', kind==='tv');
+  kchan.classList.toggle('on', kind==='channel');
   kfav.classList.toggle('on', kind==='fav');
-  // Sort/Genres make no sense against the watchlist -- disabling (rather
-  // than a new dimmed-but-clickable style) reuses the existing button:disabled
-  // look and, for free, stops the menus from opening at all.
-  sbtn.disabled = gbtn.disabled = (kind==='fav');
+  // Sort/Genres make no sense against the watchlist or the channel wall --
+  // disabling (rather than a new dimmed-but-clickable style) reuses the
+  // existing button:disabled look and, for free, stops the menus opening.
+  sbtn.disabled = gbtn.disabled = (kind==='fav' || kind==='channel');
 }
 function setKind(k){
   if(k===kind) return;
@@ -739,16 +836,46 @@ function setKind(k){
     loadWatchlist();
     return;
   }
+  if(k==='channel'){
+    smenu.classList.remove('open'); gmenu.classList.remove('open');
+    document.getElementById('loadmore').textContent='Loading channels…';
+    loadChannels();
+    return;
+  }
   document.getElementById('loadmore').textContent = kind==='tv' ? 'Finding series…' : 'Finding movies…';
   loadGenres();
   fetchRow().then(pump);
 }
 kmovie.onclick=()=>setKind('movie');
 ktv.onclick=()=>setKind('tv');
+kchan.onclick=()=>setKind('channel');
 kfav.onclick=()=>setKind('fav');
 syncKindUI();
 if(kind==='tv') document.getElementById('loadmore').textContent='Finding series…';
 else if(kind==='fav') document.getElementById('loadmore').textContent='Loading your watchlist…';
+else if(kind==='channel') document.getElementById('loadmore').textContent='Loading channels…';
+
+// /api/health carries providers.roles.channels.ready. The tab is shown the
+// moment that answers true, or immediately (optimistically) if a saved kind
+// of 'channel' is what the page opened to -- corrected back to 'movie' here
+// if that turns out to be stale (the role was removed since the last visit).
+// Called once from init, before anything is fetched for the chosen kind --
+// see the init IIFE at the bottom of the file.
+if(kind==='channel') kchan.hidden=false;
+async function checkChannelsHealth(){
+  try{
+    const d=await (await fetch('/api/health', withTimeout(8000))).json();
+    const ch=(d.providers && d.providers.roles && d.providers.roles.channels) || {};
+    channelsReady=!!ch.ready;
+  }catch(e){ channelsReady=false; }
+  kchan.hidden=!(channelsReady || kind==='channel');
+  if(kind==='channel' && !channelsReady){
+    kind='movie';
+    try{ localStorage.setItem(KKEY,kind); }catch(e){}
+    syncKindUI();
+    kchan.hidden=true;
+  }
+}
 
 /* ---------- link assessment ---------- */
 const nbtn=document.getElementById('nbtn');
@@ -843,6 +970,13 @@ const sov=document.getElementById('sov'), sq=document.getElementById('sq'),
 // sitting on the grid behind this overlay.
 function searchCard(m){
   const c=document.createElement('div'); c.className='card';
+  if(m.kind==='channel'){
+    c.innerHTML=`<div class="poster chposter">${m.poster?`<img loading="lazy" class="chavatar" src="${esc(m.poster)}" alt="">`:'<div class="chavatar chavatar-blank"></div>'}
+        <div class="cht">${esc(m.title)}</div>
+        ${m.new>0?`<span class="badge">${m.new} NEW</span>`:''}</div>`;
+    c.onclick=()=>{ closeSearch(); openModal(m); };
+    return c;
+  }
   const p=m.stream&&m.stream.pick;
   const rate=m.imdb?`<span class="rate">${m.imdb.rating.toFixed(1)}</span>`:'';   // imdb can be null
   const badge=p?`<span class="badge${p.is4k?' k4':''}">${esc(p.is4k?'4K':(p.tag||'HD'))}</span>`:'';
@@ -859,7 +993,10 @@ function searchCard(m){
 }
 function openSearch(){
   sov.classList.add('open'); sq.value=''; sgrid.innerHTML='';
-  sq.placeholder = kind==='tv' ? 'Search for a series\u2026' : 'Search for a movie\u2026';
+  sq.placeholder = kind==='tv' ? 'Search for a series\u2026'
+    : kind==='channel' ? (lastChannelOps.includes('channels.search')
+        ? 'Search channels, or paste a link or @handle' : 'Paste a channel\u2019s link or @handle')
+    : 'Search for a movie\u2026';
   sstat.textContent='Search a title, a franchise (\u201cjames bond\u201d), or a person.';
   setTimeout(()=>sq.focus(),50);
 }
@@ -875,7 +1012,8 @@ function doSearch(){
   // Results are streamed in as each one resolves: a cold franchise search
   // checks ~60 candidates through the stream provider and takes ~25s, but the first
   // playable film lands in about one.
-  es=new EventSource('/api/search/stream?q='+encodeURIComponent(q)+'&limit=30'+(kind==='tv'?'&kind=tv':''));
+  es=new EventSource('/api/search/stream?q='+encodeURIComponent(q)+'&limit=30'
+    +(kind==='tv'?'&kind=tv':kind==='channel'?'&kind=channel':''));
   const stale=()=>gen!==searchGen;
   es.addEventListener('found',e=>{
     if(stale()) return;
@@ -989,8 +1127,11 @@ async function openModal(m){
   mepisodes.hidden=true; mepisodes.innerHTML='';
   const sd=document.getElementById('mstream');
   const mp=document.getElementById('mplay');
+  mfav.onclick=toggleFav; mfav.disabled=false;   // openChannel repoints this for a channel
   paintFavButton(m.shelf);
   mstart.hidden=true; mstart.onclick=null;   // reset each open; series never shows it
+
+  if(m.kind==='channel'){ openChannel(m); return; }
 
   if(m.kind==='tv'){
     sd.innerHTML=''; mp.disabled=true; mp.onclick=null;
@@ -1061,6 +1202,159 @@ async function openModal(m){
         applyFilmResumeUI();   // the stream check above just replaced mp's handlers
       }
     }catch(e){ sd.innerHTML='<b>Could not check this one.</b>'; }
+  }
+}
+
+/* ---------- channel modal ---------- */
+let modalChannel=null, channelVideoGen=0, channelNextPage=null, channelVideoList=[];
+
+function chCount(n){
+  if(n==null) return null;
+  if(n>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';
+  if(n>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';
+  return String(n);
+}
+function chAgo(t){
+  if(!t) return '';
+  const s=Math.max(0, Date.now()/1000-t);
+  const d=Math.floor(s/86400); if(d>0) return d+' day'+(d===1?'':'s')+' ago';
+  const h=Math.floor(s/3600); if(h>0) return h+' hour'+(h===1?'':'s')+' ago';
+  const mi=Math.floor(s/60); if(mi>0) return mi+' minute'+(mi===1?'':'s')+' ago';
+  return 'just now';
+}
+function chMin(s){ return s==null ? '' : Math.round(s/60)+' min'; }
+
+function paintChannelFollow(followed){
+  mfav.classList.toggle('on', !!followed);
+  mfav.textContent = followed ? '✓ Following' : '+ Follow';
+  mfav.title = followed ? 'Following — click to unfollow' : 'Follow this channel';
+}
+async function toggleChannelFollow(){
+  const m=modalChannel; if(!m) return;
+  const on=!m.followed;
+  mfav.disabled=true;
+  try{
+    const r=await fetch('/api/channel/follow',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:m.id, on})});
+    const d=await r.json();
+    if(d && d.ok && d.channel){
+      m.followed=d.channel.followed; m.new=d.channel.new;
+      paintChannelFollow(m.followed);
+      if(kind==='channel') loadChannels();   // refresh the wall behind the modal
+    } else notify('Could not update follow status.', true);
+  }catch(e){ notify('Could not update follow status.', true); }
+  finally{ mfav.disabled=false; }
+}
+
+function paintChannelVideoRow(row, v){
+  row.classList.toggle('watched', !!v.opened);   // .eprow's dim, reused for "opened"
+}
+async function toggleChannelVideoOpened(v, row){
+  const m=modalChannel; if(!m) return;
+  const on=!v.opened;
+  try{
+    const r=await fetch('/api/channel/opened',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:m.id, video:v.id, on})});
+    const d=await r.json();
+    if(!d || !d.ok) return;
+    v.opened=on;
+    paintChannelVideoRow(row, v);
+  }catch(e){ /* degrade silently, matching toggleEpisodeWatched */ }
+}
+function selectChannelVideo(v, row){
+  const mp=document.getElementById('mplay');
+  mepisodes.querySelectorAll('.chvidrow').forEach(r=>r.classList.toggle('sel', r===row));
+  mp.disabled=false; mp.textContent='Play';
+  mp.onclick=()=>playChannelVideo(v, row);
+}
+async function playChannelVideo(v, row){
+  const m=modalChannel; if(!m) return;
+  const mp=document.getElementById('mplay');
+  mp.disabled=true;
+  try{
+    const r=await fetch('/api/channel/play',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:m.id, video:v.id})});
+    const d=await r.json();
+    if(d && d.ok && d.play && d.play.url){
+      window.open(d.play.url, '_blank', 'noopener');
+      v.opened=true;
+      if(row) paintChannelVideoRow(row, v);
+      fetch('/api/channel/opened',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:m.id, video:v.id, on:true})}).catch(()=>{});
+    } else notify('Could not play this video'+(d&&d.msg?': '+d.msg:'.'), true);
+  }catch(e){ notify('Could not play this video.', true); }
+  finally{ mp.disabled=false; }
+}
+function renderChannelVideos(videos, append){
+  videos.forEach(v=>{
+    const row=document.createElement('div');
+    row.className='eprow chvidrow';
+    row.innerHTML=`${v.thumb?`<img class="vthumb" loading="lazy" src="${esc(v.thumb)}" alt="">`:'<div class="vthumb"></div>'}
+      <div class="vinfo"><div class="vt">${esc(v.title)}</div>
+      <div class="vm">${esc(chAgo(v.published))}${v.duration_s?' · '+esc(chMin(v.duration_s)):''}</div></div>
+      ${v.new?'<span class="badge">NEW</span>':''}`;
+    paintChannelVideoRow(row, v);
+    let held=false, holdTimer=null;
+    const startHold=()=>{ held=false; holdTimer=setTimeout(()=>{ held=true; toggleChannelVideoOpened(v,row); },550); };
+    const cancelHold=()=>clearTimeout(holdTimer);
+    row.addEventListener('touchstart', startHold, {passive:true});
+    ['touchend','touchmove','touchcancel'].forEach(ev=>row.addEventListener(ev, cancelHold));
+    row.oncontextmenu=ev=>{ ev.preventDefault(); toggleChannelVideoOpened(v,row); };
+    row.onclick=()=>{ if(held){ held=false; return; } selectChannelVideo(v,row); };
+    mepisodes.appendChild(row);
+  });
+  const oldMore=mepisodes.querySelector('.chmore'); if(oldMore) oldMore.remove();
+  if(channelNextPage!=null){
+    const b=document.createElement('button');
+    b.className='chmore'; b.textContent='More videos';
+    b.style.cssText='width:100%;margin-top:.4rem';
+    b.onclick=()=>loadChannelVideos(true);
+    mepisodes.appendChild(b);
+  }
+}
+async function loadChannelVideos(append){
+  const m=modalChannel; if(!m) return;
+  const gen=++channelVideoGen;
+  if(!append){
+    channelNextPage=null; channelVideoList=[];
+    mepisodes.innerHTML='<div style="padding:.6rem;color:var(--dim);font-size:.8rem">Loading videos…</div>';
+  }
+  let q='?id='+encodeURIComponent(m.id);
+  if(append) q += '&page='+encodeURIComponent(channelNextPage||'');
+  try{
+    const d=await (await fetch('/api/channel/videos'+q)).json();
+    if(gen!==channelVideoGen || !modalChannel || modalChannel.id!==m.id) return;
+    const vids=d.videos||[];
+    if(!append) mepisodes.innerHTML='';
+    channelVideoList=channelVideoList.concat(vids);
+    channelNextPage=(d.next===undefined) ? null : d.next;
+    renderChannelVideos(vids, append);
+    if(!channelVideoList.length) mepisodes.innerHTML='<div style="padding:.6rem;color:var(--dim);font-size:.8rem">No videos yet.</div>';
+  }catch(e){
+    if(gen===channelVideoGen && !append) mepisodes.innerHTML='<div style="padding:.6rem;color:var(--bad);font-size:.8rem">Could not load videos.</div>';
+  }
+}
+async function openChannel(m){
+  modalChannel=m; channelVideoList=[]; channelNextPage=null;
+  mfav.onclick=toggleChannelFollow; mfav.disabled=false;
+  paintChannelFollow(!!m.followed);
+  const sub=chCount(m.subscribers);
+  document.getElementById('mchips').innerHTML = sub ? `<span class="chip">${esc(sub)} subscribers</span>` : '';
+  document.getElementById('mstream').innerHTML='';
+  const mp=document.getElementById('mplay');
+  mp.disabled=true; mp.textContent='Play'; mp.onclick=null;
+  mepisodes.hidden=false; mepisodes.innerHTML='';
+  loadChannelVideos(false);
+  if(m.followed){
+    try{
+      await fetch('/api/channel/seen',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:m.id})});
+    }catch(e){}
+    m.new=0;
+    const b=document.getElementById('b'+m.id);
+    if(b){ b.hidden=true; b.textContent=''; }
+    const idx=movies.findIndex(x=>String(x.id)===String(m.id));
+    if(idx>=0) movies[idx].new=0;
   }
 }
 
@@ -2078,8 +2372,10 @@ document.getElementById('stop').onclick=async()=>{
   refreshNet();                      // below, so the grid never appears half-working
   pollNowPlaying();
   await setupCheck;
+  await checkChannelsHealth();   // may flip a stale saved 'channel' kind back to 'movie'
   if(setupConfigured){
     if(kind==='fav') await loadWatchlist();
+    else if(kind==='channel') await loadChannels();
     else { loadGenres(); await fetchRow(); pump(); }   // honours any saved genre selection
   }
   new IntersectionObserver(es=>{
