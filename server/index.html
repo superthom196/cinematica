@@ -61,6 +61,12 @@ header{
      tighten the pill itself rather than truncate any of its labels */
   .kwrap{gap:1px;padding:2px}
   .kwrap button{padding:.35rem .4rem;font-size:.7rem}
+  /* ...and the wordmark gives up a little, or the pill drops under it */
+  .brand h1{font-size:1.15rem}
+}
+@media(max-width:380px){
+  .brand h1{font-size:1rem}
+  .kwrap button{padding:.32rem .32rem;font-size:.66rem}
 }
 .status{font-size:.72rem;color:var(--dim);white-space:nowrap;margin-left:auto}
 .dot{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;margin-right:.3rem;vertical-align:middle}
@@ -94,7 +100,7 @@ main{max-width:1180px;margin:0 auto}
    fill the same frame a movie poster would occupy. */
 .chposter{display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:.5rem;padding:.6rem .5rem;text-align:center}
-.chposter .chavatar{width:58%;max-width:5rem;aspect-ratio:1/1;border-radius:50%;
+.chposter .chavatar{width:58%;max-width:5rem;height:auto;aspect-ratio:1/1;border-radius:50%;
   object-fit:cover;display:block}
 .chposter .chavatar-blank{background:var(--line)}
 .chposter .cht{font-size:.72rem;font-weight:600;line-height:1.25;color:var(--text);
@@ -230,6 +236,10 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
 .mhero{position:relative;aspect-ratio:16/7;background:#0004;overflow:hidden}
 .mhero img{width:100%;height:100%;object-fit:cover;display:block;opacity:.85}
 .mhero .fade{position:absolute;inset:0;background:linear-gradient(to top,var(--card),transparent 65%)}
+/* a channel with no banner: its avatar, small and round, not stretched across the hero */
+.mhero.chnobanner{aspect-ratio:auto;height:8rem;background:transparent}
+.mhero.chnobanner img{width:6rem;height:6rem;border-radius:50%;margin:1.2rem auto 0;opacity:1}
+.mhero.chnobanner .fade{display:none}
 .mbody{padding:0 1.25rem 1.25rem;margin-top:-2.5rem;position:relative}
 .mtitle{font-size:1.4rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
 .mtag{color:var(--dim);font-style:italic;font-size:.85rem;margin-top:.2rem}
@@ -752,7 +762,7 @@ function pump(){
   if(!exhausted && !loading && pending.length < cols()*ROWS_AHEAD)
     fetchRow().then(()=>{ if(pending.length) pump(); });
   lm.textContent = (exhausted && !pending.length)
-    ? (movies.length ? `End of the list · ${movies.length} ${kind==='tv'?'series':'movies'}`
+    ? (movies.length ? `End of the list · ${movies.length} ${kind==='tv'?'series':kind==='channel'?(movies.length===1?'channel':'channels'):'movies'}`
                      : 'Nothing playable found — try a different sort or fewer genres.')
     : (movies.length ? '' : (kind==='tv'?'Finding series…':'Finding movies…'));
 }
@@ -1120,6 +1130,7 @@ async function openModal(m){
   document.getElementById('mtag').textContent='';
   document.getElementById('mover').textContent=m.overview||'';
   document.getElementById('mimg').src = m.backdrop || m.poster || '';
+  document.querySelector('.mhero').classList.toggle('chnobanner', m.kind==='channel' && !m.backdrop);
   document.getElementById('mchips').innerHTML =
     [m.year, m.vote?'★ '+m.vote.toFixed(1)+(m.votes?` (${m.votes})`:''):''].filter(Boolean)
     .map(t=>`<span class="chip">${esc(t)}</span>`).join('');
