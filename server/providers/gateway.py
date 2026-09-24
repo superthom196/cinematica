@@ -538,6 +538,14 @@ def check_admin_password(password):
     return store.check_admin_password(password)
 
 
+def login_wait(client):
+    return store.login_wait(client)
+
+
+def note_login(client, ok):
+    store.note_login(client, ok)
+
+
 def new_session():
     return store.new_session()
 

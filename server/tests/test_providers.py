@@ -484,5 +484,34 @@ class ConfiguredUrlMaskingTest(_StateIsolatedTestCase):
         self.assertEqual(contract.mask_url("package"), "package")
 
 
+class LoginThrottleTest(unittest.TestCase):
+    def setUp(self):
+        store._login_fails.clear()
+
+    def tearDown(self):
+        store._login_fails.clear()
+
+    def test_first_misses_are_free(self):
+        for _ in range(store._LOGIN_FREE - 1):
+            store.note_login("10.0.0.9", False)
+        self.assertEqual(store.login_wait("10.0.0.9"), 0)
+
+    def test_backoff_after_free_misses_and_only_for_that_client(self):
+        for _ in range(store._LOGIN_FREE + 3):
+            store.note_login("10.0.0.9", False)
+        self.assertGreater(store.login_wait("10.0.0.9"), 0)
+        self.assertEqual(store.login_wait("10.0.0.10"), 0)
+
+    def test_wait_is_capped(self):
+        store._login_fails["10.0.0.9"] = (store._LOGIN_FREE + 60, store.time.time())
+        self.assertLessEqual(store.login_wait("10.0.0.9"), store._LOGIN_MAX_WAIT)
+
+    def test_success_clears_the_record(self):
+        for _ in range(store._LOGIN_FREE + 3):
+            store.note_login("10.0.0.9", False)
+        store.note_login("10.0.0.9", True)
+        self.assertEqual(store.login_wait("10.0.0.9"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

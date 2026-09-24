@@ -5945,8 +5945,15 @@ class H(BaseHTTPRequestHandler):
                     return self._send(400, {"ok": False, "err": "invalid or already-used setup token"})
                 return self._send(200, {"ok": True})
             if p.path == "/api/admin/login":
+                client = self.client_address[0]
+                wait = gateway.login_wait(client)
+                if wait:
+                    return self._send(429, {"ok": False, "err": "too many attempts",
+                                            "retry_after": wait})
                 password = d.get("password")
-                if not password or not gateway.check_admin_password(str(password)):
+                ok = bool(password) and gateway.check_admin_password(str(password))
+                gateway.note_login(client, ok)
+                if not ok:
                     return self._send(401, {"ok": False, "err": "admin required"})
                 tok = gateway.new_session()
                 csrf = gateway.csrf_for(tok)

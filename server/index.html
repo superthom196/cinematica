@@ -1757,7 +1757,7 @@ function renderLoginForm(root){
     try{
       const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
       const d=await r.json();
-      if(!d.ok){ m.textContent=d.err||'Incorrect password.'; m.className='msgline err'; return; }
+      if(!d.ok){ m.textContent=d.retry_after?'Too many attempts. Try again in '+d.retry_after+' s.':(d.err||'Incorrect password.'); m.className='msgline err'; return; }
       apiSession=d.csrf; paintSettings();
     }catch(e){ m.textContent='Request failed: '+e; m.className='msgline err'; }
   };

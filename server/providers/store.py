@@ -315,3 +315,38 @@ def check_session(tok):
 def drop_session(tok):
     with _lock:
         _sessions.pop(tok, None)
+
+
+# ---- login throttle ---------------------------------------------------------
+# Per client address, in memory. Scrypt alone makes a guess cost ~50 ms, which
+# is still twenty a second from anything on the LAN. After _LOGIN_FREE misses
+# in a row, each further attempt has to wait twice as long as the last, up to
+# _LOGIN_MAX_WAIT. Per address rather than global so a device guessing on the
+# network cannot lock the owner out from their own laptop.
+_LOGIN_FREE = 5
+_LOGIN_MAX_WAIT = 15 * 60
+_LOGIN_CAP = 1000
+_login_fails = {}  # client -> (consecutive misses, time of the last one)
+
+
+def login_wait(client):
+    """Seconds `client` must still wait before another password attempt; 0 if none."""
+    with _lock:
+        n, last = _login_fails.get(client, (0, 0.0))
+    if n < _LOGIN_FREE:
+        return 0
+    wait = min(_LOGIN_MAX_WAIT, 2 ** (n - _LOGIN_FREE))
+    return max(0, int(last + wait - time.time() + 0.999))
+
+
+def note_login(client, ok):
+    """Record the outcome of a password attempt from `client`."""
+    with _lock:
+        if ok:
+            _login_fails.pop(client, None)
+            return
+        if client not in _login_fails and len(_login_fails) >= _LOGIN_CAP:
+            # Drop the stalest record rather than grow forever.
+            del _login_fails[min(_login_fails, key=lambda c: _login_fails[c][1])]
+        n, _ = _login_fails.get(client, (0, 0.0))
+        _login_fails[client] = (n + 1, time.time())
