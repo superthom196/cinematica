@@ -22,11 +22,11 @@ can resolve it.
 ## Install the server
 
 Download the archive and matching checksum from
-[Releases](https://github.com/superthom196/cinematica/releases). For version 1.3.2:
+[Releases](https://github.com/superthom196/cinematica/releases). For version 1.3.3:
 
 ```bash
-sha256sum -c cinematica-server-1.3.2.tar.gz.sha256
-tar xzf cinematica-server-1.3.2.tar.gz
+sha256sum -c cinematica-server-1.3.3.tar.gz.sha256
+tar xzf cinematica-server-1.3.3.tar.gz
 cd cinematica-server
 sudo ./install.sh
 ```
