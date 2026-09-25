@@ -114,6 +114,12 @@ class PlayerEngine(private val context: Context) {
     // never re-enables audio once the spike has turned it off.
     private var rate = 1.0f
     private var audioDisabled = false
+    // Hifi centre mode: the film's audio stream (ffmpeg's `0:a:N`, the one the server decodes for
+    // the Sendspin player) whose centre channel the TV plays; null when the TV stays silent.
+    // `builtCentre` is whether the LibVLC instance carries the centre-only filter, which lives on
+    // the instance and so is rebuilt when the next film wants the other one.
+    private var centreTrack: Int? = null
+    private var builtCentre = false
     private var url: String? = null
     private var title: String? = null
     private var transcoded = false
@@ -201,7 +207,8 @@ class PlayerEngine(private val context: Context) {
      */
     private fun applyAudio(mp: MediaPlayer) {
         mp.setAudioOutput(AUDIO_OUTPUT)
-        mp.setAudioDigitalOutputEnabled(passthrough)
+        // A passed-through bitstream never reaches the centre-only filter.
+        mp.setAudioDigitalOutputEnabled(passthrough && centreTrack == null)
     }
 
     fun attach(layout: VLCVideoLayout) {
@@ -238,13 +245,19 @@ class PlayerEngine(private val context: Context) {
      *
      * [hifi] is Sendspin: the server streams lossless audio out of band, so the TV's own decode
      * must stay silent for this film — otherwise the viewer hears both tracks, out of step.
+     * [centreTrack] is the exception: the TV as centre speaker, playing only that stream's centre
+     * channel while the server plays the rest of it, so nothing is heard twice.
      *
      * [startMs] is a resume point. The engine only *holds* for it: a film the server is still
      * converting is paused on its first frame rather than played from zero while the converter
      * catches up. The seek itself belongs to the ViewModel, so the server's seek counter — and the
      * hifi audio that follows it — sees a resume exactly as it sees a viewer's seek.
      */
-    fun open(url: String, title: String?, transcoded: Boolean, hifi: Boolean = false, startMs: Long = 0L) {
+    fun open(
+        url: String, title: String?, transcoded: Boolean, hifi: Boolean = false,
+        centreTrack: Int? = null, startMs: Long = 0L,
+    ) {
+        this.centreTrack = if (hifi) centreTrack else null
         val mp = ensurePlayer()
         this.url = url
         this.title = title
@@ -504,6 +517,14 @@ class PlayerEngine(private val context: Context) {
     // ---- internals ----------------------------------------------------------
 
     private fun ensurePlayer(): MediaPlayer {
+        // The centre filter only ever changes from open(), which replaces the film anyway; the
+        // player screen may already be up (autoplay-next), so its view goes onto the new player.
+        var reattach: VLCVideoLayout? = null
+        if (player != null && builtCentre != (centreTrack != null)) {
+            reattach = attached
+            detach()
+            releasePlayer()
+        }
         if (optionsStale && player != null && !(_state.value.active)) {
             // Caching and verbosity live on the LibVLC instance, so a settings change is honoured
             // by rebuilding — but never underneath a film that is on screen.
@@ -511,6 +532,7 @@ class PlayerEngine(private val context: Context) {
             optionsStale = false
         }
         player?.let { return it }
+        builtCentre = centreTrack != null
         val vlc = LibVLC(context, vlcOptions())
         libVlc = vlc
         val mp = MediaPlayer(vlc)
@@ -518,6 +540,10 @@ class PlayerEngine(private val context: Context) {
         mp.setEventListener { ev -> onEvent(ev) }
         player = mp
         optionsStale = false
+        reattach?.let {
+            mp.attachViews(it, null, true, false)
+            attached = it
+        }
         return mp
     }
 
@@ -547,7 +573,28 @@ class PlayerEngine(private val context: Context) {
             "--keystore-file", keystore.absolutePath,
             "--preferred-resolution=-1",
             if (verbose) "-vv" else "-v",
-        )
+        ).apply { if (builtCentre) addAll(CENTRE_ONLY) }
+    }
+
+    /**
+     * The libVLC stream id of [centreTrack], when the TV should be playing it: only a stream that
+     * has a centre of its own (3+ channels). Stereo and mono stay whole on the Sendspin player —
+     * the remap filter would leave nothing of them to play.
+     */
+    private fun centreAudioId(): Int? {
+        val n = centreTrack ?: return null
+        val media = player?.media ?: return null
+        return try {
+            val audio = (0 until media.trackCount).mapNotNull { media.getTrack(it) }
+                .filter { it.type == IMedia.Track.Type.Audio }
+            val track = audio.getOrNull(n) as? IMedia.AudioTrack
+            track?.takeIf { it.channels >= 3 }?.id
+        } catch (e: Exception) {
+            Log.i(TAG, "centre: could not read media tracks (${e.javaClass.simpleName})")
+            null
+        } finally {
+            media.release()
+        }
     }
 
     private fun onEvent(ev: MediaPlayer.Event) {
@@ -648,7 +695,11 @@ class PlayerEngine(private val context: Context) {
         // subtitle decision still runs below -- skipping it left the file's own "default" subtitle
         // track on for an English film -- judged on the file's tracks, since the server plays its
         // preferred-language track out of band.
-        if (audioDisabled && mp.audioTrack != -1) mp.setAudioTrack(-1)
+        // Centre mode is the one exception: the TV plays the server's stream, filtered to its centre.
+        if (audioDisabled) {
+            val want = centreAudioId() ?: -1
+            if (mp.audioTrack != want && !mp.setAudioTrack(want)) Log.i(TAG, "centre: audio track $want was refused")
+        }
         if (status !is PlayStatus.Playing && status !is PlayStatus.Paused) return
         if (userChoseAudio && userChoseSpu) return
         val audio = infos(audioTracks, IMedia.Track.Type.Audio)
@@ -763,6 +814,24 @@ class PlayerEngine(private val context: Context) {
     private companion object {
         /** AudioTrack, not OpenSL ES: passthrough (`setAudioDigitalOutputEnabled`) only exists here. */
         const val AUDIO_OUTPUT = "audiotrack"
+
+        /**
+         * VLC's remap filter with every input channel but the centre sent nowhere (-1), so the
+         * TV's speakers carry the centre alone. Each option names an *input* channel and says
+         * which output it goes to; 1 is Center (modules/audio_filter/channel_mixer/remap.c).
+         */
+        val CENTRE_ONLY = listOf(
+            "--audio-filter=remap",
+            "--aout-remap-channel-center=1",
+            "--aout-remap-channel-left=-1",
+            "--aout-remap-channel-right=-1",
+            "--aout-remap-channel-middleleft=-1",
+            "--aout-remap-channel-middleright=-1",
+            "--aout-remap-channel-rearleft=-1",
+            "--aout-remap-channel-rearright=-1",
+            "--aout-remap-channel-rearcenter=-1",
+            "--aout-remap-channel-lfe=-1",
+        )
 
         /** How long a length must hold still before it is believed to be the film's real total. */
         const val LENGTH_SETTLE_MS = 45_000L

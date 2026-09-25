@@ -35,6 +35,7 @@ fun SettingsScreen(vm: AppViewModel, ui: UiState) {
     val hifiAudio by vm.hifiAudio.collectAsStateWithLifecycle()
     val hifiPlayerUrl by vm.hifiPlayerUrl.collectAsStateWithLifecycle()
     val hifiDelayMs by vm.hifiDelayMs.collectAsStateWithLifecycle()
+    val hifiCentre by vm.hifiCentre.collectAsStateWithLifecycle()
     val hifiPlayers by vm.hifiPlayers.collectAsStateWithLifecycle()
     val audioLanguage by vm.audioLanguage.collectAsStateWithLifecycle()
     val subtitleMode by vm.subtitleMode.collectAsStateWithLifecycle()
@@ -83,6 +84,8 @@ fun SettingsScreen(vm: AppViewModel, ui: UiState) {
             SettingRow("Network audio", if (hifiAudio) "On" else "Off") { vm.toggleHifiAudio() }
             if (hifiAudio) {
                 SettingRow("Network audio player", hifiPlayerLabel(hifiPlayerUrl, hifiPlayers)) { vm.cycleHifiPlayer() }
+                // On: the TV's speakers play the centre channel, the player the rest. Next film on.
+                SettingRow("TV speakers", if (hifiCentre) "Centre channel" else "Off") { vm.toggleHifiCentre() }
                 // Left/right trims by 25 ms; OK steps up. Positive = the sound plays later.
                 SettingRow(
                     "Lip sync (audio delay)",

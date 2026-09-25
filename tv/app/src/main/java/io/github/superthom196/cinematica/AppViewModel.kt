@@ -270,6 +270,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val hifiAudio: StateFlow<Boolean> = prefs.hifiAudio.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val hifiPlayerUrl: StateFlow<String?> = prefs.hifiPlayerUrl.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val hifiDelayMs: StateFlow<Int> = prefs.hifiDelayMs.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val hifiCentre: StateFlow<Boolean> = prefs.hifiCentre.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val _hifiPlayers = MutableStateFlow<List<HifiPlayer>>(emptyList())
     val hifiPlayers: StateFlow<List<HifiPlayer>> = _hifiPlayers.asStateFlow()
     val playerName: StateFlow<String> = prefs.playerName.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), android.os.Build.MODEL)
@@ -375,7 +376,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         errorReported = false
         _ui.update { it.copy(phase = Phase.Player, playPick = cmd.pick, playTitle = cmd.title, hifi = cmd.hifi) }
         val startMs = ((cmd.start_s ?: 0.0) * 1000).toLong().coerceAtLeast(0L)
-        engine.open(url, cmd.title, cmd.transcoded == true, hifi = cmd.hifi, startMs = startMs)
+        // Centre mode plays the same stream the server decodes for the Sendspin player, so the
+        // dialogue and the rest of the mix come from one track.
+        val centreTrack = if (cmd.hifi && cmd.hifi_centre) cmd.pick?.audio_track ?: 0 else null
+        engine.open(url, cmd.title, cmd.transcoded == true, hifi = cmd.hifi, centreTrack = centreTrack, startMs = startMs)
         lipSync.onOpen(android.os.SystemClock.uptimeMillis())
         // A film with no resume point must not inherit the last one's wait.
         if (startMs > 0L) startResume(startMs) else { resumeJob?.cancel(); resumeJob = null; endResume() }
@@ -562,7 +566,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val report = buildPlayerReport(s.status, pos, dur, jobId, jobTitle, resumeHolding, endedReported, errorReported)
         return report.copy(
             hifi = if (jobId != null) _ui.value.hifi else hifiAudio.value,
-            hifiPlayer = hifiPlayerUrl.value, hifiDelayMs = hifiDelayMs.value, seekSeq = userSeekSeq,
+            hifiPlayer = hifiPlayerUrl.value, hifiDelayMs = hifiDelayMs.value,
+            hifiCentre = hifiCentre.value, seekSeq = userSeekSeq,
         )
     }
 
@@ -813,7 +818,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Step the hifi player's volume by [delta], from the player's P+/P- keys. The TV's own volume
-     * keys stay with the TV: in hifi mode it is muted, and the sound is the Sendspin player's.
+     * keys stay with the TV: in hifi mode it is muted, and the sound is the Sendspin player's --
+     * or, in centre mode, they set the centre channel's level against the player's left/right.
      * Sent at once, like the lip-sync trim, because the viewer is listening for the change.
      */
     fun adjustHifiVolume(delta: Int) {
@@ -825,6 +831,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleHifiAudio() {
         viewModelScope.launch { prefs.setHifiAudio(!hifiAudio.value) }
+    }
+
+    /** Takes effect from the next film: the server fixes it per film when the pick is committed. */
+    fun toggleHifiCentre() {
+        viewModelScope.launch { prefs.setHifiCentre(!hifiCentre.value) }
     }
 
     fun refreshHifiPlayers() {

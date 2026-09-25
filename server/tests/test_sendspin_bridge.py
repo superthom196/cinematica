@@ -163,8 +163,11 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         bridge.CACHE_DIR, bridge.DECODE_LEAD_S, bridge.START_TIMEOUT_S = self._saved
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    async def prepare(self, start_s=0.0):
-        return await bridge.handle_prepare(FakeRequest({"src": "http://src", "aidx": 0, "start_s": start_s}))
+    async def prepare(self, start_s=0.0, centre=None):
+        body = {"src": "http://src", "aidx": 0, "start_s": start_s}
+        if centre is not None:
+            body["centre"] = centre
+        return await bridge.handle_prepare(FakeRequest(body))
 
     async def start(self, gen, start_s=10.0, pos_at_us=None, delay_ms=None):
         body = {"src": "http://src", "aidx": 0, "start_s": start_s, "gen": gen}
@@ -225,6 +228,18 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snap["ffmpeg_alive"])
         self.assertEqual(snap["cache"]["start_s"], 0.0)
         self.assertIsNone(snap["supply"])
+
+    async def test_centre_mode_takes_the_centre_out_and_is_its_own_cache(self):
+        await self.prepare()
+        plain = bridge.STATE["decoder"]
+        resp = await self.prepare(centre=True)
+        self.assertEqual(resp.status, 200, resp.data)
+        af = self.ffmpeg_args[self.ffmpeg_args.index("-af") + 1]
+        self.assertEqual(af, "aresample=rematrix_maxval=2:center_mix_level=0,"
+                             "aformat=channel_layouts=stereo")
+        self.assertIsNot(bridge.STATE["decoder"], plain, "a full-mix cache is not a centre-off one")
+        self.assertTrue(resp.data["cache"]["centre"])
+        self.assertEqual(self.spawned, 2)
 
     async def test_prepare_twice_for_the_same_track_keeps_the_decoder(self):
         await self.prepare()

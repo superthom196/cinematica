@@ -11,10 +11,10 @@ enough clock information for the caller to keep video and audio in sync.
 API (127.0.0.1 only):
   GET  /players             -> {players: [{id, name, url, connected}], default}
   POST /connect {url?}      -> {connected, client_id, name} or 503 {error}
-  POST /prepare {src, aidx, start_s?}
+  POST /prepare {src, aidx, centre?, start_s?}
                             -> {prepared: true, cache}: decode the track into the
                                PCM cache from start_s (default 0), from now on
-  POST /start {src, aidx, start_s, gen, pos_at_us?}
+  POST /start {src, aidx, centre?, start_s, gen, pos_at_us?}
                             -> {gen, t0_us, clock_offset_us} or 503 {error}
                                202 {gen, pending: true, clock_offset_us} when the
                                cache has not reached start_s yet: poll /status
@@ -126,6 +126,11 @@ DECODE_READ_BYTES = CHUNK_BYTES * 4  # 200 ms per read off ffmpeg
 # the sum the matrix is scaled to instead; 2.0 gives 6.0 dB of it back. It is
 # not a gain stage: a stereo source is not rematrixed and comes through as is.
 DOWNMIX_MAXVAL = float(cfg("SENDSPIN_DOWNMIX_MAXVAL", "2.0"))
+# Centre mode (/prepare and /start with centre=true): the TV's own speakers
+# play the centre channel, so it comes out of this downmix. swresample only
+# applies center_mix_level to a source that also has L/R, so a mono track
+# still reaches both sides at -3 dB and a stereo one is untouched.
+CENTRE_OFF = ":center_mix_level=0"
 # A /start further past the decoded range than this restarts the decoder at
 # the new position rather than waiting for it to get there.
 CACHE_WAIT_S = 20.0
@@ -214,9 +219,10 @@ class Decoder:
     /release, its `finally` is the one place the process is terminated.
     The file is the cache; `end_bytes` is how much of it is valid."""
 
-    def __init__(self, src, aidx, start_s, proc, marker, path):
+    def __init__(self, src, aidx, start_s, proc, marker, path, centre=False):
         self.src = src
         self.aidx = aidx
+        self.centre = centre
         self.start_s = start_s
         self.proc = proc
         self.marker = marker
@@ -257,7 +263,7 @@ class Decoder:
 
     def info(self):
         return {
-            "src": self.src, "aidx": self.aidx,
+            "src": self.src, "aidx": self.aidx, "centre": self.centre,
             "start_s": round(self.start_s, 3), "end_s": round(self.end_s, 3),
             "lead_s": round(self.end_s - self.head_s, 1),
             "decoding": self.alive, "complete": self.complete, "error": self.error,
@@ -577,12 +583,13 @@ async def _decode_loop(dec):
             print("bridge: decoder cleanup failed: %s" % exc)
 
 
-async def _ensure_decoder(src, aidx, start_s):
-    """The decoder for (src, aidx) covering start_s, starting one if needed.
-    Called with _lock held. Replacing the decoder retires the pusher first:
-    the file it reads is about to go."""
+async def _ensure_decoder(src, aidx, start_s, centre=False):
+    """The decoder for (src, aidx, centre) covering start_s, starting one if
+    needed. Called with _lock held. Replacing the decoder retires the pusher
+    first: the file it reads is about to go."""
     dec = STATE["decoder"]
-    if dec is not None and dec.src == src and dec.aidx == aidx and dec.has(start_s):
+    if (dec is not None and dec.src == src and dec.aidx == aidx
+            and dec.centre == centre and dec.has(start_s)):
         return dec
     await _stop_pusher()
     await _drop_decoder()
@@ -595,7 +602,8 @@ async def _ensure_decoder(src, aidx, start_s):
         "-map", "0:a:%d" % aidx,
         # aformat right behind it makes this aresample the one that downmixes,
         # not one ffmpeg inserts for "-ac 2" without the option.
-        "-af", "aresample=rematrix_maxval=%g,aformat=channel_layouts=stereo" % DOWNMIX_MAXVAL,
+        "-af", "aresample=rematrix_maxval=%g%s,aformat=channel_layouts=stereo" % (
+            DOWNMIX_MAXVAL, CENTRE_OFF if centre else ""),
         "-vn", "-ac", "2", "-ar", "48000",
         # Ignored by the raw muxer; it exists so `pkill -f <marker>` inside
         # the container hits exactly this ffmpeg.
@@ -605,10 +613,11 @@ async def _ensure_decoder(src, aidx, start_s):
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = str(CACHE_DIR / ("sendspin-%s.pcm" % marker[len(FFMPEG_MARKER_PREFIX):][:12]))
     proc = await _spawn_decoder(args)
-    dec = Decoder(src, aidx, start_s, proc, marker, path)
+    dec = Decoder(src, aidx, start_s, proc, marker, path, centre=centre)
     STATE["decoder"] = dec
     dec.task = asyncio.ensure_future(_decode_loop(dec))
-    print("bridge: decode from %.3fs src=%s aidx=%s -> %s" % (start_s, src, aidx, path))
+    print("bridge: decode from %.3fs src=%s aidx=%s%s -> %s" % (
+        start_s, src, aidx, " centre-off" if centre else "", path))
     return dec
 
 
@@ -836,10 +845,11 @@ async def handle_prepare(request):
     data = await request.json()
     src = data["src"]
     aidx = int(data.get("aidx", 0))
+    centre = bool(data.get("centre"))
     start_s = float(data.get("start_s", 0))
     async with _lock:
         try:
-            dec = await _ensure_decoder(src, aidx, start_s)
+            dec = await _ensure_decoder(src, aidx, start_s, centre)
         except Exception as exc:  # noqa: BLE001 - docker missing, fork failure
             print("bridge: prepare could not spawn ffmpeg: %s" % exc)
             return web.json_response({"error": "could not start decoder: %s" % exc}, status=503)
@@ -850,6 +860,7 @@ async def handle_start(request):
     data = await request.json()
     src = data["src"]
     aidx = int(data.get("aidx", 0))
+    centre = bool(data.get("centre"))
     start_s = float(data.get("start_s", 0))
     gen = data.get("gen")
     pos_at_us = data.get("pos_at_us")
@@ -871,7 +882,7 @@ async def handle_start(request):
             return web.json_response({"error": "no active player role"}, status=503)
 
         try:
-            dec = await _ensure_decoder(src, aidx, start_s)
+            dec = await _ensure_decoder(src, aidx, start_s, centre)
         except Exception as exc:  # noqa: BLE001
             print("bridge: start gen=%s could not spawn ffmpeg: %s" % (gen, exc))
             return web.json_response({"error": "could not start decoder: %s" % exc}, status=503)

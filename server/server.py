@@ -2309,6 +2309,12 @@ def _secs(v):
 # _app_cv's lock) is held -- see the callers below, which only ever put() here.
 _hifi = {"on": False, "gen": int(time.time()), "t0_us": None, "clock_offset_us": 0,
          "streaming": False, "connected": False, "src": None, "aidx": 0,
+         # Centre mode: the TV's own speakers play the film's centre channel
+         # and the Sendspin player gets L/R with the centre taken out. "centre"
+         # is the TV's setting off the heartbeat; "film_centre" is what the
+         # film on screen was started with, fixed for that film so the bridge's
+         # cache and the TV's own decode never disagree mid-film.
+         "centre": False, "film_centre": False,
          "last_restart": 0.0, "err_s": None, "player_url": None,
          "pending_since": 0.0, "seek_seq": None, "delay_ms": HIFI_AUDIO_DELAY_MS,
          # Why the last start did not produce audio, for the TV to show instead
@@ -2561,6 +2567,7 @@ def _ss_worker():
                     if _hifi["gen"] != gen or _hifi["src"] != src:
                         continue
                     player_url = _hifi["player_url"]
+                    centre = _hifi["film_centre"]
                 status, body = _ss_call("/connect", {"url": player_url}, timeout=HIFI_CONNECT_TIMEOUT_S)
                 with _lock:
                     _hifi["connected"] = status == 200 and bool(body.get("connected"))
@@ -2569,7 +2576,7 @@ def _ss_worker():
                         print("sendspin: connect failed: %s" % _hifi["last_error"], flush=True)
                     if _hifi["gen"] != gen or _hifi["src"] != src:
                         continue
-                status, body = _ss_call("/prepare", {"src": src, "aidx": aidx},
+                status, body = _ss_call("/prepare", {"src": src, "aidx": aidx, "centre": centre},
                                         timeout=HIFI_CALL_TIMEOUT_S)
                 if status != 200:
                     print("sendspin: prepare failed (%s): %s" % (status, body.get("error")), flush=True)
@@ -2590,7 +2597,8 @@ def _ss_worker():
                 if status == 200:
                     with _lock:
                         delay_ms = _hifi["delay_ms"]
-                    status, body = _ss_call("/start", {"src": src, "aidx": aidx,
+                        centre = _hifi["film_centre"]
+                    status, body = _ss_call("/start", {"src": src, "aidx": aidx, "centre": centre,
                                                          "start_s": start_s, "gen": gen,
                                                          "pos_at_us": pos_at_us,
                                                          "delay_ms": delay_ms},
@@ -2695,6 +2703,7 @@ def app_heartbeat(d):
         # effect on the next film, but a change while nothing is playing can
         # drop the old connection right away so the next connect() picks up
         # the new one instead of the bridge's stale default.
+        _hifi["centre"] = bool(d.get("hifi_centre"))
         new_player = d.get("hifi_player") or None
         if new_player != _hifi["player_url"]:
             _hifi["player_url"] = new_player
@@ -3068,6 +3077,7 @@ if _now.get("hifi_src"):
     # audio from the TV's position, exactly as after a pause.
     _hifi["src"] = _now["hifi_src"]
     _hifi["aidx"] = int(_now.get("hifi_aidx") or 0)
+    _hifi["film_centre"] = bool(_now.get("hifi_centre"))
     _hifi["job"] = _now.get("hifi_job")
 if _now.get("hifi_delay_ms") is not None:
     _hifi["delay_ms"] = max(-2000, min(5000, int(_now["hifi_delay_ms"])))
@@ -4225,6 +4235,7 @@ def launch(url, mid, pick, title, gen):
         seq = app_cmd("play", job=str(mid), url=url, title=title, pick=pick,
                       transcoded=bool(pick.get("transcoded")),
                       hifi=bool(_hifi["on"] and SENDSPIN_ENABLED),
+                      hifi_centre=bool(_hifi["on"] and SENDSPIN_ENABLED and _hifi["film_centre"]),
                       **({"start_s": start_s} if start_s is not None else {}))
         print("app: play %s seq=%d -> %s" % (mid, seq, app["name"] or app["id"]),
               flush=True)
@@ -4360,6 +4371,7 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                     # no verdict is ever computed against the previous film.
                     _hifi["src"] = internal
                     _hifi["aidx"] = aidx
+                    _hifi["film_centre"] = _hifi["centre"]
                     _hifi["job"] = str(mid)
                 else:
                     _hifi["src"] = None
@@ -4439,6 +4451,7 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                             # silent until the film is started again.
                             hifi_src=internal if (_hifi["on"] and SENDSPIN_ENABLED) else None,
                             hifi_aidx=pick.get("audio_track") or 0,
+                            hifi_centre=_hifi["film_centre"],
                             hifi_job=str(mid) if (_hifi["on"] and SENDSPIN_ENABLED) else None)
                 _now_save(_now)
             job_set(mid, stage="playing" if pok else "error", ok=pok, pick=pick,

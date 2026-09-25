@@ -35,6 +35,8 @@ data class Pick(
     val audio: String? = null,
     val score: Double? = null,
     val audio_actual: String? = null,
+    /** Which of the file's audio streams the server chose (ffmpeg's `0:a:N`). */
+    val audio_track: Int? = null,
     val transcoded: Boolean? = null,
 )
 
@@ -360,6 +362,8 @@ data class AppCmd(
     val pick: Pick? = null,
     val transcoded: Boolean? = null,
     val hifi: Boolean = false,
+    /** Hifi with the TV as the centre speaker, fixed by the server for this film. */
+    val hifi_centre: Boolean = false,
     /** Where to start, when the play was a resume. Absent on an ordinary play and on autoplay-next. */
     val start_s: Double? = null,
 )
@@ -414,6 +418,7 @@ data class HeartbeatBody(
     val hifi: Boolean = false,
     val hifi_player: String? = null,
     val hifi_delay_ms: Int? = null,
+    val hifi_centre: Boolean = false,
     val seek_seq: Long? = null,
 )
 

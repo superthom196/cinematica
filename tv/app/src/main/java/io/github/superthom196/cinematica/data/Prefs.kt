@@ -42,6 +42,7 @@ class Prefs(private val context: Context) {
         val hifiAudio = booleanPreferencesKey("hifi_audio")
         val hifiPlayerUrl = stringPreferencesKey("hifi_player_url")
         val hifiDelayMs = intPreferencesKey("hifi_delay_ms")
+        val hifiCentre = booleanPreferencesKey("hifi_centre")
         val audioLanguage = stringPreferencesKey("audio_language")
         val subtitleMode = stringPreferencesKey("subtitle_mode")
         val playerId = stringPreferencesKey("player_id")
@@ -96,6 +97,13 @@ class Prefs(private val context: Context) {
     /** Sendspin hifi audio: the server sends lossless audio out of band and the TV mutes its own. */
     val hifiAudio: Flow<Boolean> = context.dataStore.data.map { it[K.hifiAudio] ?: false }
     suspend fun setHifiAudio(value: Boolean) { context.dataStore.edit { it[K.hifiAudio] = value } }
+
+    /**
+     * Hifi with the TV as the centre speaker: the TV plays the film's centre channel instead of
+     * muting, and the server takes the centre out of the Sendspin player's left/right mix.
+     */
+    val hifiCentre: Flow<Boolean> = context.dataStore.data.map { it[K.hifiCentre] ?: false }
+    suspend fun setHifiCentre(value: Boolean) { context.dataStore.edit { it[K.hifiCentre] = value } }
 
     /**
      * Lip-sync trim for hifi audio, in ms, the "audio delay" of an AV receiver: positive when the

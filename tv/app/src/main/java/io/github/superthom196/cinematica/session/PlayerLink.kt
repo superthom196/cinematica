@@ -36,6 +36,7 @@ data class PlayerReport(
     val hifi: Boolean = false,
     val hifiPlayer: String? = null,
     val hifiDelayMs: Int? = null,
+    val hifiCentre: Boolean = false,
     val seekSeq: Long = 0,
 )
 
@@ -129,7 +130,7 @@ class PlayerLink(
                 state = r.state, title = r.title, job = r.job,
                 position_s = r.positionS, duration_s = r.durationS,
                 ack = pendingAck, err = r.err, wait = wait, hifi = r.hifi, hifi_player = r.hifiPlayer,
-                hifi_delay_ms = r.hifiDelayMs, seek_seq = r.seekSeq,
+                hifi_delay_ms = r.hifiDelayMs, hifi_centre = r.hifiCentre, seek_seq = r.seekSeq,
             )
             val sentAt = SystemClock.uptimeMillis()
             val resp = runCatching { api.heartbeat(body) }
