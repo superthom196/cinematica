@@ -132,7 +132,8 @@ fun PillButton(
         ) {
             val tint = if (primary && enabled) CinematicaColors.OnAccent else CinematicaColors.Text
             if (icon != null) Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(if (dense) 18.dp else 26.dp))
-            Text(
+            // No text makes an icon-only pill, with no empty label spaced off the icon.
+            if (text.isNotEmpty()) Text(
                 text,
                 style = if (dense) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
                 color = if (enabled) tint else CinematicaColors.Muted,

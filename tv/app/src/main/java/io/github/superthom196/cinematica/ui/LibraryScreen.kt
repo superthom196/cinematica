@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -24,6 +23,8 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -142,8 +143,9 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
             Modifier.fillMaxWidth().onFocusChanged { inHeader = it.hasFocus },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Wordmark(logoSize = 26.dp)
-            Spacer(Modifier.weight(1f))
+            // The name takes whatever the buttons leave rather than a spacer's share: a row that
+            // outgrows the screen then clips the tail of the name, not the last button off the end.
+            Wordmark(logoSize = 22.dp, modifier = Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 // The watchlist and the channels list are both a third/fourth view of the same
                 // grid, not screens of their own: they belong in the switch that already chooses
@@ -164,11 +166,11 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
                 )
                 PillButton("Search", onClick = { vm.openSearch() }, dense = true, modifier = Modifier.focusRequester(headerFocus))
                 // Sort and genres belong to a pool. The wall is already in the order it wants.
-                PillButton("Sort: ${sortName(state.sort)} ▾", onClick = { sortOpen = true }, dense = true, enabled = !noPool)
+                PillButton("${sortName(state.sort)} ▾", onClick = { sortOpen = true }, dense = true, enabled = !noPool)
                 val n = state.include.size + state.exclude.size
                 PillButton("Genres ${if (n > 0) "($n) " else ""}▾", onClick = { genreOpen = true }, dense = true, enabled = !noPool)
                 PillButton(vm.net.chipLabel(netState.net), onClick = { vm.net.refresh(); netOpen = true }, dense = true)
-                PillButton("Settings", onClick = { vm.openSettings() }, dense = true)
+                PillButton("", onClick = { vm.openSettings() }, icon = Icons.Default.Settings, dense = true)
             }
         }
         VSpace(8.dp)

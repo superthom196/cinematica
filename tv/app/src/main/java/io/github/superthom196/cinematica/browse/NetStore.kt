@@ -102,12 +102,13 @@ class NetStore(
     // a StateFlow read is invisible to Compose, so a label built from it only
     // refreshed when something else in the same scope happened to change --
     // the chip sat on "Optimising… 0/4" long after the calibration finished.
+    // No space after the ⚡: the emoji face already sets its own gap, and the header row is full.
     fun chipLabel(d: NetCheck? = _state.value.net): String {
         if (d?.calibrating == true) {
             val want = d.cal_want ?: 0
-            return "⚡ Optimising…" + if (want > 0) " ${d.cal_done ?: 0}/$want" else ""
+            return "⚡Optimising…" + if (want > 0) " ${d.cal_done ?: 0}/$want" else ""
         }
-        return "⚡ ${num(d?.sustain_live)} Mbps"
+        return "⚡${num(d?.sustain_live)} Mbps"
     }
 
     private fun num(v: Double?): String {
