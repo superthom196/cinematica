@@ -235,7 +235,7 @@ class BridgeTest(unittest.IsolatedAsyncioTestCase):
         resp = await self.prepare(centre=True)
         self.assertEqual(resp.status, 200, resp.data)
         af = self.ffmpeg_args[self.ffmpeg_args.index("-af") + 1]
-        self.assertEqual(af, "aresample=rematrix_maxval=2:center_mix_level=0,"
+        self.assertEqual(af, "aresample=rematrix_maxval=2:center_mix_level=0:surround_mix_level=0.5,"
                              "aformat=channel_layouts=stereo")
         self.assertIsNot(bridge.STATE["decoder"], plain, "a full-mix cache is not a centre-off one")
         self.assertTrue(resp.data["cache"]["centre"])

@@ -130,7 +130,11 @@ DOWNMIX_MAXVAL = float(cfg("SENDSPIN_DOWNMIX_MAXVAL", "2.0"))
 # play the centre channel, so it comes out of this downmix. swresample only
 # applies center_mix_level to a source that also has L/R, so a mono track
 # still reaches both sides at -3 dB and a stereo one is untouched.
-CENTRE_OFF = ":center_mix_level=0"
+# The surrounds fold in at -6 dB there rather than the usual -3: they carry
+# the mix's reverb and ambience, and without the dry centre on top of them
+# the sides came out muffled and echoey (heard on the Bravia, 2026-09-26).
+CENTRE_SURROUND_LEVEL = float(cfg("SENDSPIN_CENTRE_SURROUND_LEVEL", "0.5"))
+CENTRE_OFF = ":center_mix_level=0:surround_mix_level=%g" % CENTRE_SURROUND_LEVEL
 # A /start further past the decoded range than this restarts the decoder at
 # the new position rather than waiting for it to get there.
 CACHE_WAIT_S = 20.0
