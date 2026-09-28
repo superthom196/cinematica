@@ -191,6 +191,10 @@ CAL_MAX      = float(os.environ.get("CAL_MAX", 600))        # overall ceiling, 1
 # here: the disk is worth more than the re-download, so the cache is capped and
 # emptied when playback ends.
 CACHE_GB     = float(os.environ.get("CACHE_GB", 30))
+# Emptying on playback end needs the server to have seen the film play and stop,
+# and a restart or an unseen player loses that edge: one install kept ten torrents
+# overnight. So anything nothing has written to for this long is swept anyway.
+CACHE_SWEEP_HOURS = float(os.environ.get("CACHE_SWEEP_HOURS", 4))
 # How much to ask for per sample. Stremio buffers well past the requested range
 # -- asking for BUFFER_MAX (1 GB) left every sampled film pulling a gigabyte in
 # the background long after its 30s measurement had finished.
@@ -1970,12 +1974,17 @@ def cache_size_apply():
     print("cache: could not cap at %g GB after %d attempts (%ds), leaving "
           "Stremio's own setting alone" % (CACHE_GB, tries, tries * gap), flush=True)
 
-def cache_clear():
+def cache_clear(older_than=None):
     """Empty Stremio's torrent cache, skipping anything still in use.
 
     Deliberate: Stremio hoards whole films so a resume is instant, which meant
     18 GB across 21 titles already watched. The disk is worth more than the
-    re-download."""
+    re-download.
+
+    With older_than (seconds), only torrents nothing has written to for that
+    long go: the sweep for films whose end was never seen. It goes by writes,
+    not by reads, so a film still being watched off a player this server
+    cannot see keeps its torrent as long as Stremio is still fetching it."""
     try:
         raw = urllib.request.urlopen(STREMIO_IN + "/stats.json", timeout=10).read()
         active = set(json.loads(raw or "{}"))
@@ -1985,14 +1994,31 @@ def cache_clear():
         r = subprocess.run(["docker", "exec", FFMPEG_CTR, "sh", "-c",
                             "ls /stremio-server/stremio-cache 2>/dev/null"],
                            capture_output=True, text=True, timeout=30)
+        # ls's own complaint is silenced (no cache dir is just an empty cache),
+        # so anything on stderr is docker's: the container is down or out of reach.
+        if r.returncode and (r.stderr or "").strip():
+            print("cache: could not list:", r.stderr.strip(), flush=True)
+            return
         dirs = [d for d in (r.stdout or "").split() if contract.RE_HASH40.match(d)]
+        if older_than is not None and dirs:
+            r = subprocess.run(["docker", "exec", FFMPEG_CTR, "find",
+                                "/stremio-server/stremio-cache", "-mindepth", "1",
+                                "-mmin", "-%d" % max(1, older_than // 60)],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode:
+                print("cache: could not date:", (r.stderr or "").strip(), flush=True)
+                return
+            fresh = {line.split("/")[3] for line in r.stdout.splitlines()
+                     if line.count("/") >= 3}
+            dirs = [d for d in dirs if d not in fresh]
     except Exception as e:
         print("cache: could not list:", e, flush=True)
         return
-    freed = 0
+    freed = kept = 0
     for h in dirs:
         if h in active:
             if playing_now():
+                kept += 1
                 continue                  # still streaming: leave it alone
             # Stremio keeps an engine open long after its last reader has
             # gone -- a stopped conversion, a calibration sample -- and an
@@ -2001,17 +2027,24 @@ def cache_clear():
             # answers {} and the hash leaves stats.json at once).
             try:
                 urllib.request.urlopen(STREMIO_IN + "/" + h + "/remove", timeout=10).read()
-            except Exception:
+            except Exception as e:
+                print("cache: could not release %s: %s" % (h[:8], e), flush=True)
                 continue
         try:
-            subprocess.run(["docker", "exec", FFMPEG_CTR, "rm", "-rf",
-                            "/stremio-server/stremio-cache/" + h],
-                           capture_output=True, timeout=60)
+            r = subprocess.run(["docker", "exec", FFMPEG_CTR, "rm", "-rf",
+                                "/stremio-server/stremio-cache/" + h],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode:
+                print("cache: could not delete %s: %s" % (h[:8], (r.stderr or "").strip()),
+                      flush=True)
+                continue
             freed += 1
-        except Exception:
-            pass
+        except Exception as e:
+            print("cache: could not delete %s: %s" % (h[:8], e), flush=True)
     if freed:
-        print("cache: cleared %d torrent(s), %d still active" % (freed, len(active)), flush=True)
+        print("cache: %s %d torrent(s)%s"
+              % ("swept" if older_than is not None else "cleared", freed,
+                 ", kept %d still streaming" % kept if kept else ""), flush=True)
 
 def cache_watch():
     """Clear the cache when a film finishes, on the playing -> idle edge.
@@ -2019,12 +2052,21 @@ def cache_watch():
     Debounced to 3 consecutive idle samples (60s): even with the buffering
     fix in tv_playback_state(), a missed heartbeat can still read as idle for
     a beat, and firing on the very first one tore down a film still playing.
+
+    That edge lives in this process only, so a restart mid-film or a player
+    the server never saw loses it. Two minutes after start, and every half
+    hour after that, anything untouched for CACHE_SWEEP_HOURS goes as well.
     """
     was = False
     idle_count = 0
+    next_sweep = time.time() + 120
+    last_err = None
     while True:
         time.sleep(20)
         try:
+            if time.time() >= next_sweep:
+                next_sweep = time.time() + 1800
+                cache_clear(older_than=int(CACHE_SWEEP_HOURS * 3600))
             # A browser watching counts as playing too, or the cache gets torn
             # down out from under a film someone is watching in the browser.
             now = tv_playback_state() in (2, 3) or browser_playing()
@@ -2051,8 +2093,13 @@ def cache_watch():
                     cache_clear()
                     idle_count = 0
             was = now
-        except Exception:
-            pass
+            last_err = None
+        except Exception as e:
+            # Once per distinct failure: this loop swallowing every error is
+            # how a cache could stay full with nothing in the log.
+            if repr(e) != last_err:
+                last_err = repr(e)
+                print("cache: watch failed:", last_err, flush=True)
 
 # cid -> ts of the last snap refresh, so channel_watch() only re-fetches a
 # channel's avatar/banner/subscriber count once a day, not on every sweep.

@@ -132,6 +132,7 @@ in `NATIVE_AUDIO` that the target TV can play correctly.
 | `STREMIO` | Stremio URL reachable by the TV |
 | `CINEMATICA_STATE` | Provider/admin state directory; default `/var/lib/cinematica` |
 | `CACHE_GB` | Torrent cache limit; default `30` |
+| `CACHE_SWEEP_HOURS` | Torrents nothing has written to for this long are deleted even if the end of the film was never seen (a restart, an unseen player); checked every 30 minutes; default `4` |
 | `HEVC_ONLY` | Prefer HEVC sources; enabled by default |
 | `NATIVE_AUDIO` | Audio codecs accepted without conversion; default `ac3,eac3` |
 | `AUDIO_FIX` | Enable conversion of unsupported audio |
