@@ -123,13 +123,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # If the release already exists (notes written by hand, or the TV job
-          # got here first), just attach to it. Otherwise leave a draft so the
-          # notes get written before anyone sees it. The second `view` is for
-          # the race on a shared `v*` tag: both release jobs run at once, and
-          # the one that loses `create` must carry on, not fail.
+          # got here first), just attach to it. Otherwise create it as a draft,
+          # so nobody installs a release with only half of it attached; it is
+          # published below once both are. The second `view` is for the race
+          # on a shared `v*` tag: both release jobs run at once, and the one
+          # that loses `create` must carry on, not fail.
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --draft --title "Cinematica $TAG" --generate-notes || \
             gh release view "$TAG" >/dev/null
           gh release upload "$TAG" \
             "dist/cinematica-server-${VERSION}.tar.gz" \
             "dist/cinematica-server-${VERSION}.tar.gz.sha256" --clobber
+
+          # A tag is a release, not a draft waiting for someone: the release goes
+          # public as soon as both halves are attached. Both jobs run this after
+          # their own upload, so whichever finishes second sees both and
+          # publishes (running it twice is harmless). Only a draft is touched --
+          # a re-run against an old, already public tag leaves it exactly as is,
+          # and never makes it Latest again.
+          assets=$(gh release view "$TAG" --json assets -q '.assets[].name')
+          if printf '%s\n' "$assets" | grep -qxF "cinematica-server-${VERSION}.tar.gz" &&
+             printf '%s\n' "$assets" | grep -qxF "cinematica-server-${VERSION}.tar.gz.sha256" &&
+             printf '%s\n' "$assets" | grep -qxF "Cinematica-TV-${VERSION}.apk" &&
+             [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
+            gh release edit "$TAG" --draft=false
+            echo "Both halves attached: $TAG is published."
+          else
+            echo "Not publishing yet: the other job attaches the rest and publishes."
+          fi

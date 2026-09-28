@@ -159,3 +159,20 @@ jobs:
             gh release create "$TAG" --draft --title "Cinematica $TAG" --generate-notes || \
             gh release view "$TAG" >/dev/null
           gh release upload "$TAG" "$APK" --clobber
+
+          # A tag is a release, not a draft waiting for someone: the release goes
+          # public as soon as both halves are attached. Both jobs run this after
+          # their own upload, so whichever finishes second sees both and
+          # publishes (running it twice is harmless). Only a draft is touched --
+          # a re-run against an old, already public tag leaves it exactly as is,
+          # and never makes it Latest again.
+          assets=$(gh release view "$TAG" --json assets -q '.assets[].name')
+          if printf '%s\n' "$assets" | grep -qxF "cinematica-server-${VERSION}.tar.gz" &&
+             printf '%s\n' "$assets" | grep -qxF "cinematica-server-${VERSION}.tar.gz.sha256" &&
+             printf '%s\n' "$assets" | grep -qxF "Cinematica-TV-${VERSION}.apk" &&
+             [ "$(gh release view "$TAG" --json isDraft -q .isDraft)" = true ]; then
+            gh release edit "$TAG" --draft=false
+            echo "Both halves attached: $TAG is published."
+          else
+            echo "Not publishing yet: the other job attaches the rest and publishes."
+          fi
