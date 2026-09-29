@@ -157,7 +157,7 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
                     add("movie" to "Movies")
                     add("tv" to "Series")
                     if (ui.channelsReady || state.kind == LibraryStore.KIND_CHANNEL) add(LibraryStore.KIND_CHANNEL to "Channels")
-                    add(LibraryStore.KIND_FAV to "Watch")
+                    add(LibraryStore.KIND_FAV to "Watchlist")
                 }
                 SegmentedPill(
                     options = segments,
