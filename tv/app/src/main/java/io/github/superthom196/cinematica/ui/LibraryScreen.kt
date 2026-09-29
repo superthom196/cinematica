@@ -103,7 +103,14 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
 
     // A new view (sort, genres or kind) empties the list, but the grid keeps whatever offset it
     // had, which left the first row of the fresh view sliced off at the top of the screen.
-    LaunchedEffect(focusableCount == 0) { if (focusableCount == 0) gridState.scrollToItem(0) }
+    // And while it is empty the footer is the grid's only item, so the lazy grid anchors on it:
+    // when the new view's tiles land in front of it, the grid follows the footer to the end of
+    // the list — the bottom of Suggested, on Channels. The first tiles to arrive go back to the top.
+    var wasEmpty by remember { mutableStateOf(false) }
+    LaunchedEffect(focusableCount == 0) {
+        if (focusableCount == 0) { wasEmpty = true; gridState.scrollToItem(0) }
+        else if (wasEmpty) { wasEmpty = false; gridState.scrollToItem(0) }
+    }
 
     // How far down the grid has got. This — and nothing on a timer — is what asks for more films.
     val lastVisible by remember {
@@ -229,7 +236,15 @@ fun LibraryScreen(vm: AppViewModel, ui: UiState) {
             }
             item(span = { GridItemSpan(maxLineSpan) }, key = "footer") {
                 val text = if (gathering) "" else footerText(state)
-                if (text.isNotEmpty()) {
+                // The channels list is one request with no paging to retry it, so a failure gets
+                // a button: scrolling on an empty wall asks nothing.
+                if (state.kind == LibraryStore.KIND_CHANNEL && state.failed) {
+                    Column(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(text, style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Muted)
+                        VSpace(8.dp)
+                        PillButton("Try again", onClick = { vm.library.reload() }, dense = true)
+                    }
+                } else if (text.isNotEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
                         Text(text, style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Muted)
                     }
@@ -286,7 +301,8 @@ private fun footerText(state: io.github.superthom196.cinematica.browse.LibrarySt
     state.kind == LibraryStore.KIND_FAV ->
         if (state.movies.isEmpty() && !state.loading) "Nothing saved yet — open a title and press Save for later" else ""
     state.kind == LibraryStore.KIND_CHANNEL ->
-        if (state.movies.isEmpty() && state.popular.isEmpty() && !state.loading && !state.failed) {
+        if (state.failed) "Couldn't load channels"
+        else if (state.movies.isEmpty() && state.popular.isEmpty() && !state.loading && !state.failed) {
             if ("channels.search" in state.channelOps) "Search to find a channel and follow it"
             else "Paste a channel's link or @handle into Search to follow it"
         } else ""

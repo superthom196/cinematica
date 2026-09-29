@@ -187,7 +187,9 @@ class LibraryStore(
         offset = 0
         lastVisible = -1
         focusIndex = 0
-        _state.update { it.copy(movies = emptyList(), loading = false, exhausted = false, failed = false) }
+        // popular too: switching back to Channels must not show the last visit's Suggested row
+        // under an empty followed row while the fresh lists are on their way.
+        _state.update { it.copy(movies = emptyList(), popular = emptyList(), loading = false, exhausted = false, failed = false) }
         pump()
     }
 
@@ -291,6 +293,37 @@ class LibraryStore(
     }
 
     /**
+     * The channels list again, in place: what is on screen stays until the fresh lists replace
+     * it, so coming back from the app that played a video (or from standby) never blanks the
+     * followed row. A failed refresh keeps the rows already shown — stale badges beat an empty
+     * wall — and only a wall with nothing on it yet is marked failed, which offers Try again.
+     */
+    private fun refreshChannels() {
+        // A first load still in flight will bring the same answer.
+        if (pumpJob?.isActive == true) return
+        val gen = loadGen
+        pumpJob = scope.launch {
+            val s = _state.value
+            val value = runCatching { api.movies(0, 50, "top", emptySet(), emptySet(), KIND_CHANNEL, s.bias) }.getOrNull()
+            if (gen != loadGen) return@launch
+            if (value == null) {
+                _state.update { if (it.movies.isEmpty() && it.popular.isEmpty()) it.copy(failed = true) else it }
+                return@launch
+            }
+            _state.update {
+                it.copy(
+                    movies = value.movies.orEmpty(),
+                    popular = value.popular,
+                    channelOps = value.channel_ops.toSet(),
+                    loading = false,
+                    exhausted = true,
+                    failed = false,
+                )
+            }
+        }
+    }
+
+    /**
      * A shelf change made elsewhere — the Watchlist button on a detail screen, a long-press on a tile. The grid's
      * own copy follows at once so the tile says what just happened without waiting for a page.
      */
@@ -316,7 +349,8 @@ class LibraryStore(
      * newly pinned going in front. Never re-pages and never empties the grid.
      */
     fun refreshShelf() {
-        if (_state.value.kind == KIND_FAV || _state.value.kind == KIND_CHANNEL) { reload(); return }
+        if (_state.value.kind == KIND_CHANNEL) { refreshChannels(); return }
+        if (_state.value.kind == KIND_FAV) { reload(); return }
         val gen = loadGen
         scope.launch {
             val s = _state.value
