@@ -123,17 +123,20 @@ fun MovieTile(
 /**
  * A followed or discoverable channel, in place of the poster tile: there is no poster art for a
  * channel, so the avatar stands in for it, on the frame's own surface colour rather than an image.
+ * Square, not the poster's 2:3 — a round avatar and a name left the bottom half of a tall frame
+ * empty. Every name gets two lines' room so the avatars line up across a row.
  */
 @Composable
 private fun ChannelTile(movie: Movie) {
     Column(Modifier.padding(4.dp)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+            Modifier.fillMaxWidth().aspectRatio(1f)
                 .background(CinematicaColors.Surface, RoundedCornerShape(6.dp)),
         ) {
             Column(
-                Modifier.fillMaxSize().padding(top = 16.dp, start = 8.dp, end = 8.dp),
+                Modifier.fillMaxSize().padding(horizontal = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
                 Box(Modifier.fillMaxWidth(0.64f).aspectRatio(1f).clip(CircleShape)) {
                     PosterImage(movie.poster, Modifier.fillMaxSize(), corner = 0.dp)
@@ -143,7 +146,7 @@ private fun ChannelTile(movie: Movie) {
                     movie.title.orEmpty(),
                     style = MaterialTheme.typography.titleSmall.copy(fontSize = 12.sp, lineHeight = 15.sp),
                     textAlign = TextAlign.Center,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis,
                 )
             }
             val newCount = movie.new ?: 0
