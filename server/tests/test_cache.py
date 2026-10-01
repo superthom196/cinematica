@@ -23,6 +23,10 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402
+import subprocess  # noqa: E402
+import urllib.request  # noqa: E402
+import torrents  # noqa: E402
+import tvlink  # noqa: E402
 
 OLD = "a" * 40      # untouched for hours
 NEW = "b" * 40      # written to a minute ago
@@ -69,11 +73,11 @@ class FakeBox:
 
     def clear(self, playing=False, **kw):
         out = io.StringIO()
-        with mock.patch.object(server.subprocess, "run", self.run), \
-             mock.patch.object(server.urllib.request, "urlopen", self.urlopen), \
-             mock.patch.object(server, "playing_now", lambda: playing), \
+        with mock.patch.object(subprocess, "run", self.run), \
+             mock.patch.object(urllib.request, "urlopen", self.urlopen), \
+             mock.patch.object(tvlink, "playing_now", lambda: playing), \
              redirect_stdout(out):
-            server.cache_clear(**kw)
+            torrents.cache_clear(**kw)
         return out.getvalue()
 
 

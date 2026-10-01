@@ -41,6 +41,10 @@ import http.client
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import server           # noqa: E402
+import browser_session  # noqa: E402
+import config  # noqa: E402
+import core  # noqa: E402
+import routes  # noqa: E402
 import browser_play     # noqa: E402
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -96,7 +100,7 @@ class _Live:
     """A real server on a real loopback port, as in test_bx_serve."""
 
     def __enter__(self):
-        self.app = server.Server(("127.0.0.1", 0), server.H)
+        self.app = routes.Server(("127.0.0.1", 0), routes.H)
         self.thread = threading.Thread(target=self.app.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.app.server_address[1]
@@ -155,18 +159,18 @@ class _Harness:
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def setUp(self):
-        self._orig_tc_host = server.TC_HOST
-        self._orig_bx = dict(server._bx)
+        self._orig_tc_host = config.TC_HOST
+        self._orig_bx = dict(browser_session._bx)
         self.run_dir = tempfile.mkdtemp(prefix="bx-ffmpeg-run-")
-        server.TC_HOST = self.run_dir
-        self.sess_dir = os.path.join(self.run_dir, server.BX_DIR + TOKEN)
+        config.TC_HOST = self.run_dir
+        self.sess_dir = os.path.join(self.run_dir, config.BX_DIR + TOKEN)
         os.makedirs(self.sess_dir, exist_ok=True)
 
     def tearDown(self):
-        server.TC_HOST = self._orig_tc_host
-        with server._lock:
-            server._bx.clear()
-            server._bx.update(self._orig_bx)
+        config.TC_HOST = self._orig_tc_host
+        with core._lock:
+            browser_session._bx.clear()
+            browser_session._bx.update(self._orig_bx)
         shutil.rmtree(self.run_dir, ignore_errors=True)
 
     # ---- helpers ---------------------------------------------------------
@@ -199,8 +203,8 @@ class _Harness:
         """_bx exactly as bx_spawn leaves it -- timescales None, because
         that is what production has: nothing writes it at spawn time."""
         seg = self.SEG if seg is None else seg
-        with server._lock:
-            server._bx.update(
+        with core._lock:
+            browser_session._bx.update(
                 token=TOKEN, job=None, gen=0, at=0.0, state="playing",
                 pos=0.0, dur=float(SRC_SECONDS), title=None,
                 dir=self.sess_dir, seg=seg, anchor=k0, frontier=None,

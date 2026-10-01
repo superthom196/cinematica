@@ -14,14 +14,14 @@ neither of which direct mode ever touches), and it is what requirement 6
 process cannot honestly do without a real ffprobe/ffmpeg are mocked, at the
 narrowest points that touch them:
 
-  - server.prepare_candidate's real body calls probe_and_buffer() (a live
+  - jobs.prepare_candidate's real body calls probe_and_buffer() (a live
     network buffer against BUFFER_MIN, tens of MB) and probe_media() (an
     ffprobe over `docker exec`). Both are replaced by a small stand-in that
     reports "prepared" and points at the real, live /src/ url for this
     candidate via the SAME helper (stream_url_internal()) production code
     uses elsewhere -- see the regression test below, which now runs the
     real (unmocked) prepare_candidate to confirm it uses that helper too.
-  - server.probe_full is `docker exec ffprobe`. Replaced with a canned
+  - mediaprobe.probe_full is `docker exec ffprobe`. Replaced with a canned
     H.264/AAC/mp4 result. Everything downstream of that result -- which
     CODEC_PROBES entries it satisfies, whether decide() calls it "direct",
     how publish() shapes media, how /src/ serves and range-seeks it -- is
@@ -49,15 +49,24 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server               # noqa: E402
+import browser_session  # noqa: E402
+import config  # noqa: E402
+import jobs  # noqa: E402
+import mediaprobe  # noqa: E402
+import routes  # noqa: E402
+import sendspin  # noqa: E402
+import streams  # noqa: E402
+import transcode  # noqa: E402
+import tvlink  # noqa: E402
 import browser_play         # noqa: E402
 from providers import addon, contract, gateway, registry   # noqa: E402
 from tests import addon_stub                                # noqa: E402
 
 
-IDLE_BX = dict(server._bx)   # the real idle shape, captured before any test
+IDLE_BX = dict(browser_session._bx)   # the real idle shape, captured before any test
 # touches it -- NOT a hand-copied literal. A literal here is a second
 # definition of _bx's shape that nothing keeps in step with the first: when
-# run_anchor was added to the server, every test that rebound server._bx to
+# run_anchor was added to the server, every test that rebound browser_session._bx to
 # such a literal handed the segment route a dict with that key missing, and
 # three tests started failing with a 500 that had nothing to do with what
 # they were testing.
@@ -98,9 +107,9 @@ def _unsupported_caps():
 
 
 class _Live:
-    """A real Cinematica server (server.Server/server.H) on a real loopback
+    """A real Cinematica server (routes.Server/routes.H) on a real loopback
     port, the same pattern test_proxy.py and test_bplay.py use. Also patches
-    server.PORT to the port actually bound, and restores it on exit --
+    config.PORT to the port actually bound, and restores it on exit --
     bx_verify_url() (run for real by this file, not mocked) dials
     "http://127.0.0.1:%d" % PORT to sanity-check a direct url before
     publish(), and that has to be THIS server, not whatever fixed PORT the
@@ -108,16 +117,16 @@ class _Live:
     """
 
     def __enter__(self):
-        self.app = server.Server(("127.0.0.1", 0), server.H)
+        self.app = routes.Server(("127.0.0.1", 0), routes.H)
         self.thread = threading.Thread(target=self.app.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.app.server_address[1]
-        self._orig_port = server.PORT
-        server.PORT = self.port
+        self._orig_port = config.PORT
+        config.PORT = self.port
         return self
 
     def __exit__(self, *exc):
-        server.PORT = self._orig_port
+        config.PORT = self._orig_port
         self.app.shutdown()
         self.app.server_close()
         self.thread.join(timeout=5)
@@ -157,28 +166,28 @@ class BplayE2ETest(unittest.TestCase):
         self._tmp = tempfile.mkdtemp(prefix="cinematica-bplay-e2e-")
         os.environ["CINEMATICA_STATE"] = self._tmp
 
-        server._jobs = {}
-        server._bx = dict(IDLE_BX)
-        server._play_gen = 0
-        server._cancel_gen = 0
-        server._streams = {}
-        server._sources = {}
+        jobs._jobs = {}
+        browser_session._bx = dict(IDLE_BX)
+        jobs._play_gen = 0
+        jobs._cancel_gen = 0
+        streams._streams = {}
+        streams._sources = {}
 
-        self._orig_prepare = server.prepare_candidate
-        self._orig_probe_full = server.probe_full
-        self._orig_ctr_pid = server._ctr_pid
-        self._orig_adb_enabled = server.ADB_ENABLED
+        self._orig_prepare = jobs.prepare_candidate
+        self._orig_probe_full = mediaprobe.probe_full
+        self._orig_ctr_pid = transcode._ctr_pid
+        self._orig_adb_enabled = config.ADB_ENABLED
 
-        server.prepare_candidate = self._fake_prepare_candidate
-        server.probe_full = lambda url_internal: {
+        jobs.prepare_candidate = self._fake_prepare_candidate
+        mediaprobe.probe_full = lambda url_internal: {
             "format_name": _PROBE["format_name"], "duration": _PROBE["duration"],
             "video": dict(_VIDEO), "audio": [dict(_AUDIO)], "langs": list(_PROBE["langs"])}
         # No docker in this environment (and the task rules it out anyway):
         # a beat's pause/resume path looks up the packager's pid before it
         # would ever shell out to `kill`, and this candidate never actually
         # starts one, but the stub keeps this pinned regardless.
-        server._ctr_pid = lambda name: None
-        server.ADB_ENABLED = False
+        transcode._ctr_pid = lambda name: None
+        config.ADB_ENABLED = False
 
         self.stub = addon_stub.StubAddon(
             resources=("catalog", "meta", "stream"), transport="http").start()
@@ -192,16 +201,16 @@ class BplayE2ETest(unittest.TestCase):
 
     def tearDown(self):
         self.stub.stop()
-        server.prepare_candidate = self._orig_prepare
-        server.probe_full = self._orig_probe_full
-        server._ctr_pid = self._orig_ctr_pid
-        server.ADB_ENABLED = self._orig_adb_enabled
-        server._jobs = {}
-        server._bx = dict(IDLE_BX)
-        server._play_gen = 0
-        server._cancel_gen = 0
-        server._streams = {}
-        server._sources = {}
+        jobs.prepare_candidate = self._orig_prepare
+        mediaprobe.probe_full = self._orig_probe_full
+        transcode._ctr_pid = self._orig_ctr_pid
+        config.ADB_ENABLED = self._orig_adb_enabled
+        jobs._jobs = {}
+        browser_session._bx = dict(IDLE_BX)
+        jobs._play_gen = 0
+        jobs._cancel_gen = 0
+        streams._streams = {}
+        streams._sources = {}
         gateway.invalidate()
         os.environ.pop("CINEMATICA_STATE", None)
         shutil.rmtree(self._tmp, ignore_errors=True)
@@ -217,7 +226,7 @@ class BplayE2ETest(unittest.TestCase):
         exercise the real, live /src/ proxy afterwards.
         """
         tried.append("%s (test double, no ffmpeg)" % (pick.get("tag") or pick.get("key")))
-        return {"internal": server.stream_url_internal(pick), "acodec": "aac",
+        return {"internal": streams.stream_url_internal(pick), "acodec": "aac",
                 "adur": None, "alangs": [], "acodecs": [], "aidx": 0,
                 "got": len(addon_stub._MEDIA), "rate": 1e9}
 
@@ -264,7 +273,7 @@ class BplayE2ETest(unittest.TestCase):
             # Requirement 6: relative, and naming neither the streaming
             # server's host nor its port.
             self.assertTrue(url.startswith("/"), "media.url must be relative: %r" % url)
-            self.assertNotIn(server.PUBLIC_HOST, url)
+            self.assertNotIn(config.PUBLIC_HOST, url)
             self.assertNotIn(":11470", url)
 
     # ---- 2. the media actually serves, and seeks -------------------------------
@@ -294,12 +303,12 @@ class BplayE2ETest(unittest.TestCase):
     # ---- 3. no TV required ------------------------------------------------------
 
     def test_plays_with_no_tv_app_and_adb_disabled(self):
-        self.assertFalse(server.ADB_ENABLED)
-        self.assertIsNone(server.app_fresh())
+        self.assertFalse(config.ADB_ENABLED)
+        self.assertIsNone(tvlink.app_fresh())
         with _Live() as live:
             _resp, final = self._play_and_wait(live)
             self.assertEqual(final.get("stage"), "playing", final)
-            self.assertIsNone(server.app_fresh())
+            self.assertIsNone(tvlink.app_fresh())
 
     # ---- 4. ownership, over real HTTP -------------------------------------------
 
@@ -318,8 +327,8 @@ class BplayE2ETest(unittest.TestCase):
             self.assertEqual(final.get("stage"), "playing", final)
             token, gen = resp["token"], resp["gen"]
 
-            orig_app_fresh = server.app_fresh
-            server.app_fresh = lambda: {"id": "test-tv", "name": "Test TV",
+            orig_app_fresh = tvlink.app_fresh
+            tvlink.app_fresh = lambda: {"id": "test-tv", "name": "Test TV",
                                         "job": None, "state": "idle", "acked": 0}
             try:
                 r, body = live.post("/api/play/" + self.mid, {})
@@ -338,7 +347,7 @@ class BplayE2ETest(unittest.TestCase):
 
                 r, body = live.post("/api/bx/stop", {"token": token, "gen": gen})
                 self.assertEqual(r.status, 200)
-                self.assertFalse(server.browser_playing())
+                self.assertFalse(browser_session.browser_playing())
 
                 # The payoff: the TV is no longer refused. Checked directly
                 # against claim_owner() -- the same function the real
@@ -347,10 +356,10 @@ class BplayE2ETest(unittest.TestCase):
                 # then somehow safely abandon a real run_play_job() worker
                 # thread (ffmpeg/adb machinery this file has no business
                 # touching) just to observe its 202.
-                ok, msg = server.claim_owner("tv")
+                ok, msg = jobs.claim_owner("tv")
                 self.assertEqual((ok, msg), (True, None))
             finally:
-                server.app_fresh = orig_app_fresh
+                tvlink.app_fresh = orig_app_fresh
 
     # ---- 5. nothing TV-ward is touched -------------------------------------------
 
@@ -372,17 +381,17 @@ class BplayE2ETest(unittest.TestCase):
             def f(*a, **kw):
                 raise AssertionError("must never call %s for a browser play" % name)
             return f
-        orig = (server.app_cmd, server.launch, server.wake_app, server._ss_q.put)
-        server.app_cmd = tripwire("app_cmd")
-        server.launch = tripwire("launch")
-        server.wake_app = tripwire("wake_app")
-        server._ss_q.put = tripwire("_ss_q.put")
+        orig = (tvlink.app_cmd, tvlink.launch, tvlink.wake_app, sendspin._ss_q.put)
+        tvlink.app_cmd = tripwire("app_cmd")
+        tvlink.launch = tripwire("launch")
+        tvlink.wake_app = tripwire("wake_app")
+        sendspin._ss_q.put = tripwire("_ss_q.put")
         try:
             with _Live() as live:
                 _resp, final = self._play_and_wait(live)
                 self.assertEqual(final.get("stage"), "playing", final)
         finally:
-            server.app_cmd, server.launch, server.wake_app, server._ss_q.put = orig
+            tvlink.app_cmd, tvlink.launch, tvlink.wake_app, sendspin._ss_q.put = orig
 
     # ---- 6. unsupported video ----------------------------------------------------
 
@@ -397,7 +406,7 @@ class BplayE2ETest(unittest.TestCase):
     # ---- regression: prepare_candidate must use stream_url_internal() ------------
 
     def test_prepare_candidate_probes_http_sources_through_the_src_proxy(self):
-        """server.prepare_candidate() (server.py) used to build the url it
+        """jobs.prepare_candidate() (server.py) used to build the url it
         hands to probe_media() by hand:
 
             internal = f"{STREMIO_IN}/{pick['infoHash']}" + (f"/{fidx}" if fidx is not None else "")
@@ -434,17 +443,17 @@ class BplayE2ETest(unittest.TestCase):
         pick = {"transport": contract.T_HTTP, "url": "http://127.0.0.1:1/media/x.mp4",
                 "headers": {}, "infoHash": None, "fileIdx": None,
                 "codec": "?", "gb": None, "tag": "buggy-http-candidate"}
-        orig_pb, orig_pm = server.probe_and_buffer, server.probe_media
-        server.probe_and_buffer = lambda *a, **kw: (True, 4096, 1e9)
-        server.probe_media = lambda url: (None, None, [], [])
+        orig_pb, orig_pm = jobs.probe_and_buffer, mediaprobe.probe_media
+        jobs.probe_and_buffer = lambda *a, **kw: (True, 4096, 1e9)
+        mediaprobe.probe_media = lambda url: (None, None, [], [])
         try:
             tried = []
             prep = self._orig_prepare("bugtest", pick, 100, 1, 1, 0, tried)
         finally:
-            server.probe_and_buffer, server.probe_media = orig_pb, orig_pm
+            jobs.probe_and_buffer, mediaprobe.probe_media = orig_pb, orig_pm
         self.assertIsNotNone(prep)
         self.assertEqual(
-            prep["internal"], server.stream_url_internal(pick),
+            prep["internal"], streams.stream_url_internal(pick),
             "prepare_candidate() must probe the http-transport source's own "
             "url (via stream_url_internal()), not an infoHash-shaped "
             "STREMIO_IN url built from a None infoHash")

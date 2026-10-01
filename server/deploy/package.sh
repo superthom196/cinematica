@@ -57,10 +57,14 @@ need() {
 # own Python 3.12 venv, that install.sh sets up from deploy/install-sendspin.sh
 # and deploy/cinematica-sendspin.service.in. It must sit beside server.py --
 # the rendered unit's ExecStart is @DIR@/sendspin_bridge.py.
-for f in install.sh server.py browser_play.py shelf.py settings.py sendspin_bridge.py index.html \
-         INSTALL.md README.md; do
+for f in install.sh server.py sendspin_bridge.py index.html INSTALL.md README.md; do
     need "$SERVER_DIR/$f"
     cp -p "$SERVER_DIR/$f" "$ROOT/$f"
+done
+# Every Python module beside server.py, not a list of names: the server is
+# split across them, and a list is how one gets left out of a release.
+for f in "$SERVER_DIR"/*.py; do
+    cp -p "$f" "$ROOT/"
 done
 chmod +x "$ROOT/install.sh"
 # The files the page pulls in besides itself, served under /static: the

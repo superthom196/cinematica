@@ -16,6 +16,10 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402
+import config  # noqa: E402
+import jobs  # noqa: E402
+import mediaprobe  # noqa: E402
+import subprocess  # noqa: E402
 from providers import contract  # noqa: E402
 
 
@@ -84,11 +88,11 @@ NO_VIDEO_PAYLOAD = """
 class ProbeFullTest(unittest.TestCase):
 
     def setUp(self):
-        self._real_run = server.subprocess.run
+        self._real_run = subprocess.run
         self.last_argv = None
 
     def tearDown(self):
-        server.subprocess.run = self._real_run
+        subprocess.run = self._real_run
 
     def fake_run(self, stdout):
         # Records argv so tests can assert on the command shape, and hands
@@ -96,17 +100,17 @@ class ProbeFullTest(unittest.TestCase):
         def run(argv, **kwargs):
             self.last_argv = argv
             return FakeResult(stdout)
-        server.subprocess.run = run
+        subprocess.run = run
 
     def raising_run(self):
         def run(argv, **kwargs):
             self.last_argv = argv
             raise OSError("docker exec failed")
-        server.subprocess.run = run
+        subprocess.run = run
 
     def test_probe_full_realistic_payload(self):
         self.fake_run(FULL_PAYLOAD)
-        result = server.probe_full("http://example/internal")
+        result = mediaprobe.probe_full("http://example/internal")
         self.assertEqual(result["format_name"], "matroska,webm")
         self.assertEqual(result["duration"], 7261.5)
         video = result["video"]
@@ -126,7 +130,7 @@ class ProbeFullTest(unittest.TestCase):
 
     def test_probe_full_does_not_select_streams_a(self):
         self.fake_run(FULL_PAYLOAD)
-        server.probe_full("http://example/internal")
+        mediaprobe.probe_full("http://example/internal")
         self.assertNotIn("-select_streams", self.last_argv)
         # Belt and braces: even if -select_streams appeared for some other
         # reason, it must never be paired with "a" the way probe_media was.
@@ -135,25 +139,25 @@ class ProbeFullTest(unittest.TestCase):
 
     def test_probe_full_malformed_json(self):
         self.fake_run("not json{{{")
-        result = server.probe_full("http://example/internal")
+        result = mediaprobe.probe_full("http://example/internal")
         self.assertEqual(result, {"format_name": "", "duration": None,
                                    "video": None, "audio": [], "langs": []})
 
     def test_probe_full_empty_stdout(self):
         self.fake_run("")
-        result = server.probe_full("http://example/internal")
+        result = mediaprobe.probe_full("http://example/internal")
         self.assertEqual(result, {"format_name": "", "duration": None,
                                    "video": None, "audio": [], "langs": []})
 
     def test_probe_full_subprocess_raises(self):
         self.raising_run()
-        result = server.probe_full("http://example/internal")
+        result = mediaprobe.probe_full("http://example/internal")
         self.assertEqual(result, {"format_name": "", "duration": None,
                                    "video": None, "audio": [], "langs": []})
 
     def test_probe_full_no_video_stream(self):
         self.fake_run(NO_VIDEO_PAYLOAD)
-        result = server.probe_full("http://example/internal")
+        result = mediaprobe.probe_full("http://example/internal")
         self.assertIsNone(result["video"])
         self.assertEqual(len(result["audio"]), 1)
 
@@ -163,16 +167,16 @@ class ProbeMediaAdapterTest(unittest.TestCase):
     survive being rebuilt on top of probe_full's dict."""
 
     def setUp(self):
-        self._real_run = server.subprocess.run
+        self._real_run = subprocess.run
 
     def tearDown(self):
-        server.subprocess.run = self._real_run
+        subprocess.run = self._real_run
 
     def test_probe_media_contract_preserved(self):
         def run(argv, **kwargs):
             return FakeResult(FULL_PAYLOAD)
-        server.subprocess.run = run
-        codec, dur, langs, codecs = server.probe_media("http://example/internal")
+        subprocess.run = run
+        codec, dur, langs, codecs = mediaprobe.probe_media("http://example/internal")
         self.assertEqual((codec, dur, langs, codecs),
                           ("ac3", 7261.5, ["eng", "fre"], ["ac3", "aac"]))
 
@@ -188,23 +192,23 @@ class PrepareCandidateInternalUrlTest(unittest.TestCase):
     the http url pointed at the /src/ proxy instead of Stremio."""
 
     def setUp(self):
-        self._orig_pb = server.probe_and_buffer
-        self._orig_pm = server.probe_media
+        self._orig_pb = jobs.probe_and_buffer
+        self._orig_pm = mediaprobe.probe_media
         # Neither a live buffer nor a real ffprobe/docker exec is needed to
         # see what url got built, so both are stood in for.
-        server.probe_and_buffer = lambda *a, **kw: (True, 4096, 1e9)
-        server.probe_media = lambda url: (None, None, [], [])
+        jobs.probe_and_buffer = lambda *a, **kw: (True, 4096, 1e9)
+        mediaprobe.probe_media = lambda url: (None, None, [], [])
 
     def tearDown(self):
-        server.probe_and_buffer = self._orig_pb
-        server.probe_media = self._orig_pm
+        jobs.probe_and_buffer = self._orig_pb
+        mediaprobe.probe_media = self._orig_pm
 
     def _prepare(self, pick):
         tried = []
         # gen=None so superseded() always reads False, independent of
-        # server._play_gen -- this test never accepts a play, it only
+        # jobs._play_gen -- this test never accepts a play, it only
         # exercises the url prepare_candidate builds.
-        return server.prepare_candidate("probe-test", pick, 100, 1, 1, None, tried)
+        return jobs.prepare_candidate("probe-test", pick, 100, 1, 1, None, tried)
 
     def test_torrent_internal_url_unchanged_without_file_index(self):
         pick, reason = contract.normalise_candidate(
@@ -213,7 +217,7 @@ class PrepareCandidateInternalUrlTest(unittest.TestCase):
         prep = self._prepare(pick)
         self.assertIsNotNone(prep)
         self.assertEqual(prep["internal"],
-                          "%s/%s" % (server.STREMIO_IN, pick["infoHash"]))
+                          "%s/%s" % (config.STREMIO_IN, pick["infoHash"]))
 
     def test_torrent_internal_url_unchanged_with_file_index(self):
         pick, reason = contract.normalise_candidate(
@@ -223,7 +227,7 @@ class PrepareCandidateInternalUrlTest(unittest.TestCase):
         self.assertIsNotNone(prep)
         self.assertEqual(
             prep["internal"],
-            "%s/%s/%s" % (server.STREMIO_IN, pick["infoHash"], pick["fileIdx"]))
+            "%s/%s/%s" % (config.STREMIO_IN, pick["infoHash"], pick["fileIdx"]))
 
     def test_http_internal_url_probes_the_src_proxy_not_stremio(self):
         pick, reason = contract.normalise_candidate(
@@ -243,39 +247,39 @@ class PrepareCandidateInternalUrlTest(unittest.TestCase):
 class ProbeGopTest(unittest.TestCase):
 
     def setUp(self):
-        self._real_run = server.subprocess.run
+        self._real_run = subprocess.run
         self.last_argv = None
 
     def tearDown(self):
-        server.subprocess.run = self._real_run
+        subprocess.run = self._real_run
 
     def fake_run(self, stdout):
         def run(argv, **kwargs):
             self.last_argv = argv
             return FakeResult(stdout)
-        server.subprocess.run = run
+        subprocess.run = run
 
     def test_probe_gop_median_gap(self):
         self.fake_run("0\n2\n4\n6\n8\n")
-        self.assertEqual(server.probe_gop("http://example/internal"), 2.0)
+        self.assertEqual(mediaprobe.probe_gop("http://example/internal"), 2.0)
 
     def test_probe_gop_single_timestamp(self):
         self.fake_run("0\n")
-        self.assertIsNone(server.probe_gop("http://example/internal"))
+        self.assertIsNone(mediaprobe.probe_gop("http://example/internal"))
 
     def test_probe_gop_empty_output(self):
         self.fake_run("")
-        self.assertIsNone(server.probe_gop("http://example/internal"))
+        self.assertIsNone(mediaprobe.probe_gop("http://example/internal"))
 
     def test_probe_gop_subprocess_raises(self):
         def run(argv, **kwargs):
             raise OSError("docker exec failed")
-        server.subprocess.run = run
-        self.assertIsNone(server.probe_gop("http://example/internal"))
+        subprocess.run = run
+        self.assertIsNone(mediaprobe.probe_gop("http://example/internal"))
 
     def test_probe_gop_argv_shape(self):
         self.fake_run("0\n2\n4\n")
-        server.probe_gop("http://example/internal")
+        mediaprobe.probe_gop("http://example/internal")
         self.assertIn("-skip_frame", self.last_argv)
         self.assertIn("nokey", self.last_argv)
 

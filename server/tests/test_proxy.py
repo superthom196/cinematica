@@ -24,6 +24,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import server  # noqa: E402
+from providers import contract  # noqa: E402
+import config  # noqa: E402
+import routes  # noqa: E402
+import streams  # noqa: E402
+import transcode  # noqa: E402
 
 
 BODY = b"".join(bytes([i % 251]) * 997 for i in range(64))   # ~64 KB, not round
@@ -91,10 +96,10 @@ class _Live:
         self.up_thread.start()
         self.up_url = "http://127.0.0.1:%d" % self.up.server_address[1]
 
-        # server.H, not a stand-in: the framing under test is written by
+        # routes.H, not a stand-in: the framing under test is written by
         # BaseHTTPRequestHandler's own response machinery, so a different
         # handler class would not be testing the thing that broke.
-        self.app = server.Server(("127.0.0.1", 0), server.H)
+        self.app = routes.Server(("127.0.0.1", 0), routes.H)
         self.app_thread = threading.Thread(target=self.app.serve_forever, daemon=True)
         self.app_thread.start()
         self.port = self.app.server_address[1]
@@ -108,7 +113,7 @@ class _Live:
         return False
 
     def key_for(self, path, headers=None):
-        return server.register_source({"transport": "http",
+        return streams.register_source({"transport": "http",
                                        "url": self.up_url + path,
                                        "headers": headers or {}})
 
@@ -235,14 +240,14 @@ class TorrentProxyFramingTest(unittest.TestCase):
     """
 
     def setUp(self):
-        self._orig_stremio_in = server.STREMIO_IN
+        self._orig_stremio_in = config.STREMIO_IN
 
     def tearDown(self):
-        server.STREMIO_IN = self._orig_stremio_in
+        config.STREMIO_IN = self._orig_stremio_in
 
     def test_chunked_upstream_completes_and_the_connection_stays_usable(self):
         with _Live() as live:
-            server.STREMIO_IN = live.up_url + "/chunked"
+            config.STREMIO_IN = live.up_url + "/chunked"
             ih = "b" * 40
             c = live.conn()
             try:
@@ -263,7 +268,7 @@ class TorrentProxyFramingTest(unittest.TestCase):
 
     def test_sized_upstream_still_passes_its_own_length_through_unchanged(self):
         with _Live() as live:
-            server.STREMIO_IN = live.up_url + "/sized"
+            config.STREMIO_IN = live.up_url + "/sized"
             ih = "c" * 40
             c = live.conn()
             try:
@@ -278,7 +283,7 @@ class TorrentProxyFramingTest(unittest.TestCase):
 
     def test_range_request_survives_the_hop_intact(self):
         with _Live() as live:
-            server.STREMIO_IN = live.up_url + "/ranged"
+            config.STREMIO_IN = live.up_url + "/ranged"
             ih = "d" * 40
             c = live.conn()
             try:
@@ -296,7 +301,7 @@ class TorrentProxyFramingTest(unittest.TestCase):
 
     def test_non_hex_infohash_is_refused_without_reaching_any_upstream(self):
         with _Live() as live:
-            server.STREMIO_IN = live.up_url
+            config.STREMIO_IN = live.up_url
             c = live.conn()
             try:
                 c.request("GET", "/t/not-a-hash")
@@ -315,7 +320,7 @@ class ProxyCredentialTest(unittest.TestCase):
             key = live.key_for("/sized?api_key=SUPERSECRET",
                                headers={"Authorization": "Bearer SUPERSECRET"})
             self.assertNotIn("SUPERSECRET", key)
-            url = server.stream_url({"transport": "http",
+            url = streams.stream_url({"transport": "http",
                                      "url": live.up_url + "/sized?api_key=SUPERSECRET"})
             self.assertNotIn("SUPERSECRET", url)
             self.assertIn("/src/", url)
@@ -327,18 +332,18 @@ class AudioUrlTest(unittest.TestCase):
     route's 40-hex check refuses, so a converted film could never play."""
 
     def test_an_http_source_gets_a_40_hex_audio_path(self):
-        c, _ = server.contract.normalise_candidate({
+        c, _ = contract.normalise_candidate({
             "transport": "http", "url": "https://media.example/film.mkv",
             "codec": "H264", "quality": "1080p"}, "idx")
-        path = server.audio_url(c).split("/audio/", 1)[1]
-        self.assertTrue(server.contract.RE_HASH40.match(path.split("/")[0]), path)
-        self.assertEqual(path.split("/")[0], server.tc_key(c))
+        path = transcode.audio_url(c).split("/audio/", 1)[1]
+        self.assertTrue(contract.RE_HASH40.match(path.split("/")[0]), path)
+        self.assertEqual(path.split("/")[0], transcode.tc_key(c))
 
     def test_a_torrent_keeps_its_infohash(self):
         ih = "a" * 40
         c = {"infoHash": ih, "fileIdx": 3, "key": "b" * 40}
-        self.assertEqual(server.tc_key(c), ih)
-        self.assertTrue(server.audio_url(c).endswith("/audio/%s/3" % ih))
+        self.assertEqual(transcode.tc_key(c), ih)
+        self.assertTrue(transcode.audio_url(c).endswith("/audio/%s/3" % ih))
 
 
 if __name__ == "__main__":

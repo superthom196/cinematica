@@ -14,7 +14,13 @@ This page describes the server for developers and people maintaining an installa
 
 | Component | Purpose |
 |---|---|
-| `server.py` | HTTP API, library ranking, playback jobs and media delivery |
+| `server.py` | Starts the server; the work is in the modules beside it |
+| `routes.py` | The HTTP API: every route the page and the TV app call |
+| `config.py`, `settings.py` | Every setting, read from the environment, then `.env`, then the default |
+| `catalogue.py`, `streams.py`, `netprofile.py` | Library ranking, choosing a source, and what the link can sustain |
+| `jobs.py`, `tvlink.py`, `browser_session.py` | Playback jobs, the hand-off to the TV app, and playing in a browser |
+| `transcode.py`, `sendspin.py`, `torrents.py`, `mediaprobe.py` | Audio conversion, hi-fi audio, the torrent cache, and ffprobe |
+| `watching.py`, `nowplaying.py`, `shelf.py`, `channels.py`, `admin.py` | Watchlist and resume points, the now-playing record, channels, provider admin |
 | `providers/` | Add-on access, package execution, configuration and credentials |
 | `index.html` | Browser interface: browsing, setup, provider management and playback; no frontend build step |
 | Stremio container | Torrent download and media delivery; also supplies ffmpeg and ffprobe |

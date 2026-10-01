@@ -12,8 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Compile server.py
-        run: python3 -m py_compile server/server.py server/browser_play.py server/settings.py
+      - name: Compile the server
+        run: python3 -m py_compile server/*.py
 
       - name: Compile sendspin bridge and probe
         run: python3 -m py_compile server/sendspin_bridge.py server/deploy/sendspin_probe.py

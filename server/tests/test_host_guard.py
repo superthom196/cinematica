@@ -26,20 +26,22 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import server  # noqa: E402
+import config  # noqa: E402
+import routes  # noqa: E402
 
 
 def host_ok(host, public_host=None, allow=()):
     """_host_ok() against a bare handler -- it reads nothing but headers."""
-    h = server.H.__new__(server.H)
+    h = routes.H.__new__(routes.H)
     h.headers = {} if host is None else {"Host": host}
-    old_public, old_allow = server.PUBLIC_HOST, server.HOST_ALLOW
+    old_public, old_allow = config.PUBLIC_HOST, config.HOST_ALLOW
     if public_host is not None:
-        server.PUBLIC_HOST = public_host
-    server.HOST_ALLOW = tuple(allow)
+        config.PUBLIC_HOST = public_host
+    config.HOST_ALLOW = tuple(allow)
     try:
-        return server.H._host_ok(h)
+        return routes.H._host_ok(h)
     finally:
-        server.PUBLIC_HOST, server.HOST_ALLOW = old_public, old_allow
+        config.PUBLIC_HOST, config.HOST_ALLOW = old_public, old_allow
 
 
 class HostGuard(unittest.TestCase):

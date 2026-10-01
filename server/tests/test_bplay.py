@@ -9,7 +9,7 @@ verification (bx_verify_url) all monkeypatched -- only browser_play.decide()
 itself is real, driven by hand-built probe/caps dicts, because that codec
 matching logic is exactly what a stubbed decide() would stop testing.
 
-The three routes ARE driven over a real loopback socket (server.Server on
+The three routes ARE driven over a real loopback socket (routes.Server on
 127.0.0.1:0, the same pattern test_bx_serve.py and test_proxy.py already
 use) -- that is local, not "the outside", and the point is to exercise the
 real request parsing (JSON body regardless of Content-Type, for
@@ -30,13 +30,24 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server           # noqa: E402
+import browser_session  # noqa: E402
+import catalogue  # noqa: E402
+import config  # noqa: E402
+import core  # noqa: E402
+import jobs  # noqa: E402
+import mediaprobe  # noqa: E402
+import routes  # noqa: E402
+import sendspin  # noqa: E402
+import streams  # noqa: E402
+import transcode  # noqa: E402
+import tvlink  # noqa: E402
 import browser_play     # noqa: E402
 
 
-IDLE_BX = dict(server._bx)   # the real idle shape, captured before any test
+IDLE_BX = dict(browser_session._bx)   # the real idle shape, captured before any test
 # touches it -- NOT a hand-copied literal. A literal here is a second
 # definition of _bx's shape that nothing keeps in step with the first: when
-# run_anchor was added to the server, every test that rebound server._bx to
+# run_anchor was added to the server, every test that rebound browser_session._bx to
 # such a literal handed the segment route a dict with that key missing, and
 # three tests started failing with a 500 that had nothing to do with what
 # they were testing.
@@ -82,13 +93,14 @@ SKIP_PROBE_H264 = {"format_name": "matroska,webm", "duration": 5400.0,
 
 class RunBrowserJobTest(unittest.TestCase):
     def setUp(self):
-        server._jobs = {}
-        server._bx = dict(IDLE_BX)
-        server._play_gen = 0
-        server._cancel_gen = 0
-        self._orig = {name: getattr(server, name) for name in (
-            "prepare_candidate", "probe_full", "probe_gop", "bx_begin",
-            "stream_url_public", "bx_verify_url")}
+        jobs._jobs = {}
+        browser_session._bx = dict(IDLE_BX)
+        jobs._play_gen = 0
+        jobs._cancel_gen = 0
+        self._orig = [(m, name, getattr(m, name)) for m, name in (
+            (jobs, "prepare_candidate"), (mediaprobe, "probe_full"),
+            (mediaprobe, "probe_gop"), (browser_session, "bx_begin"),
+            (streams, "stream_url_public"), (browser_session, "bx_verify_url"))]
 
         self.preps = {}           # candidate key -> prep dict, or absent = None
         self.probes = {}          # internal url -> probe_full()-shaped dict
@@ -98,7 +110,7 @@ class RunBrowserJobTest(unittest.TestCase):
         self.verify_result = True
 
         def fake_prepare(mid, pick, runtime_min, i, total, gen, tried):
-            key = server.candidate_key(pick)
+            key = browser_session.candidate_key(pick)
             self.prepare_calls.append(key)
             prep = self.preps.get(key)
             tried.append("tried-%s" % key)
@@ -121,37 +133,37 @@ class RunBrowserJobTest(unittest.TestCase):
             return self.bx_begin_result
 
         def fake_stream_url_public(pick):
-            return "/src/%s" % server.candidate_key(pick)
+            return "/src/%s" % browser_session.candidate_key(pick)
 
         def fake_verify(url_path):
             return self.verify_result
 
-        server.prepare_candidate = fake_prepare
-        server.probe_full = fake_probe_full
-        server.probe_gop = fake_probe_gop
-        server.bx_begin = fake_bx_begin
-        server.stream_url_public = fake_stream_url_public
-        server.bx_verify_url = fake_verify
+        jobs.prepare_candidate = fake_prepare
+        mediaprobe.probe_full = fake_probe_full
+        mediaprobe.probe_gop = fake_probe_gop
+        browser_session.bx_begin = fake_bx_begin
+        streams.stream_url_public = fake_stream_url_public
+        browser_session.bx_verify_url = fake_verify
         # publish() now registers _bx for every mode (see its own
         # docstring), so a remux/audio publish's real bx_begin path is not
         # exercised here -- but /api/bx/beat's real pause/resume branch,
         # exercised over a live socket further down, would otherwise shell
         # out to `docker exec ... pgrep`. No docker in these tests either.
-        self._orig_ctr_pid = server._ctr_pid
-        server._ctr_pid = lambda name: None
+        self._orig_ctr_pid = transcode._ctr_pid
+        transcode._ctr_pid = lambda name: None
 
     def tearDown(self):
-        for name, fn in self._orig.items():
-            setattr(server, name, fn)
-        server._ctr_pid = self._orig_ctr_pid
-        server._jobs = {}
-        server._bx = dict(IDLE_BX)
-        server._play_gen = 0
-        server._cancel_gen = 0
+        for m, name, fn in self._orig:
+            setattr(m, name, fn)
+        transcode._ctr_pid = self._orig_ctr_pid
+        jobs._jobs = {}
+        browser_session._bx = dict(IDLE_BX)
+        jobs._play_gen = 0
+        jobs._cancel_gen = 0
 
     def _run(self, picks, caps, skip=None, token="tok1", mid="m1"):
-        server.run_browser_job(mid, picks, 100, "Some Title", 0, token, caps, skip)
-        return server.job_get(mid)
+        browser_session.run_browser_job(mid, picks, 100, "Some Title", 0, token, caps, skip)
+        return jobs.job_get(mid)
 
     # ---- mode selection -> media shape -------------------------------------
 
@@ -188,9 +200,9 @@ class RunBrowserJobTest(unittest.TestCase):
     # published media, which is what these check.
 
     def _patch_next(self, result, autoplay=True):
-        orig_next, orig_flag = server.next_episode, server.AUTOPLAY_NEXT
+        orig_next, orig_flag = catalogue.next_episode, config.AUTOPLAY_NEXT
         def restore():
-            server.next_episode, server.AUTOPLAY_NEXT = orig_next, orig_flag
+            catalogue.next_episode, config.AUTOPLAY_NEXT = orig_next, orig_flag
         self.addCleanup(restore)
         calls = []
         def fake(tid, s, e):
@@ -198,8 +210,8 @@ class RunBrowserJobTest(unittest.TestCase):
             if isinstance(result, Exception):
                 raise result
             return result
-        server.next_episode = fake
-        server.AUTOPLAY_NEXT = autoplay
+        catalogue.next_episode = fake
+        config.AUTOPLAY_NEXT = autoplay
         return calls
 
     def _play_episode(self, probe=None, mid="tv:1399:1:1"):
@@ -264,9 +276,9 @@ class RunBrowserJobTest(unittest.TestCase):
         self.probes["internal://c1"] = DIRECT_PROBE
         job = self._run([pick], DIRECT_CAPS, token="tok-direct")
         self.assertEqual(job.get("stage"), "playing")
-        self.assertTrue(server.browser_playing())
-        self.assertTrue(server.playing_now())    # the cache_watch() guard
-        ok, msg = server.claim_owner("tv")
+        self.assertTrue(browser_session.browser_playing())
+        self.assertTrue(tvlink.playing_now())    # the cache_watch() guard
+        ok, msg = jobs.claim_owner("tv")
         self.assertEqual((ok, msg), (False, "Another device is playing"))
 
     def test_remux_publish_is_visible_to_cache_watch_and_claim_owner(self):
@@ -277,9 +289,9 @@ class RunBrowserJobTest(unittest.TestCase):
         self.probes["internal://c1"] = REMUX_PROBE
         job = self._run([pick], DIRECT_CAPS, token="tok-remux")
         self.assertEqual(job.get("stage"), "playing")
-        self.assertTrue(server.browser_playing())
-        self.assertTrue(server.playing_now())
-        ok, msg = server.claim_owner("tv")
+        self.assertTrue(browser_session.browser_playing())
+        self.assertTrue(tvlink.playing_now())
+        ok, msg = jobs.claim_owner("tv")
         self.assertEqual((ok, msg), (False, "Another device is playing"))
 
     def test_beat_ok_true_right_after_a_direct_publish(self):
@@ -311,11 +323,11 @@ class RunBrowserJobTest(unittest.TestCase):
         self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}
         self.probes["internal://c1"] = DIRECT_PROBE
         self._run([pick], DIRECT_CAPS, token="tok-direct")
-        self.assertTrue(server.browser_playing())
-        with server._lock:
-            server._bx["at"] = time.time() - (server.BX_IDLE + 1)
-        self.assertFalse(server.browser_playing())
-        ok, msg = server.claim_owner("tv")
+        self.assertTrue(browser_session.browser_playing())
+        with core._lock:
+            browser_session._bx["at"] = time.time() - (config.BX_IDLE + 1)
+        self.assertFalse(browser_session.browser_playing())
+        ok, msg = jobs.claim_owner("tv")
         self.assertEqual((ok, msg), (True, None))
 
     # ---- cancellation must be rechecked immediately before publish ----------
@@ -330,9 +342,9 @@ class RunBrowserJobTest(unittest.TestCase):
         self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}
         self.probes["internal://c1"] = DIRECT_PROBE
         def cancelling_verify(url_path):
-            server.play_claim()      # what /api/stop and /api/cancel do
+            jobs.play_claim()      # what /api/stop and /api/cancel do
             return True
-        server.bx_verify_url = cancelling_verify
+        browser_session.bx_verify_url = cancelling_verify
         job = self._run([pick], DIRECT_CAPS, token="tok-gone")
         self.assertEqual(job.get("stage"), "error")
         self.assertFalse(job.get("ok"))
@@ -347,13 +359,13 @@ class RunBrowserJobTest(unittest.TestCase):
         self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}
         self.probes["internal://c1"] = DIRECT_PROBE
         def cancelling_verify(url_path):
-            server.play_claim()
+            jobs.play_claim()
             return True
-        server.bx_verify_url = cancelling_verify
+        browser_session.bx_verify_url = cancelling_verify
         self._run([pick], DIRECT_CAPS, token="tok-gone")
-        self.assertIsNone(server._bx["token"])
-        self.assertFalse(server.browser_playing())
-        self.assertEqual(server.claim_owner("tv"), (True, None))
+        self.assertIsNone(browser_session._bx["token"])
+        self.assertFalse(browser_session.browser_playing())
+        self.assertEqual(jobs.claim_owner("tv"), (True, None))
 
     def test_direct_still_published_when_nothing_cancelled_it(self):
         # The guard must only fire on a real supersede -- an ordinary
@@ -363,26 +375,26 @@ class RunBrowserJobTest(unittest.TestCase):
         self.probes["internal://c1"] = DIRECT_PROBE
         job = self._run([pick], DIRECT_CAPS, token="tok-ok")
         self.assertEqual(job.get("stage"), "playing")
-        self.assertEqual(server._bx["token"], "tok-ok")
+        self.assertEqual(browser_session._bx["token"], "tok-ok")
 
     def test_hls_cancelled_while_the_packager_started_is_not_published(self):
         pick = _pick("c1", codec="H264")
         self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}
         self.probes["internal://c1"] = REMUX_PROBE
         stopped = []
-        orig_stop = server.bx_stop_all
-        self.addCleanup(lambda: setattr(server, "bx_stop_all", orig_stop))
-        server.bx_stop_all = lambda reason=None: stopped.append(reason)
+        orig_stop = browser_session.bx_stop_all
+        self.addCleanup(lambda: setattr(browser_session, "bx_stop_all", orig_stop))
+        browser_session.bx_stop_all = lambda reason=None: stopped.append(reason)
         def cancelling_begin(token, src, plan, seg, duration, mid, gen):
             self.bx_begin_calls.append({"token": token})
             # Mimic the real bx_begin, which registers the session before
             # anything can be published from it.
-            with server._lock:
-                server._bx.update(token=token, gen=gen, state="starting",
+            with core._lock:
+                browser_session._bx.update(token=token, gen=gen, state="starting",
                                   at=time.time())
-            server.play_claim()
+            jobs.play_claim()
             return True
-        server.bx_begin = cancelling_begin
+        browser_session.bx_begin = cancelling_begin
         job = self._run([pick], DIRECT_CAPS, token="tok-hls-gone")
         self.assertEqual(job.get("stage"), "error")
         self.assertIn("Superseded", job.get("msg") or "")
@@ -399,21 +411,21 @@ class RunBrowserJobTest(unittest.TestCase):
         self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}
         self.probes["internal://c1"] = REMUX_PROBE
         stopped = []
-        orig_stop = server.bx_stop_all
-        self.addCleanup(lambda: setattr(server, "bx_stop_all", orig_stop))
-        server.bx_stop_all = lambda reason=None: stopped.append(reason)
+        orig_stop = browser_session.bx_stop_all
+        self.addCleanup(lambda: setattr(browser_session, "bx_stop_all", orig_stop))
+        browser_session.bx_stop_all = lambda reason=None: stopped.append(reason)
         def cancelling_begin(token, src, plan, seg, duration, mid, gen):
             self.bx_begin_calls.append({"token": token})
-            server.play_claim()
-            with server._lock:     # the winner's session, not ours
-                server._bx.update(token="tok-winner", gen=99,
+            jobs.play_claim()
+            with core._lock:     # the winner's session, not ours
+                browser_session._bx.update(token="tok-winner", gen=99,
                                   state="starting", at=time.time())
             return True
-        server.bx_begin = cancelling_begin
+        browser_session.bx_begin = cancelling_begin
         job = self._run([pick], DIRECT_CAPS, token="tok-loser")
         self.assertEqual(job.get("stage"), "error")
         self.assertEqual(stopped, [])
-        self.assertEqual(server._bx["token"], "tok-winner")
+        self.assertEqual(browser_session._bx["token"], "tok-winner")
 
     # ---- the skip contract --------------------------------------------------
 
@@ -472,8 +484,8 @@ class RunBrowserJobTest(unittest.TestCase):
             def f(*a, **kw):
                 raise AssertionError("run_browser_job must never call %s" % name)
             return f
-        orig = (server.app_cmd, server.launch, server.wake_app,
-                server.app_fresh, server.adb, server._ss_q.put, server._hifi)
+        orig = (tvlink.app_cmd, tvlink.launch, tvlink.wake_app,
+                tvlink.app_fresh, tvlink.adb, sendspin._ss_q.put, sendspin._hifi)
 
         class _TripwireHifi(dict):
             def __setitem__(self, k, v):
@@ -482,13 +494,13 @@ class RunBrowserJobTest(unittest.TestCase):
                         "run_browser_job must never set _hifi['src']")
                 super().__setitem__(k, v)
 
-        server.app_cmd = tripwire("app_cmd")
-        server.launch = tripwire("launch")
-        server.wake_app = tripwire("wake_app")
-        server.app_fresh = tripwire("app_fresh")
-        server.adb = tripwire("adb")
-        server._ss_q.put = tripwire("_ss_q.put")
-        server._hifi = _TripwireHifi(orig[6])
+        tvlink.app_cmd = tripwire("app_cmd")
+        tvlink.launch = tripwire("launch")
+        tvlink.wake_app = tripwire("wake_app")
+        tvlink.app_fresh = tripwire("app_fresh")
+        tvlink.adb = tripwire("adb")
+        sendspin._ss_q.put = tripwire("_ss_q.put")
+        sendspin._hifi = _TripwireHifi(orig[6])
         try:
             pick = _pick("c1", codec="H264")
             self.preps["c1"] = {"internal": "internal://c1", "aidx": 0}
@@ -496,8 +508,8 @@ class RunBrowserJobTest(unittest.TestCase):
             job = self._run([pick], DIRECT_CAPS)
             self.assertEqual(job.get("stage"), "playing")
         finally:
-            (server.app_cmd, server.launch, server.wake_app, server.app_fresh,
-             server.adb, server._ss_q.put, server._hifi) = orig
+            (tvlink.app_cmd, tvlink.launch, tvlink.wake_app, tvlink.app_fresh,
+             tvlink.adb, sendspin._ss_q.put, sendspin._hifi) = orig
 
 
 class BrowserPicksTest(unittest.TestCase):
@@ -527,7 +539,7 @@ class BrowserPicksTest(unittest.TestCase):
 
 
 def browser_play_test_order(entry, caps):
-    return [c["key"] for c in server.browser_picks(entry, caps)]
+    return [c["key"] for c in browser_session.browser_picks(entry, caps)]
 
 
 class BxRoutesTest(unittest.TestCase):
@@ -535,21 +547,21 @@ class BxRoutesTest(unittest.TestCase):
     loopback socket the way test_bx_serve.py drives /hls/."""
 
     def setUp(self):
-        server._jobs = {}
-        server._bx = dict(IDLE_BX)
-        server._play_gen = 0
-        server._cancel_gen = 0
+        jobs._jobs = {}
+        browser_session._bx = dict(IDLE_BX)
+        jobs._play_gen = 0
+        jobs._cancel_gen = 0
         # No real docker/ffmpeg here: a beat's pause/resume branch looks up
         # the packager's pid before it would ever shell out to `kill`.
-        self._orig_ctr_pid = server._ctr_pid
-        server._ctr_pid = lambda name: None
+        self._orig_ctr_pid = transcode._ctr_pid
+        transcode._ctr_pid = lambda name: None
 
     def tearDown(self):
-        server._jobs = {}
-        server._bx = dict(IDLE_BX)
-        server._play_gen = 0
-        server._cancel_gen = 0
-        server._ctr_pid = self._orig_ctr_pid
+        jobs._jobs = {}
+        browser_session._bx = dict(IDLE_BX)
+        jobs._play_gen = 0
+        jobs._cancel_gen = 0
+        transcode._ctr_pid = self._orig_ctr_pid
 
     def test_bx_probes_matches_the_module_list(self):
         with _Live() as live:
@@ -605,74 +617,74 @@ class BxRoutesTest(unittest.TestCase):
                          'video/mp4; codecs="avc1.640028,mp4a.40.2"')
 
     def test_beat_mismatched_token_is_409_stale_and_changes_nothing(self):
-        server._bx.update(token="real-token", gen=5, at=0.0, pos=0.0)
+        browser_session._bx.update(token="real-token", gen=5, at=0.0, pos=0.0)
         with _Live() as live:
             r, body = live.post("/api/bx/beat", {
                 "token": "wrong-token", "gen": 5, "pos": 99.0, "state": "playing"})
             self.assertEqual(r.status, 409)
             self.assertTrue(json.loads(body).get("stale"))
-        self.assertEqual(server._bx["at"], 0.0)
-        self.assertEqual(server._bx["pos"], 0.0)
+        self.assertEqual(browser_session._bx["at"], 0.0)
+        self.assertEqual(browser_session._bx["pos"], 0.0)
 
     def test_beat_matching_token_updates_at_and_pos(self):
-        server._bx.update(token="tok-live", gen=5, at=0.0, pos=0.0, state="playing")
+        browser_session._bx.update(token="tok-live", gen=5, at=0.0, pos=0.0, state="playing")
         with _Live() as live:
             r, _ = live.post("/api/bx/beat", {
                 "token": "tok-live", "gen": 5, "pos": 12.5, "state": "playing"})
             self.assertEqual(r.status, 200)
-        self.assertGreater(server._bx["at"], 0.0)
-        self.assertEqual(server._bx["pos"], 12.5)
+        self.assertGreater(browser_session._bx["at"], 0.0)
+        self.assertEqual(browser_session._bx["pos"], 12.5)
 
     def test_paused_beat_does_not_retire_the_job(self):
-        server._bx.update(token="tok-live", gen=5, at=0.0, pos=0.0, state="playing")
-        server.job_set("m1", stage="buffering", owner="browser", otoken="tok-live")
+        browser_session._bx.update(token="tok-live", gen=5, at=0.0, pos=0.0, state="playing")
+        jobs.job_set("m1", stage="buffering", owner="browser", otoken="tok-live")
         with _Live() as live:
             r, _ = live.post("/api/bx/beat", {
                 "token": "tok-live", "gen": 5, "pos": 1.0, "state": "paused"})
             self.assertEqual(r.status, 200)
-        job = server.job_get("m1")
+        job = jobs.job_get("m1")
         self.assertEqual(job.get("stage"), "buffering")
 
     def test_bx_stop_matching_bx_session_tears_it_down(self):
-        server._bx.update(token="tok-live", gen=1, at=time.time(), state="playing")
+        browser_session._bx.update(token="tok-live", gen=1, at=time.time(), state="playing")
         with _Live() as live:
             r, _ = live.post("/api/bx/stop", {"token": "tok-live", "gen": 1})
             self.assertEqual(r.status, 200)
-        self.assertIsNone(server._bx["token"])
+        self.assertIsNone(browser_session._bx["token"])
 
     def test_bx_stop_tolerates_sendbeacon_content_type(self):
-        server._bx.update(token="tok-live", gen=1, at=time.time(), state="playing")
+        browser_session._bx.update(token="tok-live", gen=1, at=time.time(), state="playing")
         with _Live() as live:
             r, _ = live.post(
                 "/api/bx/stop", raw=json.dumps({"token": "tok-live"}).encode(),
                 headers={"Content-Type": "text/plain"})
             self.assertEqual(r.status, 200)
-        self.assertIsNone(server._bx["token"])
+        self.assertIsNone(browser_session._bx["token"])
 
     def test_bx_stop_retires_a_still_buffering_job_with_no_bx_session(self):
         # bx_begin() only runs at the very end of run_browser_job -- a job
         # still probing/buffering has no _bx session at all yet, so the stop
         # has to find it by otoken through _jobs directly, independently of
         # whatever (nothing, here) _bx holds.
-        server.job_set("m1", stage="buffering", owner="browser", otoken="tok-early")
+        jobs.job_set("m1", stage="buffering", owner="browser", otoken="tok-early")
         with _Live() as live:
             r, _ = live.post("/api/bx/stop", {"token": "tok-early", "gen": 1})
             self.assertEqual(r.status, 200)
-        job = server.job_get("m1")
+        job = jobs.job_get("m1")
         self.assertEqual(job.get("stage"), "error")
         # The user-visible payoff: the TV is not left refusing to play
         # because active_job() still thinks a browser owns the player.
-        ok, msg = server.claim_owner("tv")
+        ok, msg = jobs.claim_owner("tv")
         self.assertEqual((ok, msg), (True, None))
 
     def test_bx_stop_with_wrong_token_leaves_job_untouched(self):
-        server.job_set("m1", stage="buffering", owner="browser", otoken="tok-real")
+        jobs.job_set("m1", stage="buffering", owner="browser", otoken="tok-real")
         with _Live() as live:
             r, _ = live.post("/api/bx/stop", {"token": "tok-other", "gen": 1})
             self.assertEqual(r.status, 200)
-        job = server.job_get("m1")
+        job = jobs.job_get("m1")
         self.assertEqual(job.get("stage"), "buffering")
-        ok, msg = server.claim_owner("tv")
+        ok, msg = jobs.claim_owner("tv")
         self.assertEqual((ok, msg), (False, "Another device is playing"))
 
 
@@ -682,7 +694,7 @@ class _Live:
     an in-process do_GET/do_POST call would not exercise the same way)."""
 
     def __enter__(self):
-        self.app = server.Server(("127.0.0.1", 0), server.H)
+        self.app = routes.Server(("127.0.0.1", 0), routes.H)
         self.thread = threading.Thread(target=self.app.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.app.server_address[1]

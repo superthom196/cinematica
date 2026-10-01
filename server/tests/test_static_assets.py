@@ -29,6 +29,7 @@ import unittest
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import server  # noqa: E402
+import netprofile  # noqa: E402
 
 STATIC = os.path.join(HERE, "static")
 REPO = os.path.dirname(HERE)
@@ -58,13 +59,13 @@ class VendoredHlsTest(unittest.TestCase):
 
     def test_route_map_serves_exactly_this_build(self):
         route = "/static/" + self.name
-        self.assertIn(route, server.STATIC,
+        self.assertIn(route, netprofile.STATIC,
                       "server.py does not serve %s" % route)
-        served, ctype = server.STATIC[route]
+        served, ctype = netprofile.STATIC[route]
         self.assertEqual(served, self.name)
         self.assertEqual(ctype, "text/javascript")
         # And no OTHER hls build is still routed.
-        stale = [p for p in server.STATIC
+        stale = [p for p in netprofile.STATIC
                  if "hls-" in p and p != route]
         self.assertEqual(stale, [], "stale hls routes still mapped: %r" % stale)
 
@@ -81,16 +82,16 @@ class VendoredHlsTest(unittest.TestCase):
                          "package.sh copies %r" % sorted(named))
 
     def test_provenance_hash_matches_the_bytes(self):
-        # server.py records the bundle's sha256 in a comment, because a
-        # minified blob in a repo with no package manager has no other
-        # provenance trail at all. A comment that no longer describes the
-        # file is a trail pointing at the wrong place.
-        src = _read(os.path.join(HERE, "server.py"))
+        # netprofile.py records the bundle's sha256 in a comment beside the
+        # STATIC list, because a minified blob in a repo with no package
+        # manager has no other provenance trail at all. A comment that no
+        # longer describes the file is a trail pointing at the wrong place.
+        src = _read(os.path.join(HERE, "netprofile.py"))
         recorded = set(re.findall(r"\b([0-9a-f]{64})\b", src))
         with open(os.path.join(STATIC, self.name), "rb") as f:
             actual = hashlib.sha256(f.read()).hexdigest()
         self.assertIn(actual, recorded,
-                      "no comment in server.py records sha256 %s for %s"
+                      "no comment in netprofile.py records sha256 %s for %s"
                       % (actual, self.name))
 
     def test_readme_names_this_build(self):

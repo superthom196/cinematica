@@ -44,6 +44,11 @@ import unittest
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import server           # noqa: E402
+import browser_session  # noqa: E402
+import config  # noqa: E402
+import core  # noqa: E402
+import routes  # noqa: E402
+import transcode  # noqa: E402
 import browser_play     # noqa: E402
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -106,7 +111,7 @@ class _Live:
     """
 
     def __enter__(self):
-        self.app = server.Server(("127.0.0.1", 0), server.H)
+        self.app = routes.Server(("127.0.0.1", 0), routes.H)
         self.thread = threading.Thread(target=self.app.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.app.server_address[1]
@@ -131,28 +136,28 @@ class _Live:
 
 class BxServeTest(unittest.TestCase):
     def setUp(self):
-        self._orig_tc_host = server.TC_HOST
-        self._orig_bx = dict(server._bx)
-        self._orig_seg_wait = server.BX_SEG_WAIT
+        self._orig_tc_host = config.TC_HOST
+        self._orig_bx = dict(browser_session._bx)
+        self._orig_seg_wait = config.BX_SEG_WAIT
         # The long-poll in the segment route waits up to BX_SEG_WAIT before
         # giving up -- shrink it so the "never comes back 200" test does not
         # take 45 real seconds.
-        server.BX_SEG_WAIT = 0.3
+        config.BX_SEG_WAIT = 0.3
         self.tmp = tempfile.mkdtemp(prefix="bx-serve-test-")
-        server.TC_HOST = self.tmp
+        config.TC_HOST = self.tmp
 
     def tearDown(self):
-        server.TC_HOST = self._orig_tc_host
-        with server._lock:
-            server._bx.clear()
-            server._bx.update(self._orig_bx)
-        server.BX_SEG_WAIT = self._orig_seg_wait
-        with server._tc_lock:
-            server._transcodes.pop("bx:" + TOKEN, None)
+        config.TC_HOST = self._orig_tc_host
+        with core._lock:
+            browser_session._bx.clear()
+            browser_session._bx.update(self._orig_bx)
+        config.BX_SEG_WAIT = self._orig_seg_wait
+        with transcode._tc_lock:
+            transcode._transcodes.pop("bx:" + TOKEN, None)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _session_dir(self, token=TOKEN):
-        return os.path.join(self.tmp, server.BX_DIR + token)
+        return os.path.join(self.tmp, config.BX_DIR + token)
 
     def _make_session(self, n_complete=3, seg=6.0, n_segs=20, anchor=0,
                       token=TOKEN, dur=None, run_anchor=None, timescales=None):
@@ -184,8 +189,8 @@ class BxServeTest(unittest.TestCase):
             k = anchor + i
             with open(os.path.join(sess_dir, "s%06d.m4s" % k), "wb") as f:
                 f.write(_segment_bytes(k, internal_s=i * seg))
-        with server._lock:
-            server._bx.update(
+        with core._lock:
+            browser_session._bx.update(
                 token=token, job=None, gen=0, at=time.time(), state="playing",
                 pos=0.0, dur=dur if dur is not None else n_segs * seg, title=None,
                 dir=sess_dir, seg=seg, anchor=anchor,
@@ -315,13 +320,13 @@ class BxServeTest(unittest.TestCase):
         # the tests ever populated it -- by hand -- which is why nothing
         # caught it. _make_session leaves it None on purpose now.
         self._make_session(n_complete=3)
-        with server._lock:
-            self.assertIsNone(server._bx["timescales"])
+        with core._lock:
+            self.assertIsNone(browser_session._bx["timescales"])
         got = self._served_tfdts(1)
         self.assertIn(VIDEO_TRACK, got)
         # ...and it is cached on _bx afterwards, read from the real file.
-        with server._lock:
-            self.assertEqual(server._bx["timescales"],
+        with core._lock:
+            self.assertEqual(browser_session._bx["timescales"],
                              {VIDEO_TRACK: VIDEO_TS, AUDIO_TRACK: AUDIO_TS})
 
     def test_segment_is_503_not_500_while_init_mp4_is_unreadable(self):
@@ -347,9 +352,9 @@ class BxServeTest(unittest.TestCase):
         # nothing after it -- so k is on disk with no successor, which is
         # the state this is about.
         self._make_session(n_complete=0, anchor=k, n_segs=20)
-        with server._tc_lock:
-            server._transcodes["bx:" + TOKEN] = {
-                "proc": _FakeProc(alive=True), "name": server.BX_DIR + TOKEN,
+        with transcode._tc_lock:
+            transcode._transcodes["bx:" + TOKEN] = {
+                "proc": _FakeProc(alive=True), "name": config.BX_DIR + TOKEN,
                 "at": time.time(), "log": None,
             }
         with _Live() as live:

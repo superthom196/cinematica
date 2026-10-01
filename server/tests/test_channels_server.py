@@ -30,6 +30,9 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402
+import channels  # noqa: E402
+import config  # noqa: E402
+import routes  # noqa: E402
 import shelf   # noqa: E402
 from providers import contract  # noqa: E402
 
@@ -38,7 +41,7 @@ def _handler(path, body=None):
     """A bare H, no socket -- exactly test_shelf_wiring.py's _handler, plus
     a real BytesIO wfile so an SSE route's self.wfile.write() lands
     somewhere readable instead of raising AttributeError."""
-    h = server.H.__new__(server.H)
+    h = routes.H.__new__(routes.H)
     raw = json.dumps(body or {}).encode()
     h.headers = {"Host": "localhost", "Content-Length": str(len(raw))}
     h.path = path
@@ -55,13 +58,13 @@ def _handler(path, body=None):
 
 def get(path):
     h, sent = _handler(path)
-    server.H.do_GET(h)
+    routes.H.do_GET(h)
     return sent["code"], sent["body"]
 
 
 def get_sse(path):
     h, sent = _handler(path)
-    server.H.do_GET(h)
+    routes.H.do_GET(h)
     raw = h.wfile.getvalue().decode("utf-8")
     events = []
     for block in raw.split("\n\n"):
@@ -76,7 +79,7 @@ def get_sse(path):
 
 def post(path, body):
     h, sent = _handler(path, body)
-    server.H.do_POST(h)
+    routes.H.do_POST(h)
     return sent["code"], sent["body"]
 
 
@@ -115,8 +118,8 @@ class ChannelsTestBase(unittest.TestCase):
         server.gateway.channel_resolve = lambda q: _channel("prov:resolved", "Resolved")
         server.gateway.channel_play = lambda cid, vid: {"url": "http://x/y", "package": "",
                                                          "label": "another app"}
-        server._channel_popular_cache.update(at=0, data=[], tag=None)
-        server._channel_details_cache.clear()
+        channels._channel_popular_cache.update(at=0, data=[], tag=None)
+        channels._channel_details_cache.clear()
 
     def tearDown(self):
         for name, fn in self._orig.items():
@@ -350,7 +353,7 @@ class ServerChannelsTest(ChannelsTestBase):
     def test_channel_videos_first_page_refetches_when_stale(self):
         shelf.follow("prov:a", True, now=1)
         shelf.set_latest("prov:a", [_video("v1", "old", 5)],
-                          now=time.time() - server.CHANNEL_POLL_MIN * 60 - 10)
+                          now=time.time() - config.CHANNEL_POLL_MIN * 60 - 10)
         server.gateway.channel_latest = lambda cid: {"videos": [_video("v2", "fresh", 9)],
                                                       "next": None}
         code, body = get("/api/channel/videos?id=prov:a")

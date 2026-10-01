@@ -415,14 +415,15 @@ else
         --exclude 'deploy/post-receive' \
         --exclude 'deploy/install-hook.sh' \
         --exclude 'deploy/package.sh' \
-        "$SRC/server.py" "$SRC/browser_play.py" "$SRC/shelf.py" "$SRC/settings.py" \
-        "$SRC/sendspin_bridge.py" "$SRC/index.html" \
+        "$SRC"/*.py "$SRC/index.html" \
         "$SRC/static" "$SRC/docs" "$SRC/deploy" "$SRC/providers" \
         "$DIR/"
     for extra in INSTALL.md README.md LICENSE install.sh; do
         if [ -f "$SRC/$extra" ]; then run cp -p "$SRC/$extra" "$DIR/$extra"; fi
     done
-    info "copied server.py, browser_play.py, shelf.py, settings.py, sendspin_bridge.py, index.html, static/, docs/, deploy/, providers/"
+    # Every module, not a list of names: the server is split across them, and
+    # a list is how one gets left out of an install.
+    info "copied the server's Python modules, index.html, static/, docs/, deploy/, providers/"
     info "left alone: .env, the state directory, netprofile.json, nowplaying.json, imdb-ratings.tsv.gz, transcode/"
 fi
 
@@ -442,7 +443,8 @@ run install -d -m 0775 -o "$SVC_USER" "$DIR/stremio"
 run chown -R "$SVC_USER" "$DIR/deploy" "$DIR/docs" "$DIR/static" "$DIR/providers" 2>/dev/null || true
 # sendspin_bridge.py runs as $SVC_USER under its own unit and keeps its identity
 # and pairing state in $DIR, which is already $SVC_USER-owned (see above).
-for f in server.py browser_play.py shelf.py settings.py sendspin_bridge.py index.html; do
+for p in "$SRC"/*.py "$SRC/index.html"; do
+    f=$(basename "$p")
     if [ "$DRY" = 1 ]; then
         plan "chown $SVC_USER $DIR/$f"
     elif [ -f "$DIR/$f" ]; then

@@ -25,6 +25,11 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402
+import catalogue  # noqa: E402
+import config  # noqa: E402
+import netprofile  # noqa: E402
+import routes  # noqa: E402
+import streams  # noqa: E402
 
 
 def cand(gb, seeders=100):
@@ -33,7 +38,7 @@ def cand(gb, seeders=100):
 
 
 def post(path, body):
-    h = server.H.__new__(server.H)
+    h = routes.H.__new__(routes.H)
     raw = json.dumps(body).encode()
     h.headers = {"Host": "localhost", "Content-Length": str(len(raw))}
     h.path = path
@@ -43,20 +48,20 @@ def post(path, body):
     h.command = "POST"
     sent = {}
     h._send = lambda code, b, ctype="application/json": sent.update(code=code, body=b)
-    server.H.do_POST(h)
+    routes.H.do_POST(h)
     return sent["code"], sent["body"]
 
 
 class LimitsBase(unittest.TestCase):
     def setUp(self):
-        self._net = dict(server._net)
+        self._net = dict(netprofile._net)
         self._saved = []
         self.patches = [
-            mock.patch.object(server, "_net", {"samples": []}),
-            mock.patch.object(server, "SUSTAIN_MBPS", 30.0),
-            mock.patch.object(server, "MAX_GB_4K", 25.0),
-            mock.patch.object(server, "CACHE_GB", 30.0),
-            mock.patch.object(server, "net_save", self._saved.append),
+            mock.patch.object(netprofile, "_net", {"samples": []}),
+            mock.patch.object(config, "SUSTAIN_MBPS", 30.0),
+            mock.patch.object(config, "MAX_GB_4K", 25.0),
+            mock.patch.object(config, "CACHE_GB", 30.0),
+            mock.patch.object(netprofile, "net_save", self._saved.append),
         ]
         for p in self.patches:
             p.start()
@@ -67,49 +72,49 @@ class LimitsBase(unittest.TestCase):
 
     def lid(self, mbps=0, gb=0):
         with redirect_stdout(io.StringIO()):
-            return server.set_limits(mbps, gb)
+            return netprofile.set_limits(mbps, gb)
 
 
 class Picking(LimitsBase):
     def test_no_lid_passes_a_20gb_two_hour_film(self):
         # 20 GB over 120 min is ~22.8 Mbps, inside a 30 Mbps budget.
-        self.assertGreater(server.score(cand(20), runtime_min=120), 0)
-        self.assertEqual(server.max_gb(), 25.0)
+        self.assertGreater(streams.score(cand(20), runtime_min=120), 0)
+        self.assertEqual(netprofile.max_gb(), 25.0)
 
     def test_speed_lid_refuses_the_same_film(self):
         self.lid(mbps=12)
-        self.assertEqual(server.score(cand(20), runtime_min=120), -1)
+        self.assertEqual(streams.score(cand(20), runtime_min=120), -1)
         # 8 GB over two hours is ~9.1 Mbps: still fine.
-        self.assertGreater(server.score(cand(8), runtime_min=120), 0)
+        self.assertGreater(streams.score(cand(8), runtime_min=120), 0)
 
     def test_speed_lid_caps_the_well_seeded_bonus(self):
         self.lid(mbps=12)
-        self.assertEqual(server.sustainable_mbps(server.WELL_SEEDED + 1), 12)
-        self.assertEqual(server.sustainable_mbps(None), 12)
+        self.assertEqual(netprofile.sustainable_mbps(config.WELL_SEEDED + 1), 12)
+        self.assertEqual(netprofile.sustainable_mbps(None), 12)
 
     def test_speed_lid_above_the_budget_changes_nothing(self):
         self.lid(mbps=100)
-        self.assertEqual(server.sustainable_mbps(None), 30.0)
+        self.assertEqual(netprofile.sustainable_mbps(None), 30.0)
 
     def test_size_lid_refuses_anything_bigger_however_long(self):
         self.lid(gb=10)
         # 12 GB over three hours is only ~9 Mbps, but it is still 12 GB.
-        self.assertEqual(server.score(cand(12), runtime_min=180), -1)
-        self.assertGreater(server.score(cand(9.5), runtime_min=180), 0)
+        self.assertEqual(streams.score(cand(12), runtime_min=180), -1)
+        self.assertGreater(streams.score(cand(9.5), runtime_min=180), 0)
 
     def test_file_must_fit_in_the_cache(self):
-        with mock.patch.object(server, "CACHE_GB", 15.0):
-            self.assertEqual(server.max_gb(), 15.0)
-            self.assertEqual(server.score(cand(18), runtime_min=240), -1)
+        with mock.patch.object(config, "CACHE_GB", 15.0):
+            self.assertEqual(netprofile.max_gb(), 15.0)
+            self.assertEqual(streams.score(cand(18), runtime_min=240), -1)
 
 
 class Saving(LimitsBase):
     def test_saving_drops_picks_and_pools_and_persists(self):
-        server._streams["x@1"] = {"at": 0, "pick": cand(20)}
-        server._pool["k"] = {"cands": []}
+        streams._streams["x@1"] = {"at": 0, "pick": cand(20)}
+        catalogue._pool["k"] = {"cands": []}
         got = self.lid(mbps=15, gb=12)
-        self.assertEqual(server._streams, {})
-        self.assertEqual(server._pool, {})
+        self.assertEqual(streams._streams, {})
+        self.assertEqual(catalogue._pool, {})
         self.assertEqual(self._saved[-1]["cap_mbps"], 15)
         self.assertEqual(self._saved[-1]["cap_gb"], 12)
         self.assertEqual(got["max_gb"], 12)
@@ -125,7 +130,7 @@ class Saving(LimitsBase):
 class Route(LimitsBase):
     def setUp(self):
         super().setUp()
-        self.admin = mock.patch.object(server.H, "_require_admin", lambda self: "tok")
+        self.admin = mock.patch.object(routes.H, "_require_admin", lambda self: "tok")
         self.admin.start()
 
     def tearDown(self):
@@ -143,7 +148,7 @@ class Route(LimitsBase):
         for bad in ({"cap_mbps": 1}, {"cap_gb": 0.5}, {"cap_mbps": -3}, {"cap_gb": "lots"}):
             code, _ = post("/api/limits", bad)
             self.assertEqual(code, 400, bad)
-        self.assertNotIn("cap_mbps", server._net)
+        self.assertNotIn("cap_mbps", netprofile._net)
 
     def test_needs_admin(self):
         self.admin.stop()

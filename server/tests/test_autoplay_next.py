@@ -9,41 +9,45 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import server  # noqa: E402
+import catalogue  # noqa: E402
+import jobs  # noqa: E402
+import tvlink  # noqa: E402
 
 
 class AutoplayNextTest(unittest.TestCase):
     def setUp(self):
-        server._jobs.clear()
-        server._app = None
-        server._app_cmd = None
-        self._saved = {k: getattr(server, k) for k in
-                       ("next_episode", "tv_season", "_autoplay_start", "start_play")}
+        jobs._jobs.clear()
+        tvlink._app = None
+        tvlink._app_cmd = None
+        self._saved = {(m, k): getattr(m, k) for m, k in
+                       ((catalogue, "next_episode"), (catalogue, "tv_season"),
+                        (jobs, "_autoplay_start"), (jobs, "start_play"))}
         self.started = []
-        server.next_episode = lambda tid, s, e: (s, e + 1)
-        server.tv_season = lambda tid, s: {"episodes": [
+        catalogue.next_episode = lambda tid, s, e: (s, e + 1)
+        catalogue.tv_season = lambda tid, s: {"episodes": [
             {"episode": 1, "name": "Pilot"}, {"episode": 2, "name": "The Second"}]}
-        server._autoplay_start = lambda nid, resolve: self.started.append(nid)
+        jobs._autoplay_start = lambda nid, resolve: self.started.append(nid)
 
     def tearDown(self):
-        for k, v in self._saved.items():
-            setattr(server, k, v)
-        server._jobs.clear()
-        server._app = None
-        server._app_cmd = None
+        for (m, k), v in self._saved.items():
+            setattr(m, k, v)
+        jobs._jobs.clear()
+        tvlink._app = None
+        tvlink._app_cmd = None
 
     def beat(self, **kw):
         d = {"id": "tv1", "name": "TV", "version": "1", "wait": 0}
         d.update(kw)
-        return server.app_heartbeat(d)
+        return tvlink.app_heartbeat(d)
 
     def test_the_ended_beat_names_the_next_episode(self):
-        server.job_set("tv:show:1:1", autoplay=True)
+        jobs.job_set("tv:show:1:1", autoplay=True)
         self.assertNotIn("next", self.beat(state="playing", job="tv:show:1:1", position_s=10))
         reply = self.beat(state="ended", job="tv:show:1:1")
         self.assertEqual(reply["next"], {"job": "tv:show:1:2", "s": 1, "e": 2, "name": "The Second"})
         self.assertEqual(self.started, ["tv:show:1:2"])
         # Registered before the thread runs, so the app's first poll finds it moving.
-        self.assertEqual(server.job_get("tv:show:1:2")["stage"], "starting")
+        self.assertEqual(jobs.job_get("tv:show:1:2")["stage"], "starting")
         # Only the edge: a repeat "ended" does not start it again.
         self.assertNotIn("next", self.beat(state="ended", job="tv:show:1:1"))
         self.assertEqual(self.started, ["tv:show:1:2"])
@@ -51,45 +55,45 @@ class AutoplayNextTest(unittest.TestCase):
     def test_the_answer_worked_out_during_the_episode_is_used(self):
         def no_lookup(*a):
             raise AssertionError("the heartbeat asked the provider")
-        server.next_episode = no_lookup
-        server.job_set("tv:show:1:1", autoplay=True,
+        catalogue.next_episode = no_lookup
+        jobs.job_set("tv:show:1:1", autoplay=True,
                        next_ep={"s": 2, "e": 1, "name": "New Season"})
         self.beat(state="playing", job="tv:show:1:1", position_s=10)
         reply = self.beat(state="ended", job="tv:show:1:1")
         self.assertEqual(reply["next"], {"job": "tv:show:2:1", "s": 2, "e": 1, "name": "New Season"})
 
     def test_a_stored_end_of_show_starts_nothing(self):
-        server.job_set("tv:show:1:9", autoplay=True, next_ep=False)
+        jobs.job_set("tv:show:1:9", autoplay=True, next_ep=False)
         self.beat(state="playing", job="tv:show:1:9", position_s=10)
         self.assertNotIn("next", self.beat(state="ended", job="tv:show:1:9"))
         self.assertEqual(self.started, [])
 
     def test_remembering_stores_the_next_episode_on_the_job(self):
-        server.job_set("tv:show:1:1", autoplay=True)
-        server._remember_next_episode("tv:show:1:1")
-        self.assertEqual(server.job_get("tv:show:1:1")["next_ep"], {"s": 1, "e": 2, "name": "The Second"})
+        jobs.job_set("tv:show:1:1", autoplay=True)
+        jobs._remember_next_episode("tv:show:1:1")
+        self.assertEqual(jobs.job_get("tv:show:1:1")["next_ep"], {"s": 1, "e": 2, "name": "The Second"})
 
     def test_no_autoplay_no_next(self):
-        server.job_set("tv:show:1:1", autoplay=False)
+        jobs.job_set("tv:show:1:1", autoplay=False)
         self.beat(state="playing", job="tv:show:1:1", position_s=10)
         self.assertNotIn("next", self.beat(state="ended", job="tv:show:1:1"))
         self.assertEqual(self.started, [])
 
     def test_a_next_episode_with_no_stream_retires_its_job(self):
-        server._autoplay_start = self._saved["_autoplay_start"]
-        server.start_play = lambda nid, resolve, autoplay=False: (409, {"ok": False, "msg": "no stream"})
-        server.job_set("tv:show:1:2", stage="starting")
-        server._autoplay_start("tv:show:1:2", None)
-        j = server.job_get("tv:show:1:2")
+        jobs._autoplay_start = self._saved[(jobs, "_autoplay_start")]
+        jobs.start_play = lambda nid, resolve, autoplay=False: (409, {"ok": False, "msg": "no stream"})
+        jobs.job_set("tv:show:1:2", stage="starting")
+        jobs._autoplay_start("tv:show:1:2", None)
+        j = jobs.job_get("tv:show:1:2")
         self.assertEqual(j["stage"], "error")
         self.assertEqual(j["msg"], "no stream")
 
     def test_a_cancelled_job_keeps_its_own_message(self):
-        server._autoplay_start = self._saved["_autoplay_start"]
-        server.start_play = lambda nid, resolve, autoplay=False: (409, {"ok": False, "msg": "Cancelled"})
-        server.job_set("tv:show:1:2", stage="error", msg="Cancelled by you")
-        server._autoplay_start("tv:show:1:2", None)
-        self.assertEqual(server.job_get("tv:show:1:2")["msg"], "Cancelled by you")
+        jobs._autoplay_start = self._saved[(jobs, "_autoplay_start")]
+        jobs.start_play = lambda nid, resolve, autoplay=False: (409, {"ok": False, "msg": "Cancelled"})
+        jobs.job_set("tv:show:1:2", stage="error", msg="Cancelled by you")
+        jobs._autoplay_start("tv:show:1:2", None)
+        self.assertEqual(jobs.job_get("tv:show:1:2")["msg"], "Cancelled by you")
 
 
 if __name__ == "__main__":

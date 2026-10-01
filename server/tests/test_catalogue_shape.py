@@ -26,6 +26,10 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402
+import catalogue  # noqa: E402
+import config  # noqa: E402
+import routes  # noqa: E402
+import streams  # noqa: E402
 from providers import contract  # noqa: E402
 
 CAT = "listcat"
@@ -120,47 +124,47 @@ class CatalogueShapeTest(unittest.TestCase):
             setattr(server.gateway, n, getattr(self.gw, n))
         # The budget is loaded from this machine's netprofile.json, if any;
         # pin it so a 4 GB, 148-minute film fits here as it does anywhere.
-        self._sustain = server.SUSTAIN_MBPS
-        server.SUSTAIN_MBPS = 12.0
-        for cache in (server._pool, server._streams, server._tvdet, server._tvseason):
+        self._sustain = config.SUSTAIN_MBPS
+        config.SUSTAIN_MBPS = 12.0
+        for cache in (catalogue._pool, streams._streams, catalogue._tvdet, catalogue._tvseason):
             cache.clear()
 
     def tearDown(self):
         for n, fn in self._saved.items():
             setattr(server.gateway, n, fn)
-        server.SUSTAIN_MBPS = self._sustain
-        for cache in (server._pool, server._streams, server._tvdet, server._tvseason):
+        config.SUSTAIN_MBPS = self._sustain
+        for cache in (catalogue._pool, streams._streams, catalogue._tvdet, catalogue._tvseason):
             cache.clear()
 
     # -- films ----------------------------------------------------------------
     def test_film_wall_is_not_empty_when_list_entries_have_no_ids(self):
-        ms, _more, _cursor, pool, err = server.get_page(kind="movie", bias=False)
+        ms, _more, _cursor, pool, err = catalogue.get_page(kind="movie", bias=False)
         self.assertIsNone(err)
         self.assertEqual(pool, 2)
         self.assertEqual(sorted(m["title"] for m in ms), ["First Film", "Second Film"])
 
     def test_stream_lookup_gets_the_imdb_id_and_runtime_from_details(self):
-        server.get_page(kind="movie", bias=False)
+        catalogue.get_page(kind="movie", bias=False)
         films = [i for i in self.gw.identities if i["kind"] == contract.KIND_MOVIE]
         self.assertEqual(sorted(i["external_ids"]["imdb"] for i in films),
                          ["tt0000101", "tt0000102"])
         self.assertTrue(all(i["runtime"] for i in films))
 
     def test_play_after_the_wall_finds_the_same_stream(self):
-        server.get_page(kind="movie", bias=False)
-        e = server.get_stream("%s:101" % CAT)
+        catalogue.get_page(kind="movie", bias=False)
+        e = streams.get_stream("%s:101" % CAT)
         self.assertIsNone(e["err"])
         self.assertEqual(e["pick"]["infoHash"], HASH)
         self.assertEqual(e["runtime"], 148)
 
     def test_entry_that_already_carries_ids_needs_no_details(self):
         rich = _entry(dict(FILM_LIST[0], runtime=148, external_ids={"imdb": "tt0000101"}))
-        e = server.get_stream(rich["id"], entry=rich)
+        e = streams.get_stream(rich["id"], entry=rich)
         self.assertIsNone(e["err"])
         self.assertEqual(self.gw.details_calls, [])
 
     def test_film_tile_has_the_fields_the_clients_read(self):
-        ms, *_ = server.get_page(kind="movie", bias=False)
+        ms, *_ = catalogue.get_page(kind="movie", bias=False)
         m = next(x for x in ms if x["title"] == "First Film")
         self.assertEqual(m["kind"], "movie")
         self.assertEqual((m["vote"], m["votes"]), (8.3, 40000))
@@ -169,11 +173,11 @@ class CatalogueShapeTest(unittest.TestCase):
         self.assertEqual(m["stream"]["pick"]["infoHash"], HASH)
 
     def test_wall_is_ranked_by_imdb_rating(self):
-        ms, *_ = server.get_page(kind="movie", bias=False)
+        ms, *_ = catalogue.get_page(kind="movie", bias=False)
         self.assertEqual([m["title"] for m in ms], ["Second Film", "First Film"])
 
     def test_search_tiles_match_wall_tiles(self):
-        ms, found, _ = server.search_movies("film", kind="movie")
+        ms, found, _ = catalogue.search_movies("film", kind="movie")
         self.assertEqual(found, 2)
         m = next(x for x in ms if x["title"] == "First Film")
         self.assertEqual(m["kind"], "movie")
@@ -206,13 +210,13 @@ class CatalogueShapeTest(unittest.TestCase):
         server.gateway.browse = tiered_browse
         server.gateway.supports_filters = lambda role=None: {
             "min_votes", "origin_countries", "original_language"}
-        saved = server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES
-        server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES = \
+        saved = config.POOL_MAX, config.HOME_COUNTRIES, config.BIAS_LANG, config.WORLD_MIN_VOTES
+        config.POOL_MAX, config.HOME_COUNTRIES, config.BIAS_LANG, config.WORLD_MIN_VOTES = \
             2, ["GB"], "en", 10000
         try:
-            pool = server.build_pool([], "top", [], "movie", True, "k")
+            pool = catalogue.build_pool([], "top", [], "movie", True, "k")
         finally:
-            server.POOL_MAX, server.HOME_COUNTRIES, server.BIAS_LANG, server.WORLD_MIN_VOTES = saved
+            config.POOL_MAX, config.HOME_COUNTRIES, config.BIAS_LANG, config.WORLD_MIN_VOTES = saved
         self.assertEqual([c["title"] for c in pool], ["Big Tier, Rated 9", "World Tier, Rated 8"])
 
     def test_a_failing_tier_is_remembered_and_the_rest_still_build(self):
@@ -232,13 +236,13 @@ class CatalogueShapeTest(unittest.TestCase):
         server.gateway.browse = flaky_browse
         server.gateway.supports_filters = lambda role=None: {
             "min_votes", "origin_countries", "original_language"}
-        saved = server.HOME_COUNTRIES, server.BIAS_LANG
-        server.HOME_COUNTRIES, server.BIAS_LANG = ["GB"], "en"
+        saved = config.HOME_COUNTRIES, config.BIAS_LANG
+        config.HOME_COUNTRIES, config.BIAS_LANG = ["GB"], "en"
         errs = []
         try:
-            pool = server.build_pool([], "top", [], "movie", True, "k", errs=errs)
+            pool = catalogue.build_pool([], "top", [], "movie", True, "k", errs=errs)
         finally:
-            server.HOME_COUNTRIES, server.BIAS_LANG = saved
+            config.HOME_COUNTRIES, config.BIAS_LANG = saved
         self.assertEqual([c["title"] for c in pool], ["Still Here"])
         self.assertEqual([e.code for e in errs], [contract.E_TIMEOUT])
 
@@ -246,32 +250,32 @@ class CatalogueShapeTest(unittest.TestCase):
     def test_series_tile_says_tv(self):
         # The TV app and the web page both open the seasons-and-episodes page
         # on kind == "tv"; "series" opened every series as a film.
-        ms, *_ = server.get_page(kind="tv", bias=False)
+        ms, *_ = catalogue.get_page(kind="tv", bias=False)
         self.assertEqual([m["kind"] for m in ms], ["tv"])
         self.assertEqual(ms[0]["vote"], 8.9)
         self.assertEqual(ms[0]["imdb"]["rating"], 9.5)
 
     def test_series_search_tile_says_tv(self):
-        ms, _, _ = server.search_movies("series", kind="tv")
+        ms, _, _ = catalogue.search_movies("series", kind="tv")
         self.assertEqual([m["kind"] for m in ms], ["tv"])
 
     def test_series_page_and_episode_rows_carry_ratings(self):
-        d = server.tv_detail("%s:201" % CAT)
+        d = catalogue.tv_detail("%s:201" % CAT)
         self.assertEqual(d["kind"], "tv")
         self.assertEqual((d["vote"], d["votes"]), (8.9, 18000))
-        eps = server.tv_season("%s:201" % CAT, 1)["episodes"]
+        eps = catalogue.tv_season("%s:201" % CAT, 1)["episodes"]
         self.assertEqual([e["vote"] for e in eps], [8.1, 8.2])
 
 
 def _get(path):
-    h = server.H.__new__(server.H)
+    h = routes.H.__new__(routes.H)
     h.headers = {"Host": "localhost", "Content-Length": "0"}
     h.path = path
     h.rfile = io.BytesIO(b"")
     h.close_connection = False
     sent = {}
     h._send = lambda code, b, ctype="application/json": sent.update(code=code, body=b)
-    server.H.do_GET(h)
+    routes.H.do_GET(h)
     body = sent["body"]
     return sent["code"], json.loads(body) if isinstance(body, (bytes, str)) else body
 
