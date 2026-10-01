@@ -120,7 +120,7 @@ def claim_owner(owner, token=None):
             return False, "Another device is playing"
         # The same blind spot the TV branch above guards against, and it
         # needs guarding in this direction too: a browser job that is still
-        # preparing has no _bx session yet, so browser_playing() below reads
+        # preparing has no _bx session yet, so browser_playing() (browser_session.py) reads
         # False for the whole 30-120s a candidate takes to buffer, and a
         # second browser landing in that window took the player off the
         # viewer who was already sitting waiting for it.

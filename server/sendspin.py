@@ -8,7 +8,7 @@ import config, core, nowplaying, tvlink
 # The bridge, not this process, owns the DAC and the ffmpeg feeding it. All
 # network I/O to it happens on _ss_worker's own thread so a slow or dead
 # bridge can never block the heartbeat handler or be reached while _lock (==
-# _app_cv's lock) is held -- see the callers below, which only ever put() here.
+# _app_cv's lock) is held -- see the callers, which only ever put() here.
 _hifi = {"on": False, "gen": int(time.time()), "t0_us": None, "clock_offset_us": 0,
          "streaming": False, "connected": False, "src": None, "aidx": 0,
          # Centre mode: the TV's own speakers play the film's centre channel

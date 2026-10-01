@@ -33,7 +33,7 @@ PUBLIC_HOST = settings.get("PUBLIC_HOST") or _default_host()
 STREMIO   = settings.get("STREMIO", f"http://{PUBLIC_HOST}:11470")
 # The names this server answers to. A page on the public internet can point a
 # hostname it owns at this box's private address -- DNS rebinding -- and from
-# then on the browser treats it as same-origin, so _origin_ok() below sees
+# then on the browser treats it as same-origin, so _origin_ok() in routes.py sees
 # Origin and Host agree and waves it through. Both of them say the attacker's
 # name, which is the tell: the one thing the attack cannot fake is being
 # addressed to a name this server actually has. An IP literal is always
@@ -196,7 +196,7 @@ ATTEMPTS    = int(settings.get("ATTEMPTS", 5))     # candidates to try per film
 DEAD_SECS   = int(settings.get("DEAD_SECS", 25))   # no bytes at all -> abandon
 PROBE_SECS  = int(settings.get("PROBE_SECS", 35))  # too slow by now -> abandon
 SLOW_RATIO  = float(settings.get("SLOW_RATIO", 0.7))
-# When runtime_min is unknown, need_bps is 0 and the SLOW_RATIO check above is
+# When runtime_min is unknown, need_bps is 0 and the SLOW_RATIO check in jobs.py is
 # disabled outright -- nothing stops a trickling swarm from buffering forever.
 # This is the backstop: no candidate gets longer than this, full stop.
 HARD_CAP_SECS = int(settings.get("HARD_CAP_SECS", 240))
@@ -260,7 +260,7 @@ AUTOPLAY_NEXT = settings.flag("AUTOPLAY_NEXT", True)
 # the listing layer reads whatever languages the streams provider reports on
 # the candidate itself, the file layer reads the audio tracks ffprobe finds
 # in the actual file. PREF_LANG is an ISO 639-1 code -- ffprobe reports 639-2
-# ("eng"), so LANG_TAGS below bridges the two.
+# ("eng"), so LANG_TAGS in streams.py bridges the two.
 PREF_LANG   = settings.get("PREF_LANG", "en")
 REJECT_LANG = settings.flag("REJECT_LANG", True)
 # Hardcoded ("burnt-in") subtitles are part of the picture: no player can turn
@@ -305,7 +305,7 @@ HIFI_AUDIO_DELAY_MS = int(settings.get("HIFI_AUDIO_DELAY_MS", "0"))
 # a first chunk less than its send-ahead floor (~1 s) from now.
 HIFI_TRACK_END_S = 2.0
 
-# Kept here with the rest, so every knob this file reads is in one place.
+# Kept here with the rest, so every setting the server reads is in one place.
 # Probing saturates the link by design, so any uncached catalogue call made
 # while it runs times out -- which showed up as a completely blank film
 # list. It waits for the app to be genuinely idle instead of merely waiting
@@ -340,7 +340,7 @@ TC_KEEP  = int(settings.get("TRANSCODE_KEEP", 0))   # cache is emptied per film,
 
 # The on-demand browser HLS packager: one ffmpeg per session, remuxing the
 # source into fMP4 segments a grid-index at a time, paced against the real
-# playhead instead of an estimate. See regulate_hls / bx_spawn below.
+# playhead instead of an estimate. See regulate_hls / bx_spawn in browser_session.py.
 BX_DIR      = "bx_"                    # per-session directory prefix under TC_HOST
 BX_SEG_WAIT = float(settings.get("BX_SEG_WAIT", 45))   # long-poll ceiling per segment
 BX_LEAD     = float(settings.get("BX_LEAD", 300))      # seconds ahead of the playhead

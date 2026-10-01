@@ -1742,7 +1742,7 @@ class H(BaseHTTPRequestHandler):
             watching.shelf_note(mid, bpos, bdur, state, force_save=(state != was))
         # A pause must never tear the job down -- only a lost
         # heartbeat does, via browser_playing()'s own staleness
-        # check above. All a pause has to do here is stop the
+        # check in browser_session.py. All a pause has to do here is stop the
         # packager burning CPU (and lead-time) on a viewer who has
         # stepped away, the same SIGSTOP/SIGCONT regulate_lead()
         # already uses for the TV's own transcode, with the same

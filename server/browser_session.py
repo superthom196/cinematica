@@ -17,7 +17,7 @@ def browser_playing():
         return (_bx["token"] is not None and _bx["state"] != "ended"
                 and time.time() - _bx["at"] < config.BX_IDLE)
 
-# One browser session at a time, mirroring the one-play-job rule above. The
+# One browser session at a time, mirroring the one-play-job rule in jobs.py. The
 # token is minted by the server rather than the page: a token the page chose
 # could be replayed from a bookmarked url, and this one is also the segment
 # path, so it is the only thing standing between a stale tab and a live
@@ -52,7 +52,7 @@ _bx = {"token": None, "job": None, "gen": 0, "at": 0.0, "state": "idle",
 
 def bx_begin(token, src_internal, plan, seg, duration, mid, gen):
     """Start a browser HLS session: make its directory, record the state the
-    routes below read, and kick off the first ffmpeg at the front of the
+    routes in routes.py read, and kick off the first ffmpeg at the front of the
     film. Returns True on success, False if the directory could not be made
     or the first ffmpeg failed to start -- either way there is nothing yet
     for the browser to fetch.
@@ -77,15 +77,15 @@ def bx_spawn(token, k0):
     is fed from k0*seg onward, so a seek to segment k0 is exactly a restart
     of ffmpeg at that offset.
 
-    -ss before -i is an INPUT seek, and -copyts is never passed (see the
-    init.mp4 comment above BX_DIR), so ffmpeg resets the seeked stream's own
+    -ss before -i is an INPUT seek, and -copyts is never passed (see
+    segment_cmd in browser_play.py), so ffmpeg resets the seeked stream's own
     presentation clock to (near) zero at the seek point and counts up from
     there for as long as this process keeps running. -start_number k0 only
     renames the OUTPUT FILES this run writes -- s000100.m4s and so on -- onto
     their real place on the absolute grid; it does not tell ffmpeg to stamp
     an offset into the bytes it writes. So the files on disk are correctly
     named while everything inside them still starts its clock at zero. The
-    server corrects that at serve time -- see the segment route below, and
+    server corrects that at serve time -- see the segment route in routes.py, and
     the reasoning next to its delta calculation.
 
     Registered through transcode_start with key "bx:"+token and name
@@ -106,7 +106,7 @@ def bx_spawn(token, k0):
     aidx = int(plan.get("aidx") or 0)
     # Every segment file left in this directory was written by the run that
     # is being replaced, on a different anchor, so its bytes carry a
-    # different zero point -- and the whole re-timing below rests on one
+    # different zero point -- and the whole re-timing in routes.py rests on one
     # number covering every file present. Clearing them is what makes that
     # invariant true instead of merely likely: whatever survives here would
     # otherwise be served with the new run's anchor added to the old run's
@@ -172,7 +172,7 @@ def bx_clear_segments(sess_dir):
 
 def bx_restart(token, k):
     """Reposition the packager to segment k. This IS how a scrub is served
-    -- see the segment route below, the only caller, which already collapsed
+    -- see the segment route in routes.py, the only caller, which already collapsed
     a burst of seek requests into this one call via seek_gen and
     BX_SEEK_DEBOUNCE before ever reaching here.
     """

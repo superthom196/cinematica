@@ -386,7 +386,7 @@ def app_heartbeat(d):
             # Anything that arrives during the wait was queued within the last
             # few seconds, so there is nothing to expire here.
             cmd = _cmd_wire(_app_cmd)
-    # The shelf, outside the lock above for the reason shelf_note() gives.
+    # The shelf, outside the lock above for the reason watching.shelf_note() gives.
     # The same report the TV sends for its own sake is the only thing that
     # knows where a film got to, so it is fed straight through -- including
     # "ended", which is what marks a FILM watched as well as an episode.

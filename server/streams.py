@@ -230,7 +230,7 @@ def best_stream(identity, runtime_min=None, kind="movie", season=None, episode=N
 # transcoder, the TV's player, and the Sendspin bridge's decoder.
 #
 # None of them do. Core registers the source here and publishes it as a local
-# /src/<key> URL; the proxy below is the only place the real URL and its
+# /src/<key> URL; the proxy in routes.py is the only place the real URL and its
 # headers exist. Every consumer keeps working on a plain, credential-free URL
 # exactly as it did when every source was a torrent, which is why none of the
 # playback or audio code had to change to support this.

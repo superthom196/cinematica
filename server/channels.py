@@ -49,7 +49,7 @@ def channel_watch():
 # {url, package, label} for the TV to hand to another app.
 
 # Both keyed by gateway.cache_tag(ROLE_CHANNELS), same convention as _genres
-# above -- a provider swap or a config edit can never keep serving results
+# in catalogue.py -- a provider swap or a config edit can never keep serving results
 # gathered under the old one.
 _channel_popular_cache = {"at": 0, "data": [], "tag": None}
 _channel_details_cache = {}   # "<tag>@<id>" -> {"at":ts, "channel":{...}}, 1h TTL
