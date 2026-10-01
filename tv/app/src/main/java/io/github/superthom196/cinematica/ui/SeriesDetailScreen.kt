@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.superthom196.cinematica.AppViewModel
@@ -236,6 +240,14 @@ fun SeriesDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
                                         )
                                         ep.runtime?.takeIf { it > 0 }?.let {
                                             Text("$it min", style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
+                                        }
+                                        if (ep.watched) {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = "Watched",
+                                                tint = CinematicaColors.AccentBright,
+                                                modifier = Modifier.padding(start = 8.dp).size(16.dp),
+                                            )
                                         }
                                     }
                                     ep.progress?.let {

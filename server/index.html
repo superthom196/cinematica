@@ -260,7 +260,8 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
   cursor:pointer;font-size:.82rem;position:relative}
 .eprow:last-child{border-bottom:none}
 .eprow:hover,.eprow.sel{background:#8881}
-.eprow.watched{opacity:.45}
+.eprow.watched>*:not(.ew){opacity:.45}
+.eprow .ew{color:var(--accent);font-weight:700;flex:none}
 .eprow .ebar{position:absolute;left:0;bottom:0;height:2px;background:var(--accent)}
 .eprow .en{font-weight:700;color:var(--dim);min-width:1.5rem}
 .eprow .et{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1436,6 +1437,10 @@ async function selectSeason(n){
 
 function paintEpRow(row, e){
   row.classList.toggle('watched', !!e.watched);
+  let tick=row.querySelector('.ew');
+  if(e.watched){
+    if(!tick){ tick=document.createElement('span'); tick.className='ew'; tick.textContent='✓'; tick.title='Watched'; row.appendChild(tick); }
+  } else if(tick) tick.remove();
   let bar=row.querySelector('.ebar');
   if(e.progress!=null && !e.watched){
     if(!bar){ bar=document.createElement('div'); bar.className='ebar'; row.appendChild(bar); }
