@@ -349,7 +349,7 @@ code{font-size:.72rem;background:#8881;padding:.1em .35em;border-radius:4px}
   <div class="controls">
     <button id="qbtn" title="Search">&#128269;<span class="wide"> Search</span></button>
     <button id="nbtn" title="Assess the connection">&#9889;</button>
-    <button id="setbtn" title="Provider settings" hidden>&#9881;</button>
+    <button id="setbtn" title="Settings" hidden>&#9881;</button>
     <div class="gwrap">
       <button id="sbtn"><span class="wide">Sort: </span><span id="slabel">Top rated</span><span class="wide"> &#9662;</span></button>
       <div id="smenu"></div>
@@ -953,6 +953,8 @@ async function refreshNet(){
       +(d.n_ordinary?' \u00b7 '+d.n_ordinary+' ordinary swarms measured':'')
       +(d.needs?' \u00b7 '+d.needs+' more needed before it stops estimating':'')
       +(d.age_h!=null?' \u00b7 '+d.age_h+'h ago':'')
+      +(d.cap_mbps?'\nSpeed limit '+d.cap_mbps+' Mbps':'')
+      +(d.cap_gb?'\nLargest file '+d.cap_gb+' GB':'')
       +'\nTap to re-test (needs the link to itself, so stop playback first).';
   }catch(e){
     // A failed poll must never end the chain. The overlay is only dismissed by
@@ -2193,7 +2195,36 @@ function renderProviderDash(root,data){
     +'<div class="msgline" id="activemsg"></div></div>'
     +'<div class="psec"><h3>Installed providers</h3><div id="provlist">'
     +(provs.length?'':'<p style="color:var(--dim)">No providers installed yet.</p>')+'</div></div>'
+    +'<div class="psec"><h3>Download limits</h3>'
+    +'<div class="pf"><label>Speed limit (Mbps)</label><input id="capmbps" type="number" min="0" step="1" inputmode="decimal" placeholder="No limit">'
+    +'<span class="pfhelp">Films are chosen to fit this speed, however fast the connection measures. Lower means smaller files.</span></div>'
+    +'<div class="pf"><label>Largest file (GB)</label><input id="capgb" type="number" min="0" step="1" inputmode="decimal" placeholder="No limit">'
+    +'<span class="pfhelp" id="capgbhelp">Never picks a file bigger than this. Leave empty for no limit.</span></div>'
+    +'<button id="capsave" class="play">Save</button>'
+    +'<div class="msgline" id="capmsg"></div></div>'
     +'<button id="setlogout">Log out</button>';
+
+  // Limits are read from the unauthenticated netcheck status, written through
+  // the admin route. Empty means no lid; the server treats 0 the same.
+  const capmbps=root.querySelector('#capmbps'), capgb=root.querySelector('#capgb'),
+        capmsg=root.querySelector('#capmsg'), capgbhelp=root.querySelector('#capgbhelp');
+  const capHelp=l=>{ capgbhelp.textContent='Never picks a file bigger than this. Picking up to '
+    +l.max_gb+' GB now (the cache holds '+l.cache_gb+' GB). Leave empty for no limit.'; };
+  fetch('/api/netcheck').then(r=>r.json()).then(l=>{
+    if(l.stale_read) return;
+    capmbps.value=l.cap_mbps??''; capgb.value=l.cap_gb??'';
+    capmbps.placeholder='No limit (measured '+(l.mbps??'?')+')'; capHelp(l);
+  }).catch(()=>{});
+  root.querySelector('#capsave').onclick=async()=>{
+    capmsg.textContent=''; capmsg.className='msgline';
+    try{
+      const {r,d}=await adminJSON('/api/limits',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({cap_mbps:capmbps.value||0,cap_gb:capgb.value||0})});
+      if(!r.ok){ capmsg.textContent=d.err||'Could not save.'; capmsg.className='msgline err'; return; }
+      capHelp(d); capmsg.textContent='Saved. Films are re-chosen from now on.'; capmsg.className='msgline ok';
+      refreshNet();
+    }catch(e){ if(e.authFail){ apiSession=null; paintSettings(); return; } capmsg.textContent='Request failed: '+e; capmsg.className='msgline err'; }
+  };
 
   const activerow=root.querySelector('#activerow');
   activerow.innerHTML=ROLES.map(role=>{

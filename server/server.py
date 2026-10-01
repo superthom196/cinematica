@@ -466,8 +466,47 @@ def sustainable_mbps(seeders):
     treated as a zero-peer torrent and rejected.
     """
     if seeders is None:
-        return SUSTAIN_MBPS
-    return SUSTAIN_MBPS * (SEED_BONUS if seeders >= WELL_SEEDED else 1.0)
+        budget = SUSTAIN_MBPS
+    else:
+        budget = SUSTAIN_MBPS * (SEED_BONUS if seeders >= WELL_SEEDED else 1.0)
+    lid = cap_mbps()
+    return min(budget, lid) if lid else budget
+
+# ---- download limits, set from the Settings page ----------------------------
+# The budget only asks whether the link can keep up, so a fast link waves
+# through anything: a 30 Mbps budget passes a 20 GB two-hour film, which a
+# small box's cache cannot even hold. Two lids, kept in netprofile.json beside
+# the measurements (a recalibration only resets the samples, so they survive
+# it); 0 or absent means no lid:
+#   cap_mbps -- ceiling on the budget, well-seeded bonus included. Bounds the
+#               bitrate, so the size still scales with the film's length.
+#   cap_gb   -- the largest file ever picked, however long the film.
+# A file must fit in the cache as well, lid or no lid.
+def cap_mbps():
+    return float(_net.get("cap_mbps") or 0)
+
+def max_gb():
+    lid = float(_net.get("cap_gb") or 0)
+    return min(x for x in (MAX_GB_4K, CACHE_GB, lid) if x > 0)
+
+def limits():
+    return {"cap_mbps": cap_mbps() or None, "cap_gb": float(_net.get("cap_gb") or 0) or None,
+            "max_gb": max_gb(), "cache_gb": CACHE_GB}
+
+def set_limits(cap_mbps_v, cap_gb_v):
+    """Store both lids and drop every pick made under the old ones: the stream
+    cache holds a chosen file for hours and the grid's pools carry those picks,
+    so without this a new lid would not reach a film until its entry expired."""
+    with _lock:
+        _net["cap_mbps"] = cap_mbps_v or None
+        _net["cap_gb"] = cap_gb_v or None
+        snap = dict(_net)
+        _streams.clear()
+        _pool.clear()
+    net_save(snap)
+    print("limits: speed %s Mbps, size %s GB (picking up to %g GB)"
+          % (cap_mbps_v or "no lid", cap_gb_v or "no lid", max_gb()), flush=True)
+    return limits()
 
 # Measured on this TV: AC3/E-AC3/DTS play cleanly, but AAC 5.1 has to be
 # software-decoded and resampled by VLC and its audio clock drifts badly --
@@ -532,7 +571,7 @@ def score(c, runtime_min=None, relax=False, kind="movie"):
     if transport is None:            return -1       # nothing playable to point at
     if FOURK_ONLY and not relax and not c["is4k"] and kind != "tv":
         return -1  # 4K or nothing
-    if gb is not None and gb > MAX_GB_4K:
+    if gb is not None and gb > max_gb():
         if kind == "tv" and c["pack"]:
             # Some indexes report the whole-torrent size for packs; treat it as
             # unknown here -- the probe corrects it later.
@@ -6226,7 +6265,10 @@ class H(BaseHTTPRequestHandler):
                     prof = dict(_net)
                 finally:
                     _lock.release()
-                prof["sustain_live"] = SUSTAIN_MBPS
+                # What a film is actually held to, the speed lid included --
+                # the measured figure stays in "mbps".
+                prof["sustain_live"] = sustainable_mbps(None)
+                prof.update(limits())
                 # first run has no profile at all, so the page can say what the
                 # wait is for rather than just looking slow
                 prof["busy"] = _net_busy["on"]
@@ -6278,8 +6320,8 @@ class H(BaseHTTPRequestHandler):
                                         "fourk_only": FOURK_ONLY, "hevc_only": HEVC_ONLY,
                                         "autoplay": AUTOPLAY_NEXT,
                                         "min_seeders": MIN_SEEDERS,
-                                        "max_gb": MAX_GB_4K,
-                                        "sustain_mbps": SUSTAIN_MBPS,
+                                        "max_gb": max_gb(),
+                                        "sustain_mbps": sustainable_mbps(None),
                                         "conns": _net.get("conns"),
                                         "net_source": _net.get("source")})
         except Exception as ex:
@@ -6820,6 +6862,22 @@ class H(BaseHTTPRequestHandler):
                 threading.Thread(target=net_full, kwargs={"force": True},
                                  daemon=True).start()
                 return self._send(202, {"ok": True, "msg": "started"})
+            if p.path == "/api/limits":
+                if self._require_admin() is None:
+                    return
+                vals = {}
+                for k, lo in (("cap_mbps", SUSTAIN_MIN), ("cap_gb", 1.0)):
+                    v = d.get(k)
+                    try:
+                        v = float(v) if v not in (None, "") else 0.0
+                    except (TypeError, ValueError):
+                        return self._send(400, {"err": "%s must be a number" % k})
+                    # 0 clears the lid. Below the floor a lid would reject
+                    # every release there is, which is not a lid but an outage.
+                    if v != v or v < 0 or (v and v < lo) or v > 10000:
+                        return self._send(400, {"err": "%s must be 0 or at least %g" % (k, lo)})
+                    vals[k] = round(v, 1)
+                return self._send(200, {"ok": True, **set_limits(vals["cap_mbps"], vals["cap_gb"])})
             if p.path == "/api/cancel":
                 # Closing the film's popup means "I have changed my mind". The
                 # job keeps buffering otherwise, holding the progress bar and the
