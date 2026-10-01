@@ -189,9 +189,15 @@ def transcode_begin(ih, idx, src_internal, bytes_per_sec, mid, gen=None, aidx=0)
         pass
     proc = transcode_start(ih, cmd, name=name)
     want = max(12 * 1048576, int((bytes_per_sec or 0) * config.TC_HEAD))
+    # A resume starts the playhead at start_s, not at zero. Left out, the
+    # regulator paced the conversion against 0:00 and held it TC_LEAD past the
+    # start of the film -- short of any resume point beyond that, so the TV's
+    # wait for the converted length to clear it always ran out.
+    start_s = jobs.job_get(mid).get("start_s") or 0
     def start_regulator():
         threading.Thread(target=regulate_lead,
                          args=(ih, host_path, bytes_per_sec, proc),
+                         kwargs={"start_s": start_s},
                          daemon=True).start()
     t0 = time.time()
     while time.time() - t0 < config.HARD_CAP_SECS:
@@ -268,10 +274,21 @@ def out_seconds(host_path):
     except Exception:
         return None
 
-def regulate_lead(ih, host_path, bytes_per_sec, proc):
+def estimate_lead(elapsed, start_s, dur=None, dur_age=0.0, size=0, bytes_per_sec=0):
+    """Seconds of converted film ahead of where playback is assumed to be:
+    start_s plus the wall time since the regulator started. With a measured
+    duration (dur, taken dur_age seconds ago) that is used; without one, the
+    bytes written so far at the estimated bitrate."""
+    head = start_s + elapsed
+    if dur is not None:
+        return dur + dur_age - head
+    return (size - head * bytes_per_sec) / bytes_per_sec
+
+def regulate_lead(ih, host_path, bytes_per_sec, proc, start_s=0):
     """Keep the conversion roughly TC_LEAD seconds ahead of playback: suspend it
     when it gets further ahead than that, resume when the lead is spent. Gives a
-    full cushion immediately, then costs almost no CPU."""
+    full cushion immediately, then costs almost no CPU. start_s is where a resume
+    puts the playhead: until the conversion is past it, there is no lead at all."""
     if not bytes_per_sec or bytes_per_sec <= 0:
         return
     pid = _ctr_pid(os.path.basename(host_path))
@@ -299,14 +316,13 @@ def regulate_lead(ih, host_path, bytes_per_sec, proc):
                     stopped = real
                     _tc_flag(ih, suspended=real)
             size = os.path.getsize(host_path) if os.path.exists(host_path) else 0
-            if measured["dur"] is not None:
-                # `started` predates the player launching by however long adb and
-                # VLC take, so this under-states the lead slightly -- erring
-                # toward keeping ffmpeg running, which is the safe direction.
-                lead = (measured["dur"] + (now - measured["at"])) - (now - started)
-            else:
-                played = (now - started) * bytes_per_sec
-                lead = (size - played) / bytes_per_sec
+            # `started` predates the player launching by however long adb and
+            # VLC take, and a resume's seek lands later still, so this
+            # under-states the lead slightly -- erring toward keeping ffmpeg
+            # running, which is the safe direction.
+            lead = estimate_lead(now - started, start_s, dur=measured["dur"],
+                                 dur_age=now - measured["at"], size=size,
+                                 bytes_per_sec=bytes_per_sec)
             if not stopped and lead > config.TC_LEAD:
                 subprocess.run(["docker", "exec", config.FFMPEG_CTR, "kill", "-STOP", pid],
                                capture_output=True, timeout=15)
