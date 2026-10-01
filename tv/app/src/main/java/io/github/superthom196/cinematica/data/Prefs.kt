@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.github.superthom196.cinematica.player.SubtitleMode
+import io.github.superthom196.cinematica.ui.AccentColour
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -48,6 +49,7 @@ class Prefs(private val context: Context) {
         val playerId = stringPreferencesKey("player_id")
         val playerName = stringPreferencesKey("player_name")
         val pinRecord = stringPreferencesKey("pin_record")
+        val accent = stringPreferencesKey("accent")
     }
 
     val host: Flow<String> = context.dataStore.data.map { it[K.host] ?: DEFAULT_HOST }
@@ -145,6 +147,10 @@ class Prefs(private val context: Context) {
     val playerName: Flow<String> = context.dataStore.data.map { it[K.playerName] ?: Build.MODEL }
     suspend fun setPlayerName(value: String) { context.dataStore.edit { it[K.playerName] = value } }
     suspend fun currentPlayerName(): String = context.dataStore.data.first()[K.playerName] ?: Build.MODEL
+
+    /** The UI's accent colour, as an [AccentColour] key. */
+    val accent: Flow<AccentColour> = context.dataStore.data.map { AccentColour.fromKey(it[K.accent]) }
+    suspend fun setAccent(value: AccentColour) { context.dataStore.edit { it[K.accent] = value.key } }
 
     /**
      * The PIN lock. Off by default: it is on exactly when a record (see [PinLock.record]) is stored,

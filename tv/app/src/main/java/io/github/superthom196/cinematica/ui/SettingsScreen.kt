@@ -43,6 +43,7 @@ fun SettingsScreen(vm: AppViewModel, ui: UiState) {
     val autoplayNext by vm.autoplayNext.collectAsStateWithLifecycle()
     val ukUsBias by vm.ukUsBias.collectAsStateWithLifecycle()
     val pinEnabled by vm.pinEnabled.collectAsStateWithLifecycle()
+    val accent by vm.accent.collectAsStateWithLifecycle()
     val health = ui.health
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
@@ -103,6 +104,10 @@ fun SettingsScreen(vm: AppViewModel, ui: UiState) {
                 style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
+            VSpace(8.dp)
+            SectionLabel("Look")
+            // OK steps through the colours; the whole app recolours as it goes, this screen included.
+            SettingRow("Accent colour", accent.label) { vm.cycleAccent() }
             VSpace(8.dp)
             SectionLabel("Lock")
             // Off until someone chooses a PIN. Turning it off, or changing it, asks for the current

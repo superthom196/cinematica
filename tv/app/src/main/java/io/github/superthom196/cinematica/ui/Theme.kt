@@ -2,6 +2,10 @@ package io.github.superthom196.cinematica.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -11,14 +15,35 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Typography
 import androidx.tv.material3.darkColorScheme
 
+/**
+ * The accent colours the viewer can pick in Settings. Each is a fill dark enough for [onFill]
+ * text, and a bright tint that reads on [CinematicaColors.Background]. None is green, red or
+ * amber: those are kept for status (connected, excluded, warnings).
+ */
+enum class AccentColour(val key: String, val label: String, val fill: Color, val bright: Color, val onFill: Color) {
+    /** The 4K purple: the original accent. */
+    Purple("purple", "Purple", Color(0xFF7C3AED), Color(0xFFA78BFA), Color(0xFFF5F3FF)),
+    Blue("blue", "Blue", Color(0xFF2563EB), Color(0xFF60A5FA), Color(0xFFEFF6FF)),
+    Teal("teal", "Teal", Color(0xFF0F766E), Color(0xFF2DD4BF), Color(0xFFF0FDFA)),
+    Pink("pink", "Pink", Color(0xFFDB2777), Color(0xFFF472B6), Color(0xFFFDF2F8)),
+    Slate("slate", "Slate", Color(0xFF475569), Color(0xFFCBD5E1), Color(0xFFF8FAFC));
+
+    companion object {
+        fun fromKey(key: String?): AccentColour = entries.firstOrNull { it.key == key } ?: Purple
+    }
+}
+
 object CinematicaColors {
+    /** Which [AccentColour] the getters below answer with; set by [CinematicaTheme]. */
+    internal var accent by mutableStateOf(AccentColour.Purple)
+
     val Background = Color(0xFF101014)
     val Surface = Color(0xFF1B1B22)
     val SurfaceHigh = Color(0xFF26262F)
-    /** The 4K purple: the app's one accent. */
-    val Accent = Color(0xFF7C3AED)
-    val AccentBright = Color(0xFFA78BFA)
-    val OnAccent = Color(0xFFF5F3FF)
+    /** The app's one accent, whichever the viewer chose. State-backed, so a change recolours everything. */
+    val Accent: Color get() = accent.fill
+    val AccentBright: Color get() = accent.bright
+    val OnAccent: Color get() = accent.onFill
     val Text = Color(0xFFF5F5F5)
     /** The wordmark's cream: the colour of the ticket the logo was drawn from. */
     val Cream = Color(0xFFF3E6C8)
@@ -51,7 +76,8 @@ private val tvTypography = Typography(
 )
 
 @Composable
-fun CinematicaTheme(content: @Composable () -> Unit) {
+fun CinematicaTheme(accent: AccentColour = AccentColour.Purple, content: @Composable () -> Unit) {
+    SideEffect { CinematicaColors.accent = accent }
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = CinematicaColors.Accent,

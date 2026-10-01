@@ -5,6 +5,8 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.superthom196.cinematica.ui.AppRoot
 import io.github.superthom196.cinematica.ui.CinematicaTheme
 import io.github.superthom196.cinematica.ui.DpadTracker
@@ -16,7 +18,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            CinematicaTheme { AppRoot(vm) }
+            val accent by vm.accent.collectAsStateWithLifecycle()
+            CinematicaTheme(accent) { AppRoot(vm) }
         }
     }
 

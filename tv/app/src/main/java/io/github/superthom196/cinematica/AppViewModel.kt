@@ -23,6 +23,7 @@ import io.github.superthom196.cinematica.api.HifiStatus
 import io.github.superthom196.cinematica.api.SyncInfo
 import io.github.superthom196.cinematica.api.TvDetail
 import io.github.superthom196.cinematica.api.discover
+import io.github.superthom196.cinematica.ui.AccentColour
 import io.github.superthom196.cinematica.api.friendly
 import io.github.superthom196.cinematica.api.normaliseBaseUrl
 import io.github.superthom196.cinematica.browse.LibraryStore
@@ -279,6 +280,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Eager, not WhileSubscribed: setForeground() reads it with no screen composed.
     val pinEnabled: StateFlow<Boolean> = prefs.pinEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private var pinFailures = 0
+    // Eager: the theme reads it before any screen is composed.
+    val accent: StateFlow<AccentColour> = prefs.accent.stateIn(viewModelScope, SharingStarted.Eagerly, AccentColour.Purple)
 
     // ---- LAN discovery on the connect screen ---------------------------------
     private val discoveryClient = OkHttpClient()
@@ -857,6 +860,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val codes = AUDIO_LANGUAGES.map { it.code }
         val next = codes.getOrElse(codes.indexOf(audioLanguage.value) + 1) { codes.first() }
         viewModelScope.launch { prefs.setAudioLanguage(next) }
+    }
+
+    fun cycleAccent() {
+        val all = AccentColour.entries
+        viewModelScope.launch { prefs.setAccent(all[(all.indexOf(accent.value) + 1) % all.size]) }
     }
 
     fun cycleSubtitleMode() {
