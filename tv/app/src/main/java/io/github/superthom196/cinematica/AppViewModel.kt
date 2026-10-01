@@ -30,6 +30,7 @@ import io.github.superthom196.cinematica.api.normaliseBaseUrl
 import io.github.superthom196.cinematica.browse.LibraryStore
 import io.github.superthom196.cinematica.browse.NetStore
 import io.github.superthom196.cinematica.browse.PlayStore
+import io.github.superthom196.cinematica.browse.PlayTarget
 import io.github.superthom196.cinematica.browse.SearchStore
 import io.github.superthom196.cinematica.data.PinLock
 import io.github.superthom196.cinematica.data.Prefs
@@ -197,8 +198,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope, api,
         toast = { text, isError -> toast(text, isError) },
         // Whatever ended the job, the budget the picker used may have moved: re-read it so the
-        // chip is not quietly advertising a number from before the film.
-        onJobEnded = { net.refresh() },
+        // chip is not quietly advertising a number from before the film. A restart that ended
+        // without the player winning (failed, cancelled) is over too.
+        onJobEnded = { net.refresh(); _restarting.value = false },
     )
 
     /** `/api/movie/{id}` is a live provider call; one lookup per film per session is enough. */
@@ -237,6 +239,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // as where the viewer got to and the resume point would be lost to the resume itself.
     private var resumeJob: Job? = null
     private var resumeHolding = false
+
+    // A seek back past the start of a converted resume: the film is being started again from
+    // there (see restartAt). The player sits paused on its last frame under the buffering overlay
+    // until the new play command lands, and reports as held, like a resume, meanwhile.
+    private val _restarting = MutableStateFlow(false)
+    val restarting: StateFlow<Boolean> = _restarting.asStateFlow()
 
     // Hifi (Sendspin) lip sync: the server streams audio out of band and periodically reports how
     // far the TV's picture has drifted from it. lipSync turns each verdict into a rate nudge or a
@@ -404,11 +412,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         endedReported = false
         errorReported = false
         _ui.update { it.copy(phase = Phase.Player, playPick = cmd.pick, playTitle = cmd.title, hifi = cmd.hifi) }
-        val startMs = ((cmd.start_s ?: 0.0) * 1000).toLong().coerceAtLeast(0L)
+        _restarting.value = false
+        // A converted resume's file already begins at (or a keyframe before) the resume point: the
+        // clock starts at base_s and there is nothing to seek to.
+        val baseMs = ((cmd.base_s ?: 0.0) * 1000).toLong().coerceAtLeast(0L)
+        val startMs = if (cmd.base_s != null) 0L else ((cmd.start_s ?: 0.0) * 1000).toLong().coerceAtLeast(0L)
         // Centre mode plays the same stream the server decodes for the Sendspin player, so the
         // dialogue and the rest of the mix come from one track.
         val centreTrack = if (cmd.hifi && cmd.hifi_centre) cmd.pick?.audio_track ?: 0 else null
-        engine.open(url, cmd.title, cmd.transcoded == true, hifi = cmd.hifi, centreTrack = centreTrack, startMs = startMs)
+        engine.open(url, cmd.title, cmd.transcoded == true, hifi = cmd.hifi, centreTrack = centreTrack, startMs = startMs, baseMs = baseMs)
         lipSync.onOpen(android.os.SystemClock.uptimeMillis())
         // A film with no resume point must not inherit the last one's wait.
         if (startMs > 0L) startResume(startMs) else { resumeJob?.cancel(); resumeJob = null; endResume() }
@@ -465,6 +477,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Start the film again from [filmMs]: a seek back past the first frame of a converted resume,
+     * which began mid-film and has nothing earlier to land on. The server converts afresh from
+     * there and sends a new play command, which [startPlayback] takes like any other.
+     */
+    private fun restartAt(filmMs: Long) {
+        val job = jobId ?: return
+        if (_restarting.value || play.job.value != null) return
+        resumeJob?.cancel()
+        resumeJob = null
+        endResume()
+        _restarting.value = true
+        engine.pause()
+        play.play(PlayTarget("/api/restart/$job", job, jobTitle, (filmMs / 1000).toInt().coerceAtLeast(0)))
+    }
+
     /** Stop waiting on a resume point, whether it was reached, abandoned, or overtaken by a stop. */
     private fun endResume() {
         resumeHolding = false
@@ -486,6 +514,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         resumeJob?.cancel()
         resumeJob = null
         resumeHolding = false
+        // Back on a restart's overlay: the film it was starting again is not wanted either.
+        if (_restarting.value) play.cancel()
+        _restarting.value = false
         val leavingPlayer = _ui.value.phase is Phase.Player
         engine.stop()
         engine.setRate(1f)
@@ -545,6 +576,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         engine.togglePause()
     }
     fun seekBy(ms: Long) {
+        engine.livePositionMs().plus(ms).let { if (engine.beforeFile(it)) { restartAt(it); return } }
         userSeekSeq++
         engine.setRate(1f)
         lipSync.reset()
@@ -553,6 +585,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     /** [force] is the resume's, and only the resume's: see [PlayerEngine.seekTo]. */
     fun seekTo(ms: Long, force: Boolean = false) {
+        if (engine.beforeFile(ms)) { restartAt(ms); return }
         userSeekSeq++
         engine.setRate(1f)
         lipSync.reset()
@@ -567,6 +600,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Media keys are intercepted by the activity before Compose sees them, from every screen. */
     fun onMediaKey(keyCode: Int) {
         if (_ui.value.phase !is Phase.Player) return
+        // Mid-restart there is no film to pause or skip, only one to stop.
+        if (_restarting.value && keyCode != KeyEvent.KEYCODE_MEDIA_STOP) return
         when (keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> togglePause()
             KeyEvent.KEYCODE_MEDIA_PLAY -> {
@@ -592,7 +627,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val s = engine.state.value
         val pos = if (s.active) engine.livePositionMs() / 1000.0 else null
         val dur = if (s.active && s.lengthMs > 0L) s.lengthMs / 1000.0 else null
-        val report = buildPlayerReport(s.status, pos, dur, jobId, jobTitle, resumeHolding, endedReported, errorReported)
+        val report = buildPlayerReport(s.status, pos, dur, jobId, jobTitle, resumeHolding || _restarting.value, endedReported, errorReported)
         return report.copy(
             hifi = if (jobId != null) _ui.value.hifi else hifiAudio.value,
             hifiPlayer = hifiPlayerUrl.value, hifiDelayMs = hifiDelayMs.value,

@@ -232,6 +232,13 @@ class CinematicaApi(private val baseUrlProvider: () -> String) {
             allowNonSuccess = true,
         )
 
+    /**
+     * The film or episode [job] again, from [t] seconds: a seek back past the start of a converted
+     * resume, whose file begins mid-film. Same 202/409/502-as-PlayResp contract as [play].
+     */
+    suspend fun restart(job: String, t: Int): PlayResp =
+        post(shortReadClient, "/api/restart/${encodePathSegment(job)}?t=$t", allowNonSuccess = true)
+
     /** An empty `{}` body (no job yet) decodes to a Progress with every field, including stage, null. */
     suspend fun progress(id: String): Progress = get(shortReadClient, "/api/progress/$id")
 

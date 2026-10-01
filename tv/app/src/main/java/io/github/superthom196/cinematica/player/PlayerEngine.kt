@@ -125,6 +125,13 @@ class PlayerEngine(private val context: Context) {
     private var transcoded = false
     /** Where this film should start, while that has not been dealt with yet. See [open]. */
     private var resumeMs = 0L
+    /**
+     * Film time of the file's first frame: non-zero for a converted resume, whose file the server
+     * started mid-film. VLC's clock counts from that frame, so the fields above stay in VLC's
+     * terms and this is added on the way out ([publish], [livePositionMs]) and taken off on the
+     * way in ([seekTo]). Everything outside the engine only ever sees film time.
+     */
+    private var baseMs = 0L
     private var notice: String? = null
     private var noticeSeq = 0L
     private var trackNote: String? = null
@@ -252,10 +259,12 @@ class PlayerEngine(private val context: Context) {
      * converting is paused on its first frame rather than played from zero while the converter
      * catches up. The seek itself belongs to the ViewModel, so the server's seek counter — and the
      * hifi audio that follows it — sees a resume exactly as it sees a viewer's seek.
+     *
+     * [baseMs] is where in the film [url] begins: see [baseMs] the field.
      */
     fun open(
         url: String, title: String?, transcoded: Boolean, hifi: Boolean = false,
-        centreTrack: Int? = null, startMs: Long = 0L,
+        centreTrack: Int? = null, startMs: Long = 0L, baseMs: Long = 0L,
     ) {
         this.centreTrack = if (hifi) centreTrack else null
         val mp = ensurePlayer()
@@ -263,6 +272,7 @@ class PlayerEngine(private val context: Context) {
         this.title = title
         this.transcoded = transcoded
         this.resumeMs = startMs
+        this.baseMs = baseMs
         setAudioEnabled(!hifi)
         status = PlayStatus.Opening
         timeMs = 0L
@@ -347,6 +357,7 @@ class PlayerEngine(private val context: Context) {
         title = null
         transcoded = false
         resumeMs = 0L
+        baseMs = 0L
         audioTracks = emptyList()
         spuTracks = emptyList()
         publish(force = true)
@@ -362,9 +373,13 @@ class PlayerEngine(private val context: Context) {
      * target: the refusal below is about seeking past the live edge, and there is no live edge
      * between here and bytes ffmpeg has already written.
      */
-    fun seekTo(ms: Long, force: Boolean = false) {
+    fun seekTo(filmMs: Long, force: Boolean = false) {
         val mp = player ?: return
         if (status is PlayStatus.Idle || status is PlayStatus.Ended || status is PlayStatus.Error) return
+        // In the file's own terms from here on. Before its first frame there is nothing to land
+        // on; the ViewModel restarts the film for that (see [beforeFile]), so this only ever sees
+        // the slack, and the start of the file is the nearest thing there is.
+        val ms = (filmMs - baseMs).coerceAtLeast(0L)
         val len = mp.length
         val at = mp.time
         if (transcoded && !force && (len <= 0L || lengthProvisional())) {
@@ -397,7 +412,14 @@ class PlayerEngine(private val context: Context) {
     private fun lengthProvisional(): Boolean =
         transcoded && lengthMs > 0L && SystemClock.uptimeMillis() - lengthGrewAt < LENGTH_SETTLE_MS
 
-    fun seekBy(deltaMs: Long) = seekTo((player?.time ?: 0L) + deltaMs)
+    fun seekBy(deltaMs: Long) = seekTo((player?.time ?: 0L) + baseMs + deltaMs)
+
+    /**
+     * True when [filmMs] is earlier than this file goes: a converted resume began mid-film, and a
+     * seek back past its first frame needs the film started again from there. A few seconds of
+     * slack, so a skip that lands on the first keyframe is just a seek to it.
+     */
+    fun beforeFile(filmMs: Long): Boolean = transcoded && baseMs > 0L && filmMs < baseMs - BEFORE_FILE_SLACK_MS
 
     /**
      * Where the picture is right now, not where it was at the last TimeChanged event: those fire
@@ -407,9 +429,9 @@ class PlayerEngine(private val context: Context) {
      * still advancing.
      */
     fun livePositionMs(): Long {
-        if (status != PlayStatus.Playing || timeAt == 0L) return timeMs
+        if (status != PlayStatus.Playing || timeAt == 0L) return baseMs + timeMs
         val since = (SystemClock.uptimeMillis() - timeAt).coerceIn(0L, 2_000L)
-        return timeMs + (since * rate).toLong()
+        return baseMs + timeMs + (since * rate).toLong()
     }
 
     /** A track the user chose by hand. From here on this film's tracks are theirs, not ours. */
@@ -791,8 +813,8 @@ class PlayerEngine(private val context: Context) {
         lastPublish = now
         _state.value = PlayerState(
             status = status,
-            timeMs = timeMs,
-            lengthMs = lengthMs,
+            timeMs = baseMs + timeMs,
+            lengthMs = if (lengthMs > 0L) baseMs + lengthMs else 0L,
             seekable = seekable,
             audioTracks = audioTracks,
             spuTracks = spuTracks,
@@ -835,6 +857,7 @@ class PlayerEngine(private val context: Context) {
 
         /** How long a length must hold still before it is believed to be the film's real total. */
         const val LENGTH_SETTLE_MS = 45_000L
+        const val BEFORE_FILE_SLACK_MS = 3_000L
 
         /** How long after the first frame a late-arriving subtitle stream still counts as "the film's". */
         const val AUTO_SETTLE_MS = 10_000L

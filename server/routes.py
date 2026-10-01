@@ -1620,6 +1620,39 @@ class H(BaseHTTPRequestHandler):
         return self._send(*jobs.start_play(str(tid), resolve,
                                       start_s=watching._start_s(p.query)))
 
+    def _post_restart(self, p, d):
+        """POST /api/restart/<job>?t=<s>: play the same film or episode again
+        from t. A converted resume starts its file mid-film, so a seek back
+        before that has no bytes to land on; the TV asks for this instead and
+        the conversion starts over from there. It is the play route by
+        another name -- same stream lookup, same dedupe -- keyed by the job
+        id the TV was handed, so it needs no idea which route started it."""
+        job = self._id(p.path[len("/api/restart/"):])
+        start_s = watching._start_s(p.query)
+        if not job or start_s is None:
+            return self._send(400, {"ok": False, "msg": "job and t are required"})
+        amid, aj = jobs.active_job()
+        if amid is not None and amid == job:
+            return self._send(202, {"ok": True, "msg": "already starting",
+                                    "job": amid})
+        autoplay = False
+        if job.startswith("tv:"):
+            try:
+                tid, s, ep = catalogue.tv_job_parts(job)
+            except ValueError:
+                return self._send(400, {"ok": False, "msg": "bad job"})
+            # Carry on as the play that is being restarted was going to.
+            autoplay = bool(jobs.job_get(job).get("autoplay"))
+            def resolve():
+                entry = streams.get_stream_tv(tid, s, ep)
+                return entry, entry.get("runtime") or 45
+        else:
+            def resolve():
+                e = streams.get_stream(job)
+                return e, e.get("runtime")
+        return self._send(*jobs.start_play(job, resolve, autoplay=autoplay,
+                                      start_s=start_s))
+
     def _post_bplay_tv(self, p, d):
         # The browser's counterpart to /api/play/tv/... above --
         # same id/season/episode shape and the same dedupe, but it
@@ -1978,6 +2011,7 @@ class H(BaseHTTPRequestHandler):
         (lambda path: path == "/api/channel/play", _post_channel_play),
         (lambda path: path.startswith("/api/play/tv/"), _post_play_tv),
         (lambda path: path.startswith("/api/play/"), _post_play),
+        (lambda path: path.startswith("/api/restart/"), _post_restart),
         (lambda path: path.startswith("/api/bplay/tv/"), _post_bplay_tv),
         (lambda path: path.startswith("/api/bplay/"), _post_bplay),
         (lambda path: path == "/api/bx/beat", _post_bx_beat),

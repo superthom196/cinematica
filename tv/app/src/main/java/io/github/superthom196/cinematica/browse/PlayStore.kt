@@ -144,7 +144,7 @@ class PlayStore(
     /**
      * CinematicaApi has no generic POST, only one typed call per kind. [PlayTarget.path] is decoded
      * back into whichever call built it rather than adding a `playPath` to the API just for this —
-     * the two shapes below (a film, an episode) are the only ones there are.
+     * the three shapes below (a film, an episode, a restart of either) are the only ones there are.
      */
     private suspend fun postPlay(path: String, t: Int? = null): PlayResp {
         MOVIE_PATH.find(path)?.let { return api.play(it.groupValues[1], t) }
@@ -152,6 +152,7 @@ class PlayStore(
             val (id, s, e, auto) = m.destructured
             return api.playTv(id, s.toInt(), e.toInt(), auto == "1", t)
         }
+        RESTART_PATH.find(path)?.let { return api.restart(it.groupValues[1], t ?: 0) }
         error("PlayStore: unrecognised play path $path")
     }
 
@@ -187,5 +188,7 @@ class PlayStore(
         // the next one.
         val MOVIE_PATH = Regex("""^/api/play/([^/]+)$""")
         val TV_PATH = Regex("""^/api/play/tv/([^/]+)/(\d+)/(\d+)\?autoplay=(\d)$""")
+        /** A job id, raw: a film's id or "tv:{id}:{s}:{e}". Colons, never a "/". */
+        val RESTART_PATH = Regex("""^/api/restart/([^/]+)$""")
     }
 }

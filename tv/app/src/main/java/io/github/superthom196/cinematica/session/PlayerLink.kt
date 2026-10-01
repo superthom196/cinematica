@@ -3,6 +3,7 @@ package io.github.superthom196.cinematica.session
 import android.os.SystemClock
 import io.github.superthom196.cinematica.api.AppCmd
 import io.github.superthom196.cinematica.api.CinematicaApi
+import io.github.superthom196.cinematica.api.APP_CAPS
 import io.github.superthom196.cinematica.api.HeartbeatBody
 import io.github.superthom196.cinematica.api.HifiStatus
 import io.github.superthom196.cinematica.api.NextUp
@@ -106,12 +107,12 @@ class PlayerLink(
                         state = finalReport.state, title = finalReport.title, job = finalReport.job,
                         position_s = finalReport.positionS, duration_s = finalReport.durationS,
                         ack = ack, wait = 0.0, hifi_player = finalReport.hifiPlayer,
-                        hifi_delay_ms = finalReport.hifiDelayMs,
+                        hifi_delay_ms = finalReport.hifiDelayMs, caps = APP_CAPS,
                     ),
                 )
             }
             runCatching {
-                api.heartbeat(HeartbeatBody(id = id, name = name, version = version, state = "idle", wait = 0.0))
+                api.heartbeat(HeartbeatBody(id = id, name = name, version = version, state = "idle", wait = 0.0, caps = APP_CAPS))
             }
             onSettled?.invoke()
         }
@@ -136,6 +137,7 @@ class PlayerLink(
                 position_s = r.positionS, duration_s = r.durationS,
                 ack = pendingAck, err = r.err, wait = wait, hifi = r.hifi, hifi_player = r.hifiPlayer,
                 hifi_delay_ms = r.hifiDelayMs, hifi_centre = r.hifiCentre, seek_seq = r.seekSeq,
+                caps = APP_CAPS,
             )
             val sentAt = SystemClock.uptimeMillis()
             val resp = runCatching { api.heartbeat(body) }

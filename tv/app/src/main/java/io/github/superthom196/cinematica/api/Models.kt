@@ -366,6 +366,12 @@ data class AppCmd(
     val hifi_centre: Boolean = false,
     /** Where to start, when the play was a resume. Absent on an ordinary play and on autoplay-next. */
     val start_s: Double? = null,
+    /**
+     * A converted resume only: the server converted from the resume point, and this is the film
+     * time [url] begins at (the keyframe at or before [start_s]). Nothing to seek to; the clock
+     * starts here.
+     */
+    val base_s: Double? = null,
 )
 
 @Serializable
@@ -426,7 +432,15 @@ data class HeartbeatBody(
     val hifi_delay_ms: Int? = null,
     val hifi_centre: Boolean = false,
     val seek_seq: Long? = null,
+    /** What this build understands beyond the basics: see [APP_CAPS]. */
+    val caps: List<String>? = null,
 )
+
+/**
+ * Sent on every heartbeat so a newer server never sends this build something it would misread.
+ * "base_s": a play command may carry a file that starts mid-film (a converted resume).
+ */
+val APP_CAPS = listOf("base_s")
 
 @Serializable
 data class HifiPlayer(

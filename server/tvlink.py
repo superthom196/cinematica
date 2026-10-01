@@ -138,6 +138,12 @@ def app_fresh():
             return dict(_app)
     return None
 
+def app_can(cap):
+    """Whether the connected app says it understands `cap` -- for a play
+    command an older build would misread rather than merely ignore."""
+    app = app_fresh()
+    return bool(app and cap in (app.get("caps") or []))
+
 def app_cmd(kind, **fields):
     """Queue one command for the app, replacing anything it has not taken yet.
 
@@ -222,7 +228,9 @@ def app_heartbeat(d):
                 "duration_s": _secs(d.get("duration_s")),
                 # not part of the state the rest of the server reads, but launch()
                 # has to be able to say WHY the TV refused a film
-                "err": err, "seen_at": now, "hifi": hifi}
+                "err": err, "seen_at": now, "hifi": hifi,
+                # What the build understands beyond the basics (app_can).
+                "caps": [str(c) for c in (d.get("caps") or []) if isinstance(c, str)][:16]}
         # Remember the last beat that had something on screen, and forget it the
         # moment the app says otherwise. tv_playback_state() reads this so one
         # lost poll does not read as the end of the film. "buffering" neither
@@ -509,11 +517,16 @@ def launch(url, mid, pick, title, gen):
         # present when the play route was given t=, so autoplay-next -- which
         # never sets one -- cannot carry the previous episode's offset.
         start_s = jobs.job_get(mid).get("start_s")
+        # A converted resume starts its file mid-film: base_s is the film time
+        # of the file's first frame, so the app counts its clock from there
+        # and has no seek to make.
+        base_s = jobs.job_get(mid).get("base_s") if pick.get("transcoded") else None
         seq = app_cmd("play", job=str(mid), url=url, title=title, pick=pick,
                       transcoded=bool(pick.get("transcoded")),
                       hifi=bool(sendspin._hifi["on"] and config.SENDSPIN_ENABLED),
                       hifi_centre=bool(sendspin._hifi["on"] and config.SENDSPIN_ENABLED and sendspin._hifi["film_centre"]),
-                      **({"start_s": start_s} if start_s is not None else {}))
+                      **({"start_s": start_s} if start_s is not None else {}),
+                      **({"base_s": base_s} if base_s is not None else {}))
         print("app: play %s seq=%d -> %s" % (mid, seq, app["name"] or app["id"]),
               flush=True)
         deadline = time.time() + config.APP_HANDOFF_SECS

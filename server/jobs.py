@@ -2,7 +2,7 @@
 probing each candidate to the handoff, including autoplay of the next
 episode.
 """
-import threading, time, urllib.request
+import os, threading, time, urllib.request
 
 import config, core, nowplaying, mediaprobe, streams, netprofile, catalogue, transcode, sendspin, tvlink, browser_session, watching
 
@@ -410,7 +410,17 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                           % (mid, secs // 60), flush=True)
                 bps = ((pick.get("gb") or 0) * 1024 ** 3) / secs
                 job_set(mid, msg="%s audio — converting to AC3 before starting…" % acodec)
-                name = transcode.transcode_begin(transcode.tc_key(pick), fidx, internal, bps, mid, gen, aidx=aidx)
+                # A resume converts from the resume point (see transcode_begin);
+                # the TV is told where the file really starts, as base_s. Only
+                # for an app that says it reads base_s: an older one would seek
+                # start_s into a file that already starts there. It gets the
+                # from-the-top conversion and its own wait, as before.
+                start_s = (job_get(mid).get("start_s") or 0) if tvlink.app_can("base_s") else 0
+                name = transcode.transcode_begin(transcode.tc_key(pick), fidx, internal, bps, mid, gen,
+                                                 aidx=aidx, start_s=start_s)
+                if name and start_s:
+                    job_set(mid, base_s=transcode.film_start(
+                        os.path.join(config.TC_HOST, name), start_s))
                 if not name:
                     job_set(mid, msg="Audio conversion failed — playing as-is")
                     pick["transcoded"] = False
@@ -551,6 +561,9 @@ def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
         # or an autoplay-next -- inherit the offset the previous play was
         # given and seek to the middle of a film nobody asked to resume.
         kw["start_s"] = start_s
+        # Where the converted file starts in the film, once a resume has
+        # converted from mid-film. Reset for the same merge reason.
+        kw["base_s"] = None
         # Same reason: the episode after this one is worked out afresh for
         # every play (_remember_next_episode), never inherited from the last.
         kw["next_ep"] = None

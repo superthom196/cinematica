@@ -117,6 +117,8 @@ fun PlayerScreen(vm: AppViewModel) {
     val hifiDelayMs by vm.hifiDelayMs.collectAsStateWithLifecycle()
     val hifiVolume by vm.hifiVolume.collectAsStateWithLifecycle()
     val ping by vm.osdPing.collectAsStateWithLifecycle()
+    val restarting by vm.restarting.collectAsStateWithLifecycle()
+    val playJob by vm.play.job.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -241,6 +243,9 @@ fun PlayerScreen(vm: AppViewModel) {
                     return@onPreviewKeyEvent true
                 }
                 keyTick++
+                // Starting the film again from an earlier point: nothing to drive but Back, which
+                // the overlay says cancels.
+                if (restarting) return@onPreviewKeyEvent true.also { if (ev.key == Key.Back) vm.stopPlayback() }
                 if (stopPrompt) {
                     when (ev.key) {
                         Key.DirectionUp -> { stopIndex = 0; true }
@@ -328,6 +333,7 @@ fun PlayerScreen(vm: AppViewModel) {
         if (lipSync) LipSyncBar(hifiDelayMs, Modifier.align(Alignment.BottomCenter))
         if (picker) TrackPicker(tracks, pickerIndex, Modifier.align(Alignment.CenterEnd))
         if (stopPrompt) StopPrompt(stopIndex, Modifier.align(Alignment.Center))
+        if (restarting) playJob?.let { BufferingOverlay(it) }
         // Audio that failed to start is said even with the OSD down: a silent film must never
         // pass for a quiet one.
         val failed = hifiStatus?.takeIf { hifi && it.state == "failed" }
