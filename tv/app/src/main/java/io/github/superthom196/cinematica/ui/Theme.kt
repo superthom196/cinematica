@@ -16,17 +16,16 @@ import androidx.tv.material3.Typography
 import androidx.tv.material3.darkColorScheme
 
 /**
- * The accent colours the viewer can pick in Settings. Each is a fill dark enough for [onFill]
- * text, and a bright tint that reads on [CinematicaColors.Background]. None is green, red or
- * amber: those are kept for status (connected, excluded, warnings).
+ * The accent colours the viewer can pick in Settings, in rainbow order. Each is a fill dark enough
+ * for [onFill] text, and a bright tint that reads on [CinematicaColors.Background].
  */
 enum class AccentColour(val key: String, val label: String, val fill: Color, val bright: Color, val onFill: Color) {
-    /** The 4K purple: the original accent. */
-    Purple("purple", "Purple", Color(0xFF7C3AED), Color(0xFFA78BFA), Color(0xFFF5F3FF)),
+    Red("red", "Red", Color(0xFFDC2626), Color(0xFFF87171), Color(0xFFFEF2F2)),
+    Orange("orange", "Orange", Color(0xFFEA580C), Color(0xFFFB923C), Color(0xFFFFF7ED)),
+    Green("green", "Green", Color(0xFF16A34A), Color(0xFF4ADE80), Color(0xFFF0FDF4)),
     Blue("blue", "Blue", Color(0xFF2563EB), Color(0xFF60A5FA), Color(0xFFEFF6FF)),
-    Teal("teal", "Teal", Color(0xFF0F766E), Color(0xFF2DD4BF), Color(0xFFF0FDFA)),
-    Pink("pink", "Pink", Color(0xFFDB2777), Color(0xFFF472B6), Color(0xFFFDF2F8)),
-    Slate("slate", "Slate", Color(0xFF475569), Color(0xFFCBD5E1), Color(0xFFF8FAFC));
+    /** The 4K purple: the original accent, and the default. */
+    Purple("purple", "Purple", Color(0xFF7C3AED), Color(0xFFA78BFA), Color(0xFFF5F3FF));
 
     companion object {
         fun fromKey(key: String?): AccentColour = entries.firstOrNull { it.key == key } ?: Purple
