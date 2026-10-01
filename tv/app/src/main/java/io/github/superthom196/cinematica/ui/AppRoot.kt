@@ -40,6 +40,7 @@ fun AppRoot(vm: AppViewModel) {
     val link by vm.linkState.collectAsStateWithLifecycle()
     val playJob by vm.play.job.collectAsStateWithLifecycle()
     val netState by vm.net.state.collectAsStateWithLifecycle()
+    val autoNext by vm.autoNext.collectAsStateWithLifecycle()
     val activity = LocalContext.current as? Activity
 
     BackHandler {
@@ -115,6 +116,8 @@ fun AppRoot(vm: AppViewModel) {
                 Text(toast.text, style = MaterialTheme.typography.bodyMedium, color = CinematicaColors.Text)
             }
         }
+        // After an episode, over the series page it came from: the countdown to the next one.
+        autoNext?.let { AutoNextDialog(it, onPlayNow = vm::playAutoNextNow, onCancel = vm::cancelAutoNext) }
         // Calibration saturates the link: anything started while it runs would stall and look
         // broken, so it covers everything until the server says it is done.
         if (netState.overlay) CalibrationOverlay(netState.net)

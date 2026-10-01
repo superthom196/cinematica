@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.superthom196.cinematica.api.AppCmd
+import io.github.superthom196.cinematica.api.NextUp
 import io.github.superthom196.cinematica.api.ChannelInfo
 import io.github.superthom196.cinematica.api.ChannelVideosResp
 import io.github.superthom196.cinematica.api.CinematicaApi
@@ -69,6 +70,9 @@ sealed class Phase {
 }
 
 data class Toast(val text: String, val isError: Boolean = false, val urgent: Boolean = false)
+
+/** The countdown to the next episode: [endsAt] is on the uptime clock, [totalMs] its full length. */
+data class AutoNext(val job: String, val label: String, val endsAt: Long, val totalMs: Long)
 
 /**
  * The state half of the heartbeat, minus the hifi/seek fields [AppViewModel.buildReport] appends
@@ -217,6 +221,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var endedReported = false
     private var errorReported = false
 
+    /** The screen the player was opened from, and so the one it goes back to. */
+    private var returnPhase: Phase = Phase.Library
+
+    // Autoplay-next: the countdown after an episode ends, and the next episode's play command when
+    // the server has it ready before the countdown is over — held, so Cancel still means cancel.
+    private val _autoNext = MutableStateFlow<AutoNext?>(null)
+    val autoNext: StateFlow<AutoNext?> = _autoNext.asStateFlow()
+    private var autoNextTimer: Job? = null
+    private var heldPlay: AppCmd? = null
+
     // A resume the converter has not reached yet: the film is held on its first frame while
     // `resumeJob` waits for the converted length to clear the target. While that is true the
     // heartbeat must not report the 0:00 the player is sitting on, or the server would record it
@@ -251,6 +265,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         onStop = { stopPlayback(tellServer = false) },
         onSync = ::onSync,
         onHifiStatus = ::onHifiStatus,
+        expecting = { _autoNext.value != null || heldPlay != null },
     )
     val linkState: StateFlow<LinkState> = link.link
 
@@ -338,6 +353,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // The lock re-arms every time the app leaves the screen: coming back from Home, or from the
         // TV being switched off, is opening it again. Turning the lock on does not lock at once.
         if (pinEnabled.value) _ui.update { it.copy(locked = true) }
+        // A countdown has nobody to cancel it now, and an episode must not start behind Home.
+        if (_autoNext.value != null) cancelAutoNext()
         // Home, mid-film. libVLC would carry on decoding with no surface to draw on, the server
         // would go on converting audio for a film nobody is watching, and the cache could never be
         // emptied. So the film stops here: one last heartbeat with where it got to, then /api/stop.
@@ -370,6 +387,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // which is the right outcome: the lock is the whole point, and playing behind the keypad
         // would put a film's audio in the room for whoever is holding the remote.
         if (_ui.value.locked) return
+        // The episode the countdown is counting to waits for it; anything else — a film started
+        // from the phone — overrides the countdown, and the server has already superseded it.
+        _autoNext.value?.let { next ->
+            if (cmd.job == next.job) { heldPlay = cmd; return }
+            clearAutoNext()
+        }
+        _ui.value.phase.let { p ->
+            if (p !is Phase.Player) returnPhase = if (p is Phase.Detail || p is Phase.Search || p is Phase.Settings) p else Phase.Library
+        }
         // The player wins over the buffering overlay, always: whatever this app was polling about
         // has just happened, and a second surface for it would only be in the way.
         play.adopt()
@@ -468,7 +494,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _hifiStatus.value = null
         _hifiVolume.value = null
         _ui.update {
-            if (it.phase is Phase.Player) it.copy(phase = Phase.Library, playPick = null, playTitle = null, hifi = false)
+            if (it.phase is Phase.Player) it.copy(phase = freshReturnPhase(), playPick = null, playTitle = null, hifi = false)
             else it.copy(playPick = null, playTitle = null, hifi = false)
         }
         // Back on the wall, the film just watched should already show what it now knows about
@@ -575,12 +601,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Called after a heartbeat carrying [state] was accepted, so the one-shot states can retire. */
-    private fun onReported(state: String) {
+    private fun onReported(state: String, next: NextUp?) {
         when (state) {
             "ended" -> {
                 endedReported = true
-                // The film is over: off the screen, back to browsing, engine reset for the next one.
-                stopPlayback()
+                // The film is over: off the screen, back to where it was chosen, engine reset for
+                // the next one. With an episode to follow the server is already preparing it, and a
+                // stop now would race that — so it is not told, and the countdown takes over.
+                if (next != null) {
+                    stopPlayback(tellServer = false)
+                    startAutoNext(next)
+                } else stopPlayback()
             }
             "error" -> {
                 // The job has been failed with our own message; keep it on screen until the user
@@ -591,6 +622,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 tellServerToStop()
             }
         }
+    }
+
+    /**
+     * [returnPhase], less what the episode just watched has made stale. A series page carries the
+     * shelf it was opened with — the episode it was up to, which is the one that has just been
+     * seen — so it goes back without one and takes the fresh shelf its own (uncached) lookup brings.
+     */
+    private fun freshReturnPhase(): Phase {
+        val p = returnPhase
+        return if (p is Phase.Detail && p.movie.kind == "tv") p.copy(movie = p.movie.copy(shelf = null)) else p
+    }
+
+    // ---- autoplay-next ------------------------------------------------------
+
+    private fun startAutoNext(next: NextUp) {
+        clearAutoNext()
+        val label = "S%02dE%02d".format(next.s, next.e) + (next.name?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+        _autoNext.value = AutoNext(next.job, label, android.os.SystemClock.uptimeMillis() + AUTO_NEXT_MS, AUTO_NEXT_MS)
+        autoNextTimer = viewModelScope.launch {
+            delay(AUTO_NEXT_MS)
+            playAutoNextNow()
+        }
+    }
+
+    /** The countdown ran out, or Play now: the held episode starts, or its buffering takes over. */
+    fun playAutoNextNow() {
+        val next = _autoNext.value ?: return
+        val held = heldPlay
+        clearAutoNext()
+        if (held != null) startPlayback(held) else play.follow(next.job, next.label)
+    }
+
+    /** Cancel or Back on the countdown: the next episode is not wanted, and neither is the last. */
+    fun cancelAutoNext() {
+        if (_autoNext.value == null) return
+        clearAutoNext()
+        viewModelScope.launch {
+            // Cancel reaches a job still resolving its stream, which stop does not; stop then
+            // empties the cache and stands down whatever the episode that ended left running.
+            runCatching { api.cancel() }
+            runCatching { api.stop() }
+        }
+    }
+
+    private fun clearAutoNext() {
+        autoNextTimer?.cancel()
+        autoNextTimer = null
+        heldPlay = null
+        _autoNext.value = null
     }
 
     // ---- browsing -----------------------------------------------------------
@@ -1024,6 +1104,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         /** How long a resume waits for the converter before giving up and starting from the top. */
         const val RESUME_WAIT_MS = 180_000L
+        /** How long the next-episode countdown runs: about what the server takes to have it ready. */
+        const val AUTO_NEXT_MS = 15_000L
         /** How far past the resume point the conversion must be before the seek is safe. */
         const val RESUME_MARGIN_MS = 10_000L
         /** A held film says why it is holding this often, so the wait is never unexplained. */

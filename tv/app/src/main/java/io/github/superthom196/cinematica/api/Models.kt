@@ -374,7 +374,13 @@ data class HeartbeatResp(
     val cmd: AppCmd? = null,
     val sync: SyncInfo? = null,
     val hifi_status: HifiStatus? = null,
+    /** Only on the beat that reported an episode "ended": the episode autoplay has started on. */
+    val next: NextUp? = null,
 )
+
+/** The episode the server is getting ready after the one that ended; [job] is its progress key. */
+@Serializable
+data class NextUp(val job: String, val s: Int, val e: Int, val name: String? = null)
 
 /**
  * Where the hifi audio for the film on screen has got to, on every heartbeat while one is up:

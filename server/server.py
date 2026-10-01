@@ -1023,6 +1023,29 @@ def next_episode(tid, s, e):
     except Exception:
         return None
 
+def _episode_name(tid, s, e):
+    """The episode's title for the app's "Up next" countdown, or None. The
+    season is already cached by next_episode(); a failure costs the label."""
+    try:
+        return next((ep.get("name") for ep in tv_season(tid, s)["episodes"]
+                     if ep["episode"] == e), None)
+    except Exception:
+        return None
+
+def _autoplay_start(nid, resolve):
+    """start_play() for an autoplay-next, retiring the placeholder job the
+    heartbeat registered if the play never got going -- no stream, cancelled,
+    or a lookup that raised -- so the app's countdown is told rather than
+    left polling a job that will never move."""
+    try:
+        code, body = start_play(nid, resolve, autoplay=True)
+        msg = None if code == 202 else (body.get("msg") or "No stream found")
+    except Exception as ex:
+        msg = "Could not start the next episode: %s" % ex
+    if msg and (job_get(nid) or {}).get("stage") == "starting":
+        job_set(nid, stage="error", ok=False, msg=msg)
+        print("autoplay: %s did not start: %s" % (nid, msg), flush=True)
+
 _pool = {}     # genre key -> {"cands":[...], "ready":[...], "cursor":int, "at":ts}
 # One lock per pool key, not the global _lock -- get_page's cursor/buf/served
 # bookkeeping (and the network calls resolve_chunk makes while filling them)
@@ -2959,7 +2982,10 @@ def app_heartbeat(d):
     # is the heartbeat BEFORE this one, so a run of "ended" samples only
     # matches on the first) and, for an episode job with autoplay set,
     # hand the next one straight to start_play() without waiting for the
-    # app or the phone to ask.
+    # app or the phone to ask. The reply names the next job ("next"), so the
+    # app can count down to it -- and cancel it -- instead of showing nothing
+    # while it is found and buffered.
+    next_up = None
     if (job and job.startswith("tv:") and state == "ended"
             and prev and prev.get("state") in ("playing", "paused")):
         try:
@@ -2971,17 +2997,26 @@ def app_heartbeat(d):
                     def _resolve():
                         en = get_stream_tv(tid, ns, ne)
                         return en, en.get("runtime") or 45
-                    print("autoplay: %s ended -> tv:%s:%d:%d" %
-                          (job, tid, ns, ne), flush=True)
-                    threading.Thread(target=start_play,
-                                      args=(f"tv:{tid}:{ns}:{ne}", _resolve),
-                                      kwargs={"autoplay": True},
-                                      daemon=True).start()
+                    nid = f"tv:{tid}:{ns}:{ne}"
+                    print("autoplay: %s ended -> %s" % (job, nid), flush=True)
+                    # Registered before the thread is away: the app starts
+                    # polling this id off this very reply, and an id reused
+                    # from an earlier play of the episode would otherwise
+                    # still show that play's stage. It is also what
+                    # /api/cancel finds while the stream is being resolved.
+                    job_set(nid, stage="starting", got=0, target=0, pct=0,
+                            ok=None, msg="Finding the next episode…")
+                    threading.Thread(target=_autoplay_start, args=(nid, _resolve),
+                                     daemon=True).start()
+                    next_up = {"job": nid, "s": ns, "e": ne,
+                               "name": _episode_name(tid, ns, ne)}
                 else:
                     print("autoplay: %s ended, no next episode" % job, flush=True)
         except Exception as ex:
             print("autoplay: %s failed: %s" % (job, ex), flush=True)
     reply = {"ok": True, "cmd": cmd}
+    if next_up is not None:
+        reply["next"] = next_up
     if sync is not None:
         reply["sync"] = sync
     if hifi_status is not None:

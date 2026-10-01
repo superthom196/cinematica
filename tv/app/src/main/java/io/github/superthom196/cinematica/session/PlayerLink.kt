@@ -5,6 +5,7 @@ import io.github.superthom196.cinematica.api.AppCmd
 import io.github.superthom196.cinematica.api.CinematicaApi
 import io.github.superthom196.cinematica.api.HeartbeatBody
 import io.github.superthom196.cinematica.api.HifiStatus
+import io.github.superthom196.cinematica.api.NextUp
 import io.github.superthom196.cinematica.api.SyncInfo
 import io.github.superthom196.cinematica.api.friendly
 import kotlinx.coroutines.CoroutineScope
@@ -52,11 +53,14 @@ class PlayerLink(
     private val api: CinematicaApi,
     private val identity: suspend () -> Triple<String, String, String>,
     private val report: () -> PlayerReport,
-    private val onReported: (String) -> Unit,
+    /** The state the server just accepted, and the next episode when that state was an autoplay "ended". */
+    private val onReported: (String, NextUp?) -> Unit,
     private val onPlay: (AppCmd) -> Unit,
     private val onStop: () -> Unit,
     private val onSync: (SyncInfo, Long) -> Unit = { _, _ -> },
     private val onHifiStatus: (HifiStatus?) -> Unit = {},
+    /** Poll briskly while idle: a play is due any second and should be reported the moment it opens. */
+    private val expecting: () -> Boolean = { false },
 ) {
     private val _link = MutableStateFlow<LinkState>(LinkState.Off)
     val link: StateFlow<LinkState> = _link.asStateFlow()
@@ -124,7 +128,8 @@ class PlayerLink(
             // itself is the wait: an 8s long poll, back to back, so a play lands in well under a
             // second without polling all night.
             val busy = r.state == "playing" || r.state == "paused" || r.state == "buffering"
-            val wait = if (busy) 0.0 else 8.0
+            val soon = !busy && expecting()
+            val wait = if (busy || soon) 0.0 else 8.0
             val body = HeartbeatBody(
                 id = id, name = name, version = version,
                 state = r.state, title = r.title, job = r.job,
@@ -147,7 +152,7 @@ class PlayerLink(
             backoffMs = 1_000L
             fails = 0
             _link.value = LinkState.Connected
-            onReported(r.state)
+            onReported(r.state, value.next)
 
             val cmd = value.cmd
             val seq = cmd?.seq
@@ -181,7 +186,7 @@ class PlayerLink(
             }
             value.sync?.let { onSync(it, rttMs) }
             onHifiStatus(value.hifi_status)
-            delay(if (r.hifi && r.state == "playing") 1_000L else if (busy) 3_000L else 200L)
+            delay(if (r.hifi && r.state == "playing") 1_000L else if (busy) 3_000L else if (soon) 1_000L else 200L)
         }
     }
 }

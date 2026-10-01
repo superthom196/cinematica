@@ -7,6 +7,7 @@ import io.github.superthom196.cinematica.api.PlayResp
 import io.github.superthom196.cinematica.api.friendly
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,34 +94,48 @@ class PlayStore(
             }
             // Poll by whatever job id the server actually gave back; target.jobId is only a
             // fallback for a reply that (like a film's today) doesn't name one of its own.
-            val pollId = d.job ?: target.jobId
-            var misses = 0
-            val deadline = SystemClock.elapsedRealtime() + deadlineMs
-            while (isActive && gen == playGen) {
-                delay(700)
-                if (gen != playGen) return@launch
-                if (SystemClock.elapsedRealtime() > deadline || misses >= maxMisses) {
-                    finish(gen, "Lost track of playback progress — the server may have restarted.", true)
-                    return@launch
-                }
-                val p = runCatching { api.progress(pollId) }.getOrNull()
-                // A job the server does not know about answers `{}`; that counts as a miss too.
-                if (p?.stage == null) { misses++; continue }
-                misses = 0
-                _job.update {
-                    it?.copy(stage = p.stage, pct = p.pct ?: 0.0, msg = p.msg, attempt = p.attempt, attempts = p.attempts)
-                }
-                when (p.stage) {
-                    // The player is already up: the play command reached us over the heartbeat
-                    // before this poll did. Nothing to say, just get out of the way.
-                    "playing" -> { finish(gen, null, false); return@launch }
-                    "error" -> {
-                        val m = p.msg ?: "unknown"
-                        // Routine, not a failure: someone started a different film from the phone.
-                        if (m.startsWith("Superseded")) finish(gen, "Another movie was started", false)
-                        else finish(gen, "Failed: $m", true)
-                        return@launch
-                    }
+            follow(gen, d.job ?: target.jobId)
+        }
+    }
+
+    /**
+     * A job the server started by itself — autoplay-next — narrated by the same overlay as one this
+     * app asked for, so Back on it cancels it the same way.
+     */
+    fun follow(jobId: String, title: String) {
+        if (_job.value != null) return
+        val gen = ++playGen
+        _job.value = PlayJob(jobId, title)
+        pollJob = scope.launch { follow(gen, jobId) }
+    }
+
+    private suspend fun follow(gen: Int, pollId: String) {
+        var misses = 0
+        val deadline = SystemClock.elapsedRealtime() + deadlineMs
+        while (currentCoroutineContext().isActive && gen == playGen) {
+            delay(700)
+            if (gen != playGen) return
+            if (SystemClock.elapsedRealtime() > deadline || misses >= maxMisses) {
+                finish(gen, "Lost track of playback progress — the server may have restarted.", true)
+                return
+            }
+            val p = runCatching { api.progress(pollId) }.getOrNull()
+            // A job the server does not know about answers `{}`; that counts as a miss too.
+            if (p?.stage == null) { misses++; continue }
+            misses = 0
+            _job.update {
+                it?.copy(stage = p.stage, pct = p.pct ?: 0.0, msg = p.msg, attempt = p.attempt, attempts = p.attempts)
+            }
+            when (p.stage) {
+                // The player is already up: the play command reached us over the heartbeat
+                // before this poll did. Nothing to say, just get out of the way.
+                "playing" -> { finish(gen, null, false); return }
+                "error" -> {
+                    val m = p.msg ?: "unknown"
+                    // Routine, not a failure: someone started a different film from the phone.
+                    if (m.startsWith("Superseded")) finish(gen, "Another movie was started", false)
+                    else finish(gen, "Failed: $m", true)
+                    return
                 }
             }
         }
