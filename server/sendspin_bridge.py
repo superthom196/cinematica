@@ -73,32 +73,17 @@ from aiosendspin.server import AudioFormat, SendspinServer
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-# Copied verbatim from server.py's load_env() -- deliberately not imported
-# from server.py, so this bridge has no dependency on the 3.11 process.
-def load_env(path):
-    out = {}
-    try:
-        for line in open(path):
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            out[k.strip()] = v.strip().strip("'\"")
-    except FileNotFoundError:
-        pass
-    return out
-
-
-ENV_FILE = os.environ.get("ENV_FILE", str(SCRIPT_DIR / ".env"))
-ENV = load_env(ENV_FILE)
+# settings.py, not server.py: a stdlib-only module beside this one (Python puts
+# the script's own directory on the path), so the bridge still has no
+# dependency on the 3.11 server process.
+import settings  # noqa: E402
 
 
 def cfg(key, default=""):
-    """Env var wins over .env, both win over the given default."""
-    val = os.environ.get(key)
-    if val is not None and val != "":
-        return val
-    return ENV.get(key, default)
+    """Env var wins over .env, both win over the given default. An empty value
+    counts as unset here, as it always has for the bridge."""
+    val = settings.get(key)
+    return default if val is None or val == "" else val
 
 
 SENDSPIN_CLIENT_URL = cfg("SENDSPIN_CLIENT_URL", "")

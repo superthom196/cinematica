@@ -48,6 +48,27 @@ class AutoplayNextTest(unittest.TestCase):
         self.assertNotIn("next", self.beat(state="ended", job="tv:show:1:1"))
         self.assertEqual(self.started, ["tv:show:1:2"])
 
+    def test_the_answer_worked_out_during_the_episode_is_used(self):
+        def no_lookup(*a):
+            raise AssertionError("the heartbeat asked the provider")
+        server.next_episode = no_lookup
+        server.job_set("tv:show:1:1", autoplay=True,
+                       next_ep={"s": 2, "e": 1, "name": "New Season"})
+        self.beat(state="playing", job="tv:show:1:1", position_s=10)
+        reply = self.beat(state="ended", job="tv:show:1:1")
+        self.assertEqual(reply["next"], {"job": "tv:show:2:1", "s": 2, "e": 1, "name": "New Season"})
+
+    def test_a_stored_end_of_show_starts_nothing(self):
+        server.job_set("tv:show:1:9", autoplay=True, next_ep=False)
+        self.beat(state="playing", job="tv:show:1:9", position_s=10)
+        self.assertNotIn("next", self.beat(state="ended", job="tv:show:1:9"))
+        self.assertEqual(self.started, [])
+
+    def test_remembering_stores_the_next_episode_on_the_job(self):
+        server.job_set("tv:show:1:1", autoplay=True)
+        server._remember_next_episode("tv:show:1:1")
+        self.assertEqual(server.job_get("tv:show:1:1")["next_ep"], {"s": 1, "e": 2, "name": "The Second"})
+
     def test_no_autoplay_no_next(self):
         server.job_set("tv:show:1:1", autoplay=False)
         self.beat(state="playing", job="tv:show:1:1", position_s=10)

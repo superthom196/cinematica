@@ -19,10 +19,8 @@ sys.path.insert(0, HERE)
 from providers import contract, gateway   # noqa: E402
 import browser_play   # noqa: E402 -- the HLS grid/tfdt helpers the packager needs
 import shelf          # noqa: E402 -- favourites/watched/resume, rules kept out of here
-# Defaults to .env beside server.py. Was hardcoded to a second directory in
-# $HOME, which is the only reason that directory still existed.
-ENV_FILE  = os.environ.get("ENV_FILE", os.path.join(HERE, ".env"))
-PORT      = int(os.environ.get("PORT", 8090))
+import settings       # noqa: E402 -- every setting: the environment, then .env, then the default
+PORT      = int(settings.get("PORT", 8090))
 # The name this box answers to on the LAN. Both the phone and the TV app reach
 # the server here, and the converted-audio URL is handed to the player under this
 # name, so it cannot stay hardcoded the way audio_url() had it -- a second
@@ -45,8 +43,8 @@ def _default_host():
     except Exception:
         return "127.0.0.1"
 
-PUBLIC_HOST = os.environ.get("PUBLIC_HOST") or _default_host()
-STREMIO   = os.environ.get("STREMIO", f"http://{PUBLIC_HOST}:11470")
+PUBLIC_HOST = settings.get("PUBLIC_HOST") or _default_host()
+STREMIO   = settings.get("STREMIO", f"http://{PUBLIC_HOST}:11470")
 # The names this server answers to. A page on the public internet can point a
 # hostname it owns at this box's private address -- DNS rebinding -- and from
 # then on the browser treats it as same-origin, so _origin_ok() below sees
@@ -56,7 +54,7 @@ STREMIO   = os.environ.get("STREMIO", f"http://{PUBLIC_HOST}:11470")
 # accepted, because the attack needs a name whose DNS it controls and cannot
 # make a browser put someone else's address in Host.
 HOST_ALLOW = tuple(h.strip().lower() for h in
-                   os.environ.get("HOST_ALLOW", "").split(",") if h.strip())
+                   settings.get("HOST_ALLOW", "").split(",") if h.strip())
 # Suffixes nobody can register against this house from the public DNS: .lan and
 # .local are link-local, and a .ts.net name exists only inside one tailnet. The
 # phone reaches this server under all three, so none of them can be dropped.
@@ -67,56 +65,55 @@ HOST_ALLOW_SUFFIX = (".lan", ".local", ".ts.net")
 # nothing in this process ever runs the adb binary.
 # TV is the previous name for the same setting and still works; deprecated, do
 # not use it in new units.
-ADB_TV    = os.environ.get("ADB_TV", os.environ.get("TV", ""))
+ADB_TV    = settings.get("ADB_TV", settings.get("TV", ""))
 ADB_ENABLED = bool(ADB_TV)
-ADB       = os.environ.get("ADB", "/usr/bin/adb")
+ADB       = settings.get("ADB", "/usr/bin/adb")
 # The standalone VLC install this used to fall back to is gone from the TV --
 # the Cinematica app is the only player left. The app registers itself over the
 # heartbeat channel once it is in the foreground; adb's only remaining job is to
 # bring it there.
-PLAYER    = os.environ.get("PLAYER", "io.github.superthom196.cinematica/.MainActivity")
-PLAYER_PKG= PLAYER.split("/")[0]
+PLAYER    = settings.get("PLAYER", "io.github.superthom196.cinematica/.MainActivity")
 # How long a TV app counts as connected after its last heartbeat. Longer than
 # the app's poll interval, so one lost request is not a disconnect; short enough
 # that a TV switched off at the wall stops claiming the player within a poll of
 # the phone's health check.
-APP_TTL   = float(os.environ.get("APP_TTL", 15))
+APP_TTL   = float(settings.get("APP_TTL", 15))
 # How long to wait for the app to report that it is actually playing after being
 # told to. Opening a 4K stream and filling the player's own buffer is not instant.
-APP_HANDOFF_SECS = int(os.environ.get("APP_HANDOFF_SECS", 60))
+APP_HANDOFF_SECS = int(settings.get("APP_HANDOFF_SECS", 60))
 # How long to wait for a woken app to show up on the heartbeat channel. adb's
 # "am start" returns as soon as the activity is requested, well before the app
 # has actually launched and made its first heartbeat.
-APP_WAKE_SECS = int(os.environ.get("APP_WAKE_SECS", 20))
+APP_WAKE_SECS = int(settings.get("APP_WAKE_SECS", 20))
 # How long a queued command is still worth delivering. Nothing else expires it:
 # the app may be off, asleep or wedged, and an order that has sat unacked this
 # long describes a world that no longer exists -- an app coming back an hour
 # later must not start a film nobody is in the room for.
-APP_CMD_TTL = float(os.environ.get("APP_CMD_TTL", 90))
+APP_CMD_TTL = float(settings.get("APP_CMD_TTL", 90))
 # How long the last reported playback state is still believed after the app's
 # heartbeat has gone stale. APP_TTL is deliberately one missed poll, which is
 # nothing like "the film ended": without this a 15 s network blip made the
 # phone's now-playing strip flap and made cache_watch() empty the cache in the
 # middle of the film. Three missed polls before that is believed.
-APP_GRACE = float(os.environ.get("APP_GRACE", 3 * APP_TTL))
-PAGE      = int(os.environ.get("PAGE_SIZE", 20))    # films per infinite-scroll page
-POOL_MAX  = int(os.environ.get("POOL_MAX", 600))   # candidate pool depth per view
-CHANNEL_POLL_MIN = int(os.environ.get("CHANNEL_POLL_MIN", 30))  # how often followed channels are checked for uploads
+APP_GRACE = float(settings.get("APP_GRACE", 3 * APP_TTL))
+PAGE      = int(settings.get("PAGE_SIZE", 20))    # films per infinite-scroll page
+POOL_MAX  = int(settings.get("POOL_MAX", 600))   # candidate pool depth per view
+CHANNEL_POLL_MIN = int(settings.get("CHANNEL_POLL_MIN", 30))  # how often followed channels are checked for uploads
 # Beside server.py, like .env, netprofile.json and nowplaying.json. It was
 # pinned to one absolute path under $HOME, which silently made any second
 # checkout read and overwrite the first one's dataset.
 TTL_LIST  = 6 * 3600                # popular list cache
 TTL_STREAM= 3 * 3600                # per-film stream cache
-TTL_FAIL  = int(os.environ.get("TTL_FAIL", 120))   # transport failures: retry soon
+TTL_FAIL  = int(settings.get("TTL_FAIL", 120))   # transport failures: retry soon
 TTL_JOB   = 2 * 3600                # finished/abandoned play-job records
 # caches never evicted otherwise grow forever -- _pool's key is a sort+genre
 # combination an unauthenticated caller can enumerate at will.
-MAX_POOL_ENTRIES   = int(os.environ.get("MAX_POOL_ENTRIES", 40))
-MAX_STREAM_ENTRIES = int(os.environ.get("MAX_STREAM_ENTRIES", 2000))
-MAX_JOB_ENTRIES    = int(os.environ.get("MAX_JOB_ENTRIES", 200))
+MAX_POOL_ENTRIES   = int(settings.get("MAX_POOL_ENTRIES", 40))
+MAX_STREAM_ENTRIES = int(settings.get("MAX_STREAM_ENTRIES", 2000))
+MAX_JOB_ENTRIES    = int(settings.get("MAX_JOB_ENTRIES", 200))
 # A catalogue's TV vote counts run much lower than film (a well-known show
 # can sit under 500), so the pool's rating floor needs its own, lower knob.
-TV_MIN_VOTES = int(os.environ.get("TV_MIN_VOTES", 200))
+TV_MIN_VOTES = int(settings.get("TV_MIN_VOTES", 200))
 # Sorted purely by vote average, the series pool is anime and K-drama (very
 # high averages, and 200 votes is nothing for them) with British TV buried
 # under them on vote count, and the film pool leans the same way. With the
@@ -137,23 +134,23 @@ TV_MIN_VOTES = int(os.environ.get("TV_MIN_VOTES", 200))
 # (the phone page) gets.
 def _countries(s):
     return sorted({c.strip().upper() for c in s.split(",") if c.strip()})
-BIAS            = os.environ.get("BIAS", "1").lower() not in ("0", "", "false", "no", "off")
-BIAS_LANG       = os.environ.get("BIAS_LANG", "en").strip().lower()   # ISO 639-1; "" = any
-HOME_COUNTRIES  = _countries(os.environ.get("HOME_COUNTRIES", "GB"))
-TV_BIG_MIN_VOTES    = int(os.environ.get("TV_BIG_MIN_VOTES", 1500))
-MOVIE_BIG_MIN_VOTES = int(os.environ.get("MOVIE_BIG_MIN_VOTES", 3000))
-WORLD_MIN_VOTES     = int(os.environ.get("WORLD_MIN_VOTES", 10000))   # any language; 0 = no such tier
-HOME_W          = float(os.environ.get("HOME_W", 0.5))   # rating points added to a home title
+BIAS            = settings.flag("BIAS", True)
+BIAS_LANG       = settings.get("BIAS_LANG", "en").strip().lower()   # ISO 639-1; "" = any
+HOME_COUNTRIES  = _countries(settings.get("HOME_COUNTRIES", "GB"))
+TV_BIG_MIN_VOTES    = int(settings.get("TV_BIG_MIN_VOTES", 1500))
+MOVIE_BIG_MIN_VOTES = int(settings.get("MOVIE_BIG_MIN_VOTES", 3000))
+WORLD_MIN_VOTES     = int(settings.get("WORLD_MIN_VOTES", 10000))   # any language; 0 = no such tier
+HOME_W          = float(settings.get("HOME_W", 0.5))   # rating points added to a home title
 
 # ---- device limits, measured on the Sony KD-55XF8096 (2018, Android 9) -------
 # HEVC decoder tops out at 4096x2304 / 60 Mbps; there is NO AV1 decoder at all,
 # and no transcode fallback anywhere, so an AV1 pick is simply a dead end.
-MAX_GB_4K   = float(os.environ.get("MAX_GB_4K", 25))   # hard ceiling regardless
+MAX_GB_4K   = float(settings.get("MAX_GB_4K", 25))   # hard ceiling regardless
 # What the VPN'd link actually sustains on a torrent swarm, measured: 0.9-3.6
 # MB/s, typically ~1.5-1.8. A file whose bitrate exceeds this CANNOT be fixed by
 # pre-buffering -- the buffer just drains at the difference and stalls. So the
 # real fix is refusing to pick such files in the first place.
-SUSTAIN_MBPS = float(os.environ.get("SUSTAIN_MBPS", 12))   # base budget, retuned by netcheck
+SUSTAIN_MBPS = float(settings.get("SUSTAIN_MBPS", 12))   # base budget, retuned by netcheck
 # ---- link assessment --------------------------------------------------------
 # SUSTAIN_MBPS is a budget for TORRENT throughput over the VPN, which is nothing
 # like a single TLS stream to a CDN: measured on this link, plain HTTP ran ~82
@@ -162,157 +159,143 @@ SUSTAIN_MBPS = float(os.environ.get("SUSTAIN_MBPS", 12))   # base budget, retune
 # every film it buffers -- and the HTTP probe is used for sizing peer
 # connections and as a sanity ceiling, never on its own for the budget.
 NET_FILE     = os.path.join(HERE, "netprofile.json")
-NET_SECS     = float(os.environ.get("NET_SECS", 8))        # seconds per endpoint
+NET_SECS     = float(settings.get("NET_SECS", 8))        # seconds per endpoint
 # Plain HTTP deliberately, not HTTPS. A flaky link can corrupt sustained TLS
 # transfers -- the "bad record MAC" that makes docker pull restart every layer
 # forever -- and an 8-second read is long enough to hit that every time,
 # while a short curl succeeds. Measured: both endpoints fail over HTTPS and give
 # ~85 Mbps over HTTP. A throughput probe carries nothing worth encrypting.
-NET_URLS     = [u for u in os.environ.get("NET_URLS",
+NET_URLS     = [u for u in settings.get("NET_URLS",
                 "http://cachefly.cachefly.net/100mb.test,"
                 "http://fsn1-speed.hetzner.com/100MB.bin").split(",") if u.strip()]
-NET_TRIES    = int(os.environ.get("NET_TRIES", 2))   # this link drops transfers
+NET_TRIES    = int(settings.get("NET_TRIES", 2))   # this link drops transfers
 # HTTP -> budget, used ONLY until three real streams have been measured. 0.10
 # from the one link there is evidence for: 87 Mbps measured over HTTP against a
 # hand-tuned budget of 8 that demonstrably works, i.e. ~0.09. Deliberately close
 # to that rather than optimistic -- being too generous offers films the swarm
 # cannot sustain, which is the failure this number exists to avoid.
-NET_FRACTION = float(os.environ.get("NET_FRACTION", 0.10))
-NET_SAMPLES  = int(os.environ.get("NET_SAMPLES", 20))       # swarm rates remembered
-NET_PCT      = float(os.environ.get("NET_PCT", 0.25))       # percentile of those to trust
-NET_MIN_OBS  = int(os.environ.get("NET_MIN_OBS", 3))        # ordinary swarms needed first
+NET_FRACTION = float(settings.get("NET_FRACTION", 0.10))
+NET_SAMPLES  = int(settings.get("NET_SAMPLES", 20))       # swarm rates remembered
+NET_PCT      = float(settings.get("NET_PCT", 0.25))       # percentile of those to trust
+NET_MIN_OBS  = int(settings.get("NET_MIN_OBS", 3))        # ordinary swarms needed first
 # First-run calibration: rather than waiting for three real films to go by --
 # during which the budget is a guess and the first film is the one that matters
 # -- measure real swarms up front, once.
-CAL_FILMS    = int(os.environ.get("CAL_FILMS", 4))          # ordinary swarms to sample
-CAL_SECS     = float(os.environ.get("CAL_SECS", 30))        # seconds of download each
-CAL_MAX      = float(os.environ.get("CAL_MAX", 600))        # overall ceiling, 10 min
+CAL_FILMS    = int(settings.get("CAL_FILMS", 4))          # ordinary swarms to sample
+CAL_SECS     = float(settings.get("CAL_SECS", 30))        # seconds of download each
+CAL_MAX      = float(settings.get("CAL_MAX", 600))        # overall ceiling, 10 min
 # Stremio keeps whole films so a resume does not re-download. That is not wanted
 # here: the disk is worth more than the re-download, so the cache is capped and
 # emptied when playback ends.
-CACHE_GB     = float(os.environ.get("CACHE_GB", 30))
+CACHE_GB     = float(settings.get("CACHE_GB", 30))
 # Emptying on playback end needs the server to have seen the film play and stop,
 # and a restart or an unseen player loses that edge: one install kept ten torrents
 # overnight. So anything nothing has written to for this long is swept anyway.
-CACHE_SWEEP_HOURS = float(os.environ.get("CACHE_SWEEP_HOURS", 4))
+CACHE_SWEEP_HOURS = float(settings.get("CACHE_SWEEP_HOURS", 4))
 # How much to ask for per sample. Stremio buffers well past the requested range
 # -- asking for BUFFER_MAX (1 GB) left every sampled film pulling a gigabyte in
 # the background long after its 30s measurement had finished.
-CAL_MB       = int(os.environ.get("CAL_MB", 128))
+CAL_MB       = int(settings.get("CAL_MB", 128))
 SUSTAIN_MIN, SUSTAIN_MAX = 4.0, 40.0
 CONNS_MIN, CONNS_MAX     = 60, 180
-WELL_SEEDED  = int(os.environ.get("WELL_SEEDED", 200))     # peers for the bonus
-SEED_BONUS   = float(os.environ.get("SEED_BONUS", 1.5))    # extra budget when well seeded
+WELL_SEEDED  = int(settings.get("WELL_SEEDED", 200))     # peers for the bonus
+SEED_BONUS   = float(settings.get("SEED_BONUS", 1.5))    # extra budget when well seeded
 # H.265 only. AV1 has no decoder on this panel, and H.264 needs far more bitrate
 # for the same quality -- which the peer-starved swarm cannot deliver. Releases
 # with no codec token in the name are rejected too: they cannot be verified.
-HEVC_ONLY    = os.environ.get("HEVC_ONLY", "1") == "1"
+HEVC_ONLY    = settings.flag("HEVC_ONLY", True)
 # A torrent index's seeder counts are scraped and unreliable -- a "53 seeder"
 # torrent can deliver nothing while a "34 seeder" one flies. There is no way
 # to tell from metadata, so instead of guessing we PROBE each candidate and
 # move on.
-ATTEMPTS    = int(os.environ.get("ATTEMPTS", 5))     # candidates to try per film
-DEAD_SECS   = int(os.environ.get("DEAD_SECS", 25))   # no bytes at all -> abandon
-PROBE_SECS  = int(os.environ.get("PROBE_SECS", 35))  # too slow by now -> abandon
-SLOW_RATIO  = float(os.environ.get("SLOW_RATIO", 0.7))
+ATTEMPTS    = int(settings.get("ATTEMPTS", 5))     # candidates to try per film
+DEAD_SECS   = int(settings.get("DEAD_SECS", 25))   # no bytes at all -> abandon
+PROBE_SECS  = int(settings.get("PROBE_SECS", 35))  # too slow by now -> abandon
+SLOW_RATIO  = float(settings.get("SLOW_RATIO", 0.7))
 # When runtime_min is unknown, need_bps is 0 and the SLOW_RATIO check above is
 # disabled outright -- nothing stops a trickling swarm from buffering forever.
 # This is the backstop: no candidate gets longer than this, full stop.
-HARD_CAP_SECS = int(os.environ.get("HARD_CAP_SECS", 240))
+HARD_CAP_SECS = int(settings.get("HARD_CAP_SECS", 240))
 
 # --- ordering -----------------------------------------------------------------
 # Sorting purely by IMDb rating is permanently stuck in 1994. "balanced" adds a
 # recency bonus that decays with age, so a well-reviewed recent film can out-rank
 # a canonical classic without letting poorly-rated new releases in (they still
 # have to clear the rating and vote floors).
-RECENCY_W    = float(os.environ.get("RECENCY_W", 1.2))    # max IMDb-points bonus
-RECENCY_SPAN = float(os.environ.get("RECENCY_SPAN", 20))  # years until bonus is 0
-RECENT_YEARS = int(os.environ.get("RECENT_YEARS", 5))     # window for "recent"
-MIN_RATING   = float(os.environ.get("MIN_RATING", 6.5))   # keeps the shit out
-MIN_IMDB_VOTES = int(os.environ.get("MIN_IMDB_VOTES", 2000))
+RECENCY_W    = float(settings.get("RECENCY_W", 1.2))    # max IMDb-points bonus
+RECENCY_SPAN = float(settings.get("RECENCY_SPAN", 20))  # years until bonus is 0
+RECENT_YEARS = int(settings.get("RECENT_YEARS", 5))     # window for "recent"
+MIN_RATING   = float(settings.get("MIN_RATING", 6.5))   # keeps the shit out
+MIN_IMDB_VOTES = int(settings.get("MIN_IMDB_VOTES", 2000))
 SORTS = ("top", "balanced", "recent")
 # How many search candidates may be resolved before giving up looking for
 # playable ones. Each resolution is a metadata + streams round trip, so this
 # is the ceiling on how slow a fruitless search can get.
-SEARCH_POOL = int(os.environ.get("SEARCH_POOL", 120))
-MIN_SEEDERS = int(os.environ.get("MIN_SEEDERS", 20))   # "a decent amount of peers"
+SEARCH_POOL = int(settings.get("SEARCH_POOL", 120))
+MIN_SEEDERS = int(settings.get("MIN_SEEDERS", 20))   # "a decent amount of peers"
 # Below these the release is a heavy re-encode: it still carries a 4K tag but
 # will not look like one. Bitrate, not file size, is what decides that -- a 20 GB
 # three-hour film is roughly a 13 GB two-hour one. Flagged rather than rejected,
 # because it may be the only thing available today and a better release often
 # appears in the swarm a day later.
-LOW_MBPS_4K = float(os.environ.get("LOW_MBPS_4K", 5.0))
-LOW_MBPS_HD = float(os.environ.get("LOW_MBPS_HD", 2.5))
-RESOLVE_CHUNK = int(os.environ.get("RESOLVE_CHUNK", 20))  # candidates resolved per pass
-RESOLVE_FIRST = int(os.environ.get("RESOLVE_FIRST", 10))  # ...fewer, for the first row
-BUFFER_SECS = int(os.environ.get("BUFFER_SECS", 90))   # seconds of video to pre-load
-BUFFER_MIN  = int(os.environ.get("BUFFER_MIN_MB", 40)) * 1048576
-BUFFER_MAX  = int(os.environ.get("BUFFER_MAX_MB", 400)) * 1048576
+LOW_MBPS_4K = float(settings.get("LOW_MBPS_4K", 5.0))
+LOW_MBPS_HD = float(settings.get("LOW_MBPS_HD", 2.5))
+RESOLVE_CHUNK = int(settings.get("RESOLVE_CHUNK", 20))  # candidates resolved per pass
+RESOLVE_FIRST = int(settings.get("RESOLVE_FIRST", 10))  # ...fewer, for the first row
+BUFFER_SECS = int(settings.get("BUFFER_SECS", 90))   # seconds of video to pre-load
+BUFFER_MIN  = int(settings.get("BUFFER_MIN_MB", 40)) * 1048576
+BUFFER_MAX  = int(settings.get("BUFFER_MAX_MB", 400)) * 1048576
 # Matroska keeps its seek index (Cues/SeekHead) at the END of the file, and every
 # player reads it the moment it opens the stream. Stremio downloads strictly
 # sequentially, so that tail is never cached and the player sits on a spinner
 # while those pieces are fetched out of order. Pre-fetch the tail too.
-TAIL_MB     = int(os.environ.get("TAIL_MB", 8))
+TAIL_MB     = int(settings.get("TAIL_MB", 8))
 # The tail fetch runs BEFORE probe_and_buffer's guarded loop, so without its own
 # ceiling it was bounded only by the socket timeout: a swarm trickling a few KB/s
 # could sit in "fetching the seek index..." for ten minutes, per candidate.
-TAIL_SECS   = int(os.environ.get("TAIL_SECS", 90))
+TAIL_SECS   = int(settings.get("TAIL_SECS", 90))
 # This TV plays AC3 cleanly but its VLC software-decodes AAC 5.1 and the audio
 # clock drifts -- audible break-up while the video stays perfect. Measured at
 # 21x realtime on this Pi, remuxing the SAME 4K video untouched and re-encoding
 # only the audio to AC3 is nearly free, so AAC picks get piped through ffmpeg.
-FFMPEG      = os.environ.get("FFMPEG", "/usr/lib/jellyfin-ffmpeg/ffmpeg")
-FFMPEG_CTR  = os.environ.get("FFMPEG_CTR", "stremio-server")
-AUDIO_FIX   = os.environ.get("AUDIO_FIX", "1") == "1"
+FFMPEG      = settings.get("FFMPEG", "/usr/lib/jellyfin-ffmpeg/ffmpeg")
+FFMPEG_CTR  = settings.get("FFMPEG_CTR", "stremio-server")
+AUDIO_FIX   = settings.flag("AUDIO_FIX", True)
 # ffmpeg runs INSIDE the stremio container, which uses Docker's DNS and cannot
 # resolve the host name -- it must reach the server on the container's own loopback.
-STREMIO_IN  = os.environ.get("STREMIO_INTERNAL", "http://127.0.0.1:11470")
-FFPROBE     = os.environ.get("FFPROBE", "/usr/lib/jellyfin-ffmpeg/ffprobe")
+STREMIO_IN  = settings.get("STREMIO_INTERNAL", "http://127.0.0.1:11470")
+FFPROBE     = settings.get("FFPROBE", "/usr/lib/jellyfin-ffmpeg/ffprobe")
 # Codecs this panel decodes in hardware. Anything else -- DTS, AAC multichannel,
 # TrueHD -- gets software-decoded by VLC and the audio clock drifts. Guessing
 # this from the release name does not work: "Shawshank [2160p x265 10bit FS97
 # Joy]" carries no audio token at all and is actually DTS 5.1. So probe it.
-NATIVE_AUDIO = tuple(os.environ.get("NATIVE_AUDIO", "ac3,eac3").split(","))
-FOURK_ONLY  = os.environ.get("FOURK_ONLY", "1") == "1"
-AUTOPLAY_NEXT = os.environ.get("AUTOPLAY_NEXT", "1") == "1"
+NATIVE_AUDIO = tuple(settings.get("NATIVE_AUDIO", "ac3,eac3").split(","))
+FOURK_ONLY  = settings.flag("FOURK_ONLY", True)
+AUTOPLAY_NEXT = settings.flag("AUTOPLAY_NEXT", True)
 # A film nobody in this house can follow is not a film. Two layers enforce it:
 # the listing layer reads whatever languages the streams provider reports on
 # the candidate itself, the file layer reads the audio tracks ffprobe finds
 # in the actual file. PREF_LANG is an ISO 639-1 code -- ffprobe reports 639-2
 # ("eng"), so LANG_TAGS below bridges the two.
-PREF_LANG   = os.environ.get("PREF_LANG", "en")
-REJECT_LANG = os.environ.get("REJECT_LANG", "1") == "1"
+PREF_LANG   = settings.get("PREF_LANG", "en")
+REJECT_LANG = settings.flag("REJECT_LANG", True)
 # Hardcoded ("burnt-in") subtitles are part of the picture: no player can turn
 # them off, so an HC/KORSUB release is unwatchable here no matter how good the
 # swarm is. Release names mark them reliably, which is why this one needs no
 # file-level counterpart.
-REJECT_HARDSUB = os.environ.get("REJECT_HARDSUB", "1") == "1"
+REJECT_HARDSUB = settings.flag("REJECT_HARDSUB", True)
 # The bridge sidecar that owns the hi-fi DAC. Its own process, its own port --
 # server.py never touches the device directly, it only tells the bridge what
 # to play and reads back where the audio actually is.
-SENDSPIN_BRIDGE = os.environ.get("SENDSPIN_BRIDGE", "http://127.0.0.1:8091")
+SENDSPIN_BRIDGE = settings.get("SENDSPIN_BRIDGE", "http://127.0.0.1:8091")
 
-def load_env(path):
-    out = {}
-    try:
-        for line in open(path):
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            out[k.strip()] = v.strip().strip("'\"")
-    except FileNotFoundError:
-        pass
-    return out
-
-ENV       = load_env(ENV_FILE)
 # Hi-fi only makes sense once the bridge sidecar is around to receive it --
 # this is the one flag that turns the whole bridge codepath on. The TV now
 # picks which Sendspin player to use at runtime (GET /api/hifi/players), so
 # a fixed client URL is no longer required -- the bridge's own presence is
 # what matters.
-SENDSPIN_CLIENT_URL = ENV.get("SENDSPIN_CLIENT_URL") or os.environ.get("SENDSPIN_CLIENT_URL")
-SENDSPIN_ENABLED = os.environ.get("SENDSPIN", "1") == "1"
+SENDSPIN_CLIENT_URL = settings.get("SENDSPIN_CLIENT_URL") or None
+SENDSPIN_ENABLED = settings.flag("SENDSPIN", True)
 # One clock, one follower: the bridge's DAC timeline is the reference and the
 # TV corrects its picture against it. The audio itself is only ever restarted
 # for an explicit viewer seek (the TV's seek_seq), a pause/buffering recovery,
@@ -331,31 +314,70 @@ HIFI_START_TIMEOUT_S = 45.0
 # timeout here means the bridge is wedged, not merely busy.
 HIFI_CONNECT_TIMEOUT_S = 25.0
 HIFI_CALL_TIMEOUT_S = 30.0
-HIFI_AUDIO_DELAY_MS = int(os.environ.get("HIFI_AUDIO_DELAY_MS", "0"))
+HIFI_AUDIO_DELAY_MS = int(settings.get("HIFI_AUDIO_DELAY_MS", "0"))
 # How close to the end of the decoded track counts as the end of it. The last
 # seconds of a film are the one place a stopped stream is not a fault, and a
 # start this close to the end could not land anyway: the player will not take
 # a first chunk less than its send-ahead floor (~1 s) from now.
 HIFI_TRACK_END_S = 2.0
 
+# ---- settings the sections further down use ----------------------------------
+# Kept here with the rest, so every knob this file reads is in one place.
+# Probing saturates the link by design, so any uncached catalogue call made
+# while it runs times out -- which showed up as a completely blank film
+# list. It waits for the app to be genuinely idle instead of merely waiting
+# its turn at startup.
+IDLE_SECS = float(settings.get("NET_IDLE_SECS", 45))
+IDLE_WAIT = float(settings.get("NET_IDLE_WAIT", 1800))
+
+# CINEMATICA_SHELF exists for the test suite, which drives real heartbeats
+# through this module: without somewhere else to point it, a test run on the Pi
+# would write "Stub Movie 1" into the household's actual watch history.
+SHELF_FILE = settings.get("CINEMATICA_SHELF") or os.path.join(HERE, "shelf.json")
+
+MAX_TRANSCODES = int(settings.get("MAX_TRANSCODES", 2))
+
+# The transcoder was a live pipe started when the player connected, so it raced
+# from cold exactly when Stremio was still downloading hard and VLC had an empty
+# buffer -- about a minute of glitching every time. It now writes to a file
+# during the buffer phase and gets a head start before the player ever connects.
+TC_HOST  = os.path.join(HERE, "transcode")          # host side of the bind mount
+TC_CTR   = settings.get("TC_CTR", "/transcode")   # same dir inside the container
+# Built at full speed, so this costs seconds of wall time, not TC_HEAD seconds.
+TC_HEAD  = int(settings.get("TRANSCODE_HEAD_SECS", 60))
+# How far ahead of playback the regulator keeps the conversion once it starts.
+TC_LEAD  = int(settings.get("TRANSCODE_LEAD_SECS", 180))
+# Resume once the lead has drained to this fraction of TC_LEAD. Was a hardcoded
+# 0.6, which meant ~72s of playback had to drain before ffmpeg was let go again
+# -- so it ran in ~27s sprints separated by ~72s of SIGSTOP, with its HTTP
+# connection to Stremio sitting idle throughout. A narrow band stop-starts more
+# often but never leaves the input idle long enough to go stale.
+TC_BAND  = float(settings.get("TRANSCODE_LEAD_BAND", 0.9))
+TC_KEEP  = int(settings.get("TRANSCODE_KEEP", 0))   # cache is emptied per film, so keep none
+
+# The on-demand browser HLS packager: one ffmpeg per session, remuxing the
+# source into fMP4 segments a grid-index at a time, paced against the real
+# playhead instead of an estimate. See regulate_hls / bx_spawn below.
+BX_DIR      = "bx_"                    # per-session directory prefix under TC_HOST
+BX_SEG_WAIT = float(settings.get("BX_SEG_WAIT", 45))   # long-poll ceiling per segment
+BX_LEAD     = float(settings.get("BX_LEAD", 300))      # seconds ahead of the playhead
+BX_BEHIND   = float(settings.get("BX_BEHIND", 600))    # seconds kept behind it
+BX_SEEK_DEBOUNCE = float(settings.get("BX_SEEK_DEBOUNCE", 0.25))
+BX_LOOKAHEAD = int(settings.get("BX_LOOKAHEAD", 8))    # segments past the frontier that just wait
+
+JOB_STALE  = int(settings.get("JOB_STALE", 120))  # a play job not updated this long: its worker is gone
+
+BX_IDLE = float(settings.get("BX_IDLE", 60))   # a browser session with no heartbeat this long has stopped playing
+
 # No service credentials here any more. A catalogue key or a stream-index
 # config string belongs to the provider that needs it, is entered in the
-# browser, and is stored outside this directory. ENV is still read for the
-# legacy values so stage-6 migration can offer to import them -- offer, not
-# adopt: finding an old provider API key in a .env must never silently
-# switch a service on.
+# browser, and is stored outside this directory. An old provider API key
+# left in a .env is never read: it must not silently switch a service on.
 
 # Cloudflare 403s the default "Python-urllib/x.y" agent outright, so every
 # request has to carry a normal-looking UA. Found the hard way.
 UA = ("Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/140.0.0.0 Safari/537.36")
-
-def http_json(url, headers=None, timeout=25):
-    h = {"User-Agent": UA, "Accept": "application/json"}
-    h.update(headers or {})
-    req = urllib.request.Request(url, headers=h)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
 
 # ---- ratings ---------------------------------------------------------------
 # Cinematica used to download IMDb's whole daily ratings dataset on startup,
@@ -1032,6 +1054,26 @@ def _episode_name(tid, s, e):
     except Exception:
         return None
 
+def _next_episode_info(tid, s, e):
+    """{"s", "e", "name"} of the episode after (s, e), or False at the end of
+    the show -- False rather than None so a stored answer of "nothing next"
+    is told apart from no answer yet."""
+    nxt = next_episode(tid, s, e)
+    if not nxt:
+        return False
+    ns, ne = nxt
+    return {"s": ns, "e": ne, "name": _episode_name(tid, ns, ne)}
+
+def _remember_next_episode(jobid):
+    """Store an autoplay episode's successor on its job while it plays. Off the
+    request thread: crossing into a new season can be an uncached provider
+    call, and nothing about starting this episode should wait for it."""
+    try:
+        tid, s, e = tv_job_parts(jobid)
+        job_set(jobid, next_ep=_next_episode_info(tid, s, e))
+    except Exception as ex:
+        print("autoplay: could not look ahead from %s: %s" % (jobid, ex), flush=True)
+
 def _autoplay_start(nid, resolve):
     """start_play() for an autoplay-next, retiring the placeholder job the
     heartbeat registered if the play never got going -- no stream, cancelled,
@@ -1074,9 +1116,12 @@ def _note(key, **kw):
     if not key:
         return
     with _lock:
+        is_new = key not in _progress
         p = _progress.setdefault(key, {"started": time.time()})
         p.update(kw)
         p["at"] = time.time()
+        if is_new:               # one per pool, so held to the pools' own limits
+            _evict(_progress, TTL_LIST, MAX_POOL_ENTRIES)
 
 def view_progress(key):
     """{"stage","fraction","label","elapsed"} for the progress endpoint."""
@@ -1517,6 +1562,58 @@ def search_movies(q, limit=24, on_found=None, on_movie=None, kind="movie"):
                     break
     return out, len(cands), i
 
+def _cached_stream(key, force):
+    """The cached entry under `key` if it is still fresh, else None."""
+    with _lock:
+        e = _streams.get(key)
+        if e and not force and time.time() - e["at"] < entry_ttl(e):
+            return e
+    return None
+
+def _store_stream(key, e):
+    with _lock:
+        _streams[key] = e
+        _evict(_streams, TTL_STREAM, MAX_STREAM_ENTRIES)
+    return e
+
+def _stream_entry(identity, runtime, title, ratings, extra=None, **best_kw):
+    """Rank the sources for one film or episode into the cache's entry shape.
+
+    No short-circuit on a missing imdb id: the streams provider may accept
+    the catalogue's own id just fine, and a title that happens to have no
+    IMDb id must still get a real attempt, not an automatic "no imdb_id"."""
+    ranked, n, rejected = best_stream(identity, runtime, **best_kw)
+    e = {"at": time.time(), "pick": (ranked[0] if ranked else None),
+         # picks is what the TV plays, ranked by score() and cut to ATTEMPTS.
+         # picks_all keeps the relaxed tail too, because a browser may need an
+         # H.264 candidate that the TV's HEVC-first ranking pushed past the cut.
+         "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
+         "rejected": rejected,
+         "imdb_id": (identity.get("external_ids") or {}).get("imdb"),
+         "runtime": runtime, "title": title,
+         # A list entry has no IMDb id, so no IMDb rating either: the
+         # wall takes it from the details fetched here (_tile()).
+         "ratings": ratings or {},
+         "soft": True,
+         "err": None if ranked else stream_miss(n, rejected)}
+    e.update(extra or {})
+    return e
+
+def _stream_failure(ex, extra=None):
+    """The entry for a lookup that raised. A provider's error says what
+    actually happened, cacheable or not: hiding its reason behind "no usable
+    stream" is how a whole catalogue came to look unplayable with nothing
+    anywhere explaining it. Anything else carries no "soft", so entry_ttl()
+    retries it soon."""
+    e = {"at": time.time(), "pick": None, "count": 0, "rejected": {}, "imdb_id": None}
+    if isinstance(ex, contract.ProviderError):
+        e.update(soft=ex.code in contract.CACHEABLE_ERRORS,
+                 err="%s: %s" % (ex.code, ex.message))
+    else:
+        e["err"] = f"{type(ex).__name__}: {ex}"
+    e.update(extra or {})
+    return e
+
 def get_stream(mid, force=False, entry=None):
     """`entry`, when the caller already holds this title's catalogue entry (a
     browse/search result), is used to build the identity directly instead of
@@ -1526,10 +1623,9 @@ def get_stream(mid, force=False, entry=None):
     still happens below; there is no cache for it here because there never
     was one."""
     key = "%s@%s" % (gateway.cache_tag(contract.ROLE_STREAMS), mid)
-    with _lock:
-        e = _streams.get(key)
-        if e and not force and time.time() - e["at"] < entry_ttl(e):
-            return e
+    cached = _cached_stream(key, force)
+    if cached:
+        return cached
     try:
         det = entry
         # A list entry stands in for the details only when it carries what the
@@ -1543,91 +1639,45 @@ def get_stream(mid, force=False, entry=None):
         if det is None or not (det.get("external_ids") or {}).get("imdb") \
                 or not det.get("runtime"):
             det = gateway.details(mid, contract.KIND_MOVIE)
-        ext = det.get("external_ids") or {}
         identity = {"id": mid, "local_id": det.get("local_id"), "kind": contract.KIND_MOVIE,
                     "title": det.get("title"), "year": det.get("year"),
-                    "runtime": det.get("runtime"), "external_ids": ext}
-        # No short-circuit on a missing imdb id: the streams provider may
-        # accept the catalogue's own id just fine, and a title that happens
-        # to have no IMDb id must still get a real attempt, not an
-        # automatic "no imdb_id".
-        ranked, n, rejected = best_stream(identity, det.get("runtime"))
-        e = {"at": time.time(), "pick": (ranked[0] if ranked else None),
-             # picks is what the TV plays, ranked by score() and cut to ATTEMPTS.
-             # picks_all keeps the relaxed tail too, because a browser may need an
-             # H.264 candidate that the TV's HEVC-first ranking pushed past the cut.
-             "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
-             "rejected": rejected,
-             "imdb_id": ext.get("imdb"), "runtime": det.get("runtime"), "title": det.get("title"),
-             # A list entry has no IMDb id, so no IMDb rating either: the
-             # wall takes it from the details fetched here (_tile()).
-             "ratings": det.get("ratings") or {},
-             "soft": True,
-             "err": None if ranked else stream_miss(n, rejected)}
-    except contract.ProviderError as ex:
-        # Cacheable or not, say what actually happened. Hiding a provider's
-        # reason behind "no usable stream" is how a whole catalogue came to
-        # look unplayable with nothing anywhere explaining it.
-        e = {"at": time.time(), "pick": None, "count": 0, "rejected": {}, "imdb_id": None,
-             "soft": ex.code in contract.CACHEABLE_ERRORS,
-             "err": "%s: %s" % (ex.code, ex.message)}
+                    "runtime": det.get("runtime"), "external_ids": det.get("external_ids") or {}}
+        e = _stream_entry(identity, det.get("runtime"), det.get("title"), det.get("ratings"))
     except Exception as ex:
-        e = {"at": time.time(), "pick": None, "count": 0, "rejected": {}, "imdb_id": None,
-             "err": f"{type(ex).__name__}: {ex}"}
-    with _lock:
-        _streams[key] = e
-        _evict(_streams, TTL_STREAM, MAX_STREAM_ENTRIES)
-    return e
+        e = _stream_failure(ex)
+    return _store_stream(key, e)
 
 def get_stream_tv(tid, s, e, force=False, entry=None):
-    """Mirrors get_stream() for one episode. Shares the SAME _streams dict as
-    films -- same TTLs, entry_ttl(), _evict(), MAX_STREAM_ENTRIES -- just keyed
-    by season+episode so a show's other episodes don't collide with each
-    other or with a film of the same id. `entry`, like get_stream()'s, lets a
+    """get_stream() for one episode. Shares the SAME _streams dict as films --
+    same TTLs, entry_ttl(), _evict(), MAX_STREAM_ENTRIES -- just keyed by
+    season+episode so a show's other episodes don't collide with each other
+    or with a film of the same id. `entry`, like get_stream()'s, lets a
     caller that already holds the series' catalogue entry skip tv_detail();
     when it does not, tv_detail() is already a 24h cache, not a fresh call."""
     key = "%s@%s" % (gateway.cache_tag(contract.ROLE_STREAMS), "tv:%s:%s:%s" % (tid, s, e))
-    with _lock:
-        ent = _streams.get(key)
-        if ent and not force and time.time() - ent["at"] < entry_ttl(ent):
-            return ent
+    cached = _cached_stream(key, force)
+    if cached:
+        return cached
+    where = {"kind": "tv", "season": s, "episode": e}
     try:
         det = entry if entry is not None else tv_detail(tid)
-        ext = det.get("external_ids") or {}
         ep = next((x for x in tv_season(tid, s)["episodes"] if x.get("episode") == e), None)
         runtime = (ep.get("runtime") if ep else None) or det.get("runtime") or 45
         ep_name = (ep.get("name") if ep else None) or ""
         title = f"{det.get('title')} · S{s:02d}E{e:02d}" + (f" · {ep_name}" if ep_name else "")
         identity = {"id": tid, "local_id": det.get("local_id"), "kind": contract.KIND_SERIES,
                     "title": det.get("title"), "year": det.get("year"), "runtime": runtime,
-                    "external_ids": ext}
-        # Same rule as get_stream(): no imdb id is not a reason to skip the
-        # lookup, only a reason it might fail.
-        ranked, n, rejected = best_stream(identity, runtime, kind="tv", season=s, episode=e)
-        ent = {"at": time.time(), "pick": (ranked[0] if ranked else None),
-               "picks": ranked[:ATTEMPTS], "picks_all": ranked[:25], "count": n,
-               "rejected": rejected,
-               "imdb_id": ext.get("imdb"), "runtime": runtime, "title": title,
-               "ratings": det.get("ratings") or {},
-               "soft": True,
-               "err": None if ranked else stream_miss(n, rejected),
-               "kind": "tv", "season": s, "episode": e}
-    except contract.ProviderError as ex:
-        ent = {"at": time.time(), "pick": None, "count": 0, "rejected": {}, "imdb_id": None,
-               "soft": ex.code in contract.CACHEABLE_ERRORS,
-               "err": "%s: %s" % (ex.code, ex.message),
-               "kind": "tv", "season": s, "episode": e}
+                    "external_ids": det.get("external_ids") or {}}
+        ent = _stream_entry(identity, runtime, title, det.get("ratings"), where,
+                            kind="tv", season=s, episode=e)
     except Exception as ex:
-        ent = {"at": time.time(), "pick": None, "count": 0, "rejected": {}, "imdb_id": None,
-               "err": f"{type(ex).__name__}: {ex}", "kind": "tv", "season": s, "episode": e}
-    with _lock:
-        _streams[key] = ent
-        _evict(_streams, TTL_STREAM, MAX_STREAM_ENTRIES)
-    return ent
+        ent = _stream_failure(ex, where)
+    return _store_stream(key, ent)
 
 def net_load():
     try:
-        d = json.load(open(NET_FILE))
+        with open(NET_FILE) as f:
+            d = json.load(f)
     except Exception:
         return {}
     # Early samples were bare floats with no peer count. A rate cannot be
@@ -1638,10 +1688,13 @@ def net_load():
 def net_save(d):
     try:
         tmp = NET_FILE + ".tmp"
-        json.dump(d, open(tmp, "w"), indent=2)
+        with open(tmp, "w") as f:
+            json.dump(d, f, indent=2)
         os.replace(tmp, NET_FILE)
-    except Exception:
-        pass
+    except Exception as ex:
+        # Not fatal -- the measurements are still in memory -- but a profile
+        # that never reaches the disk is re-measured after every restart.
+        print("net: could not save %s: %s" % (NET_FILE, ex), flush=True)
 
 _net = net_load()
 
@@ -1763,12 +1816,6 @@ def net_apply(quiet=False):
 
 _net_busy = {"on": False, "since": 0.0}
 _cal = {"on": False, "done": 0, "want": 0, "msg": ""}
-# Probing saturates the link by design, so any uncached catalogue call made
-# while it runs times out -- which showed up as a completely blank film
-# list. It waits for the app to be genuinely idle instead of merely waiting
-# its turn at startup.
-IDLE_SECS = float(os.environ.get("NET_IDLE_SECS", 45))
-IDLE_WAIT = float(os.environ.get("NET_IDLE_WAIT", 1800))
 _last_req = {"at": 0.0}
 # Polled endpoints are not "use": the page asks for health, now-playing and
 # calibration progress on timers, and counting those as activity would mean a
@@ -1939,8 +1986,8 @@ def calibrate():
         # measure the link, not anything the owner asked for.
         try:
             cache_clear()
-        except Exception:
-            pass
+        except Exception as ex:
+            print("calibrate: could not empty the cache: %s" % ex, flush=True)
 
 def net_check():
     """Measure the link and retune. Returns the profile."""
@@ -2178,7 +2225,11 @@ def channel_watch():
             time.sleep(CHANNEL_POLL_MIN * 60)
             continue
         now = time.time()
-        for cid in shelf.followed_ids():
+        followed = list(shelf.followed_ids())
+        # An unfollowed channel's check time is of no further use.
+        for cid in set(_channel_snap_checked) - set(followed):
+            _channel_snap_checked.pop(cid, None)
+        for cid in followed:
             try:
                 r = gateway.channel_latest(cid)
                 shelf.set_latest(cid, r["videos"])
@@ -2989,9 +3040,16 @@ def app_heartbeat(d):
     if (job and job.startswith("tv:") and state == "ended"
             and prev and prev.get("state") in ("playing", "paused")):
         try:
-            if (job_get(job) or {}).get("autoplay"):
+            ended = job_get(job) or {}
+            if ended.get("autoplay"):
                 tid, s, e = tv_job_parts(job)
-                nxt = next_episode(tid, s, e)
+                # Worked out while the episode played (_remember_next_episode),
+                # so this reply does not wait on the provider. Asked now only
+                # for a job that predates that, e.g. across a server restart.
+                known = ended.get("next_ep")
+                if known is None:
+                    known = _next_episode_info(tid, s, e)
+                nxt = (known["s"], known["e"]) if known else None
                 if nxt:
                     ns, ne = nxt
                     def _resolve():
@@ -3008,8 +3066,7 @@ def app_heartbeat(d):
                             ok=None, msg="Finding the next episode…")
                     threading.Thread(target=_autoplay_start, args=(nid, _resolve),
                                      daemon=True).start()
-                    next_up = {"job": nid, "s": ns, "e": ne,
-                               "name": _episode_name(tid, ns, ne)}
+                    next_up = {"job": nid, "s": ns, "e": ne, "name": known.get("name")}
                 else:
                     print("autoplay: %s ended, no next episode" % job, flush=True)
         except Exception as ex:
@@ -3039,25 +3096,23 @@ _jobs = {}      # movie id -> progress dict
 NOW_FILE = os.path.join(HERE, "nowplaying.json")
 def _now_load():
     try:
-        return json.load(open(NOW_FILE))
+        with open(NOW_FILE) as f:
+            return json.load(f)
     except Exception:
         return {}
 def _now_save(d):
     try:
         tmp = NOW_FILE + ".tmp"
-        json.dump(d, open(tmp, "w"))
+        with open(tmp, "w") as f:
+            json.dump(d, f)
         os.replace(tmp, NOW_FILE)
-    except Exception:
-        pass
+    except Exception as ex:
+        print("nowplaying: could not save %s: %s" % (NOW_FILE, ex), flush=True)
 # Favourites / watched / resume, persisted beside nowplaying.json for the same
 # reason: it is state about what this household is in the middle of, and a
 # service restart (every deploy is one) must not lose where a film got to.
 # shelf.py owns every rule about it; this file only says where the file lives
 # and feeds it what the players report.
-# CINEMATICA_SHELF exists for the test suite, which drives real heartbeats
-# through this module: without somewhere else to point it, a test run on the Pi
-# would write "Stub Movie 1" into the household's actual watch history.
-SHELF_FILE = os.environ.get("CINEMATICA_SHELF") or os.path.join(HERE, "shelf.json")
 shelf.init(SHELF_FILE)
 
 def _pool_item(tid):
@@ -3202,47 +3257,17 @@ if _now.get("hifi_src"):
     _hifi["job"] = _now.get("hifi_job")
 if _now.get("hifi_delay_ms") is not None:
     _hifi["delay_ms"] = max(-2000, min(5000, int(_now["hifi_delay_ms"])))
-_tv_cache = {"at": 0, "state": None}
 _transcodes = {}          # infoHash -> Popen
 _tc_lock = threading.Lock()
-MAX_TRANSCODES = int(os.environ.get("MAX_TRANSCODES", 2))
-# The transcoder was a live pipe started when the player connected, so it raced
-# from cold exactly when Stremio was still downloading hard and VLC had an empty
-# buffer -- about a minute of glitching every time. It now writes to a file
-# during the buffer phase and gets a head start before the player ever connects.
-TC_HOST  = os.path.join(HERE, "transcode")          # host side of the bind mount
-TC_CTR   = os.environ.get("TC_CTR", "/transcode")   # same dir inside the container
-# Built at full speed, so this costs seconds of wall time, not TC_HEAD seconds.
-TC_HEAD  = int(os.environ.get("TRANSCODE_HEAD_SECS", 60))
-# How far ahead of playback the regulator keeps the conversion once it starts.
-TC_LEAD  = int(os.environ.get("TRANSCODE_LEAD_SECS", 180))
-# Resume once the lead has drained to this fraction of TC_LEAD. Was a hardcoded
-# 0.6, which meant ~72s of playback had to drain before ffmpeg was let go again
-# -- so it ran in ~27s sprints separated by ~72s of SIGSTOP, with its HTTP
-# connection to Stremio sitting idle throughout. A narrow band stop-starts more
-# often but never leaves the input idle long enough to go stale.
-TC_BAND  = float(os.environ.get("TRANSCODE_LEAD_BAND", 0.9))
-TC_KEEP  = int(os.environ.get("TRANSCODE_KEEP", 0))   # cache is emptied per film, so keep none
 
-# The on-demand browser HLS packager: one ffmpeg per session, remuxing the
-# source into fMP4 segments a grid-index at a time, paced against the real
-# playhead instead of an estimate. See regulate_hls / bx_spawn below.
-BX_DIR      = "bx_"                    # per-session directory prefix under TC_HOST
-BX_SEG_WAIT = float(os.environ.get("BX_SEG_WAIT", 45))   # long-poll ceiling per segment
-BX_LEAD     = float(os.environ.get("BX_LEAD", 300))      # seconds ahead of the playhead
-BX_BEHIND   = float(os.environ.get("BX_BEHIND", 600))    # seconds kept behind it
-BX_SEEK_DEBOUNCE = float(os.environ.get("BX_SEEK_DEBOUNCE", 0.25))
-BX_LOOKAHEAD = int(os.environ.get("BX_LOOKAHEAD", 8))    # segments past the frontier that just wait
-
-def tv_playback_state(max_age=6):
+def tv_playback_state():
     """3 = playing, 2 = paused, anything else idle.
 
     One source of truth for everything downstream -- playing_now(), cache_watch(),
     the calibration guard and /api/nowplaying all read it. The TV app wins when
     it is connected because it IS the player: its own state beats anything
     inferred from outside it, and it is already in hand, so no cache is wanted
-    here. The dumpsys read below is the fallback, and it keeps the cache: adb is
-    not free and the phone polls this every few seconds.
+    here.
     """
     app = app_fresh()
     if app:
@@ -3262,34 +3287,9 @@ def tv_playback_state(max_age=6):
     last = dict(_app_last_play)
     if last["state"] and time.time() - last["at"] < APP_GRACE:
         return {"playing": 3, "paused": 2}.get(last["state"])
-    if not ADB_ENABLED:
-        return None
-    now = time.time()
-    if now - _tv_cache["at"] < max_age:
-        return _tv_cache["state"]
-    st = None
-    try:
-        # dumpsys lists a session per app. Taking the first one meant anything
-        # else playing on the TV -- YouTube, the built-in player -- was reported
-        # as Cinematica playback, with the last launched title attached to it.
-        # `packages=` (plural, in the uid line) deliberately does not match.
-        # The app does not register a MediaSession today, so this branch only
-        # matters if it ever does -- until then app_fresh() above always wins.
-        r = adb("shell", "dumpsys media_session | grep -E 'package=|state=PlaybackState'")
-        pkg = None
-        for line in (r.stdout or "").splitlines():
-            mp = re.search(r"\bpackage=(\S+)", line)
-            if mp:
-                pkg = mp.group(1).strip().rstrip(",")
-                continue
-            ms = re.search(r"state=PlaybackState \{state=(\d+)", line)
-            if ms and pkg == PLAYER_PKG:
-                st = int(ms.group(1))
-                break
-    except Exception:
-        st = None
-    _tv_cache.update(at=now, state=st)
-    return st
+    # Nothing else knows. adb's media-session list was read here once, but the
+    # app registers no MediaSession, so it could only ever find other apps.
+    return None
 
 def _kill_ctr(name):
     """Kill the ffmpeg INSIDE the container.
@@ -3582,8 +3582,10 @@ def regulate_lead(ih, host_path, bytes_per_sec, proc):
                 _tc_flag(ih, suspended=False)
                 print("transcode: resume  %s lead=%.0fs" % (ih[:8], lead), flush=True)
             time.sleep(2.0)
-    except Exception:
-        pass
+    except Exception as ex:
+        # The regulator is gone either way; say why, or a conversion that ran
+        # away from the playhead has nothing in the log to explain it.
+        print("transcode: regulator for %s stopped: %s" % (ih[:8], ex), flush=True)
     finally:
         if stopped:                       # never leave it suspended
             try:
@@ -3717,7 +3719,6 @@ def job_get(mid):
 # probing LAST would force-stop the other film and take the TV, minutes after
 # the user had given up on it.
 JOB_ACTIVE = ("starting", "buffering", "encoding", "launching")
-JOB_STALE  = int(os.environ.get("JOB_STALE", 120))  # no update this long -> worker is gone
 _play_gen  = 0        # bumped per accepted play; an older job stands down
 # A play request has no job to cancel while it is still resolving streams --
 # get_stream() can block for seconds before job_set() ever runs -- so a
@@ -3759,7 +3760,6 @@ _bx = {"token": None, "job": None, "gen": 0, "at": 0.0, "state": "idle",
        # them at serve time.
        "run_anchor": 0.0,
        "n_segs": None, "proc_key": None, "src": None, "plan": None}
-BX_IDLE = float(os.environ.get("BX_IDLE", 60))
 
 def bx_begin(token, src_internal, plan, seg, duration, mid, gen):
     """Start a browser HLS session: make its directory, record the state the
@@ -4106,8 +4106,8 @@ def regulate_hls(token):
                 print("bx: resume  %s lead=%.0fs" % (token[:8], lead), flush=True)
             _bx_trim(token, playhead, frontier)
             time.sleep(2.0)
-    except Exception:
-        pass
+    except Exception as ex:
+        print("bx: regulator for %s stopped: %s" % (token[:8], ex), flush=True)
     finally:
         if stopped:                       # never leave it suspended
             try:
@@ -4447,24 +4447,27 @@ def prepare_candidate(mid, pick, runtime_min, i, total, gen, tried):
     return {"internal": internal, "acodec": acodec, "adur": adur, "alangs": alangs,
             "acodecs": acodecs, "aidx": aidx, "got": got, "rate": rate}
 
+def _stand_down(mid, gen):
+    """True, with the job marked superseded, once a newer play has claimed the
+    player: the check both play workers make between every step."""
+    if superseded(gen):
+        job_set(mid, stage="error", ok=False,
+                msg="Superseded by a newer play request")
+        return True
+    return False
+
 def run_play_job(mid, picks, runtime_min, title=None, gen=None):
     """Work down the ranked candidates until one actually streams."""
-    def stand_down():
-        if superseded(gen):
-            job_set(mid, stage="error", ok=False,
-                    msg="Superseded by a newer play request")
-            return True
-        return False
     try:
         picks = [p for p in (picks or []) if p]
         total = min(len(picks), ATTEMPTS)
         tried = []
         for i, pick in enumerate(picks[:ATTEMPTS], start=1):
-            if stand_down():
+            if _stand_down(mid, gen):
                 return
             prep = prepare_candidate(mid, pick, runtime_min, i, total, gen, tried)
             if prep is None:
-                if stand_down():
+                if _stand_down(mid, gen):
                     return
                 continue
             internal = prep["internal"]
@@ -4538,12 +4541,12 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                     msg=("Starting the player — %s audio, converting to AC3…" % acodec)
                         if needs_fix else
                         ("Starting the player — %s audio, native…" % (acodec or "unknown")))
-            if stand_down():
+            if _stand_down(mid, gen):
                 return
             pok, pmsg = launch(url, mid, pick, title, gen)
             # launch() stands aside for a newer play rather than failing the
             # film; the worker's own stand-down writes the right message.
-            if not pok and stand_down():
+            if not pok and _stand_down(mid, gen):
                 return
             if not pok and pick.get("transcoded"):
                 # launch() failing does not stop the transcode it was waiting
@@ -4757,12 +4760,6 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
     issues a command to a TV nobody asked to involve -- exactly the
     cross-device interference claim_owner() exists to prevent.
     """
-    def stand_down():
-        if superseded(gen):
-            job_set(mid, stage="error", ok=False,
-                    msg="Superseded by a newer play request")
-            return True
-        return False
     skip = set(skip or [])
     try:
         # Skipped BEFORE the ATTEMPTS cut, not inside the loop: a Retry after
@@ -4778,7 +4775,7 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
         total = min(len(picks), ATTEMPTS)
         reasons = []
         for i, pick in enumerate(picks[:ATTEMPTS], start=1):
-            if stand_down():
+            if _stand_down(mid, gen):
                 return
             key = candidate_key(pick)
             tried = []
@@ -4786,7 +4783,7 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
             tried_keys.append(key)
             job_set(mid, tried_keys=tried_keys)
             if prep is None:
-                if stand_down():
+                if _stand_down(mid, gen):
                     return
                 reasons.append("%s: %s" % (pick.get("codec") or "?",
                                tried[-1] if tried else "could not be prepared"))
@@ -4801,7 +4798,7 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
                 job_set(mid, msg="Candidate %d/%d: %s — trying the next…"
                                  % (i, total, plan["reason"]))
                 continue
-            if stand_down():
+            if _stand_down(mid, gen):
                 return
             if plan["mode"] == "direct":
                 url = stream_url_public(pick)
@@ -4823,7 +4820,7 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
                 # back on screen AND back into _bx, where browser_playing()
                 # then holds the player for a viewer who has gone -- so the
                 # last word has to be here, immediately before publish().
-                if stand_down():
+                if _stand_down(mid, gen):
                     return
                 publish(mid, token, pick, media, gen, title)
                 return
@@ -4849,7 +4846,7 @@ def run_browser_job(mid, picks, runtime_min, title, gen, token, caps, skip=None)
             # keeps writing segments for a session nothing will ever publish.
             # Guarded on the token so the session that superseded this one --
             # if it has already begun its own -- is never what gets stopped.
-            if stand_down():
+            if _stand_down(mid, gen):
                 with _lock:
                     mine = _bx["token"] == token
                 if mine:
@@ -5051,6 +5048,9 @@ def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
         # or an autoplay-next -- inherit the offset the previous play was
         # given and seek to the middle of a film nobody asked to resume.
         kw["start_s"] = start_s
+        # Same reason: the episode after this one is worked out afresh for
+        # every play (_remember_next_episode), never inherited from the last.
+        kw["next_ep"] = None
         job_set(jobid, **kw)
         threading.Thread(target=worker,
                          args=(jobid, entry.get("picks") or [entry["pick"]], runtime,
@@ -5062,6 +5062,9 @@ def start_play(jobid, resolve, autoplay=False, owner="tv", token=None,
         # the first heartbeat for this job -- the TV has not been handed a
         # URL yet.
         job_set(jobid, **_shelf_begin(jobid, entry, runtime))
+        if autoplay and str(jobid).startswith("tv:"):
+            threading.Thread(target=_remember_next_episode, args=(jobid,),
+                             daemon=True).start()
         return 202, {"ok": True, "msg": "buffering", "url": url,
                      "pick": entry["pick"], "job": jobid}
     finally:
@@ -5138,6 +5141,7 @@ def channel_details_cached(cid):
     ch = gateway.channel_details(cid)
     with _lock:
         _channel_details_cache[tag] = {"at": time.time(), "channel": ch}
+        _evict(_channel_details_cache, 3600, MAX_STREAM_ENTRIES)
     return ch
 
 
@@ -5320,16 +5324,13 @@ class H(BaseHTTPRequestHandler):
         read off the socket -- the connection is left standing in the middle of a
         message, and the next request parsed from it would be a slice of that
         body. The caller has to answer 413 and hang up."""
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            return {}
-        if n > cap:
+        raw = self._read_body_capped(cap)
+        if raw is None:
             return None
-        if n <= 0:
+        if not raw:
             return {}
         try:
-            d = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+            d = json.loads(raw.decode("utf-8", "replace"))
         except Exception:
             return {}
         return d if isinstance(d, dict) else {}
@@ -5438,10 +5439,11 @@ class H(BaseHTTPRequestHandler):
                 "active": gateway.active_all()}
 
     def _read_body_capped(self, cap):
-        """Like _body(), but returns raw bytes with no JSON parsing and a
-        much larger cap -- for the one POST body allowed to be a multi-
-        megabyte tar.gz. None means the client declared more than `cap` and
-        none of it was read off the socket; the caller must 413 and hang up."""
+        """The raw bytes a client posted, b"" for none, or None when it declared
+        more than `cap` -- none of which was read off the socket, so the caller
+        must 413 and hang up. _body() parses JSON on top of this; the provider
+        upload calls it directly with a much larger cap, for the one POST body
+        allowed to be a multi-megabyte tar.gz."""
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -5957,33 +5959,37 @@ class H(BaseHTTPRequestHandler):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 self.close_connection = True
-                idle = 0
-                held = 0
+                # Clock time, not a count of 0.1 s naps: transcode_writing()
+                # can take seconds when it has to ask the container, and a
+                # count of naps ran long by however much each pass cost.
+                stalled_at = None     # when the file last stopped growing
+                held_at = None        # when the regulator last started holding it
                 try:
                     with open(path, "rb") as f:
                         f.seek(start_at)
                         while True:
                             chunk = f.read(262144)
                             if chunk:
-                                idle = 0
+                                stalled_at = held_at = None
                                 self.wfile.write(chunk)
                                 continue
                             if not transcode_writing(ih, name):
                                 break            # conversion finished, file complete
+                            now = time.monotonic()
                             if transcode_suspended(ih):
                                 # The regulator is holding it back on purpose --
                                 # seek forward and the player reads to the live
                                 # edge, where 60s of "no growth" used to look
                                 # like EOF and hang up mid-film.
-                                idle = 0
-                                held += 1
-                                if held > 12000:
+                                stalled_at = None
+                                held_at = held_at or now
+                                if now - held_at > 1200:
                                     break        # 20 min suspended: regulator gone
                                 time.sleep(0.1)
                                 continue
-                            held = 0
-                            idle += 1
-                            if idle > 600:
+                            held_at = None
+                            stalled_at = stalled_at or now
+                            if now - stalled_at > 60:
                                 break            # 60s with no new data: give up
                             time.sleep(0.1)
                 except (BrokenPipeError, ConnectionResetError, OSError):
