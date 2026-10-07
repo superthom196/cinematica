@@ -2214,7 +2214,7 @@ function renderProviderDash(root,data){
   const capmbps=root.querySelector('#capmbps'), capgb=root.querySelector('#capgb'),
         capmsg=root.querySelector('#capmsg'), capgbhelp=root.querySelector('#capgbhelp');
   const capHelp=l=>{ capgbhelp.textContent='Never picks a file bigger than this. Picking up to '
-    +l.max_gb+' GB now (the cache holds '+l.cache_gb+' GB). Leave empty for no limit.'; };
+    +l.max_gb+' GB now (this disk lets the cache hold '+l.cache_gb+' GB). Leave empty for no limit.'; };
   fetch('/api/netcheck').then(r=>r.json()).then(l=>{
     if(l.stale_read) return;
     capmbps.value=l.cap_mbps??''; capgb.value=l.cap_gb??'';

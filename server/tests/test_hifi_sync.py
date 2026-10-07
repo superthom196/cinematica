@@ -15,6 +15,7 @@ import queue
 import sys
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
@@ -22,6 +23,7 @@ os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 os.environ["SENDSPIN"] = "1"
 import server  # noqa: E402
 import config  # noqa: E402
+import torrents  # noqa: E402
 import core  # noqa: E402
 import sendspin  # noqa: E402
 import tvlink  # noqa: E402
@@ -39,6 +41,10 @@ def drain():
 class HifiSyncTest(unittest.TestCase):
     def setUp(self):
         config.SENDSPIN_ENABLED = True
+        # a film reaching its player clears every other torrent through docker
+        p = mock.patch.object(torrents, "keep_only", lambda h: None)
+        p.start()
+        self.addCleanup(p.stop)
         tvlink._app = None
         tvlink._app_cmd = None
         sendspin._hifi.update(on=False, gen=100, t0_us=None, clock_offset_us=0, streaming=False,

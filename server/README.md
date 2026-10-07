@@ -137,8 +137,9 @@ in `NATIVE_AUDIO` that the target TV can play correctly.
 | `PORT` | Cinematica HTTP port; default `8090` |
 | `STREMIO` | Stremio URL reachable by the TV |
 | `CINEMATICA_STATE` | Provider/admin state directory; default `/var/lib/cinematica` |
-| `CACHE_GB` | Torrent cache limit; default `30` |
-| `MAX_GB_4K` | Largest file ever picked; default `25`. A file also has to fit in `CACHE_GB`. For a per-box limit use **Settings → Download limits** instead: a speed limit (Mbps) that caps the budget however fast the link measures, and a largest-file limit (GB). Those are kept in `netprofile.json` and survive a re-test of the connection |
+| `CACHE_GB` | Torrent cache limit; default `30`. The cache (torrents, AC3 conversions and Sendspin audio together) is also held to what the drive has free, less `DISK_RESERVE_GB` |
+| `DISK_RESERVE_GB` | Left free on the drive for the OS, whatever the cache wants; default `8`. A film starting clears every other torrent, and the cache is cut back to the one playing if the drive gets this low anyway |
+| `MAX_GB_4K` | Largest file ever picked; default `25`. A file also has to fit in the cache, and an AAC/DTS file needing an AC3 copy has to fit twice. For a per-box limit use **Settings → Download limits** instead: a speed limit (Mbps) that caps the budget however fast the link measures, and a largest-file limit (GB). Those are kept in `netprofile.json` and survive a re-test of the connection |
 | `CACHE_SWEEP_HOURS` | Torrents nothing has written to for this long are deleted even if the end of the film was never seen (a restart, an unseen player); checked every 30 minutes; default `4` |
 | `HEVC_ONLY` | Prefer HEVC sources; enabled by default |
 | `NATIVE_AUDIO` | Audio codecs accepted without conversion; default `ac3,eac3` |

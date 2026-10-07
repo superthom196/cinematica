@@ -172,6 +172,14 @@ CAL_MAX      = float(settings.get("CAL_MAX", 600))        # overall ceiling, 10 
 # here: the disk is worth more than the re-download, so the cache is capped and
 # emptied when playback ends.
 CACHE_GB     = float(settings.get("CACHE_GB", 30))
+# CACHE_GB alone let a fast link fill the disk: a 30 GB cap on a drive with 20
+# GB free stopped a film dead two-thirds in, and only a reboot brought it back.
+# So the disk has its own say (see disk.py): the cache -- torrents, AC3
+# conversions and the Sendspin PCM all together -- may use whatever is free,
+# but always leaves DISK_RESERVE_GB of it for the OS. Not a share of the drive:
+# on a small system drive the OS is already installed and the rest has no
+# other use, and on a big one CACHE_GB is far below half of it anyway.
+DISK_RESERVE_GB  = float(settings.get("DISK_RESERVE_GB", 8))
 # Emptying on playback end needs the server to have seen the film play and stop,
 # and a restart or an unseen player loses that edge: one install kept ten torrents
 # overnight. So anything nothing has written to for this long is swept anyway.

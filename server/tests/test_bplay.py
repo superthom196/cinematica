@@ -40,6 +40,7 @@ import routes  # noqa: E402
 import sendspin  # noqa: E402
 import streams  # noqa: E402
 import transcode  # noqa: E402
+import torrents  # noqa: E402
 import tvlink  # noqa: E402
 import browser_play     # noqa: E402
 
@@ -151,11 +152,15 @@ class RunBrowserJobTest(unittest.TestCase):
         # out to `docker exec ... pgrep`. No docker in these tests either.
         self._orig_ctr_pid = transcode._ctr_pid
         transcode._ctr_pid = lambda name: None
+        # publish() clears every other torrent through docker (keep_only)
+        self._orig_keep_only = torrents.keep_only
+        torrents.keep_only = lambda h: None
 
     def tearDown(self):
         for m, name, fn in self._orig:
             setattr(m, name, fn)
         transcode._ctr_pid = self._orig_ctr_pid
+        torrents.keep_only = self._orig_keep_only
         jobs._jobs = {}
         browser_session._bx = dict(IDLE_BX)
         jobs._play_gen = 0

@@ -1,10 +1,10 @@
 """The torrent cache: its size limit, the sweep that empties it, and the
 prefetch that warms it.
 """
-import json, subprocess, time, urllib.request
+import json, re, subprocess, time, urllib.request
 from providers import contract
 
-import config, netprofile, catalogue, transcode, sendspin, tvlink, jobs, browser_session
+import config, disk, netprofile, catalogue, transcode, sendspin, tvlink, jobs, browser_session, nowplaying
 
 def cached_hashes():
     """Torrents Stremio already holds. Sampling one would measure the disk."""
@@ -25,19 +25,37 @@ def cache_size_apply():
     whole life of the service. Retry, stop at the first success, and say so once
     if it never takes.
     """
-    want  = int(config.CACHE_GB * 1024 ** 3)
+    gb    = disk.cache_gb()
     tries = 10
     gap   = 15
     for attempt in range(1, tries + 1):
-        if netprofile.stremio_set(cacheSize=want):
-            print("cache: capped at %g GB" % config.CACHE_GB, flush=True)
+        if netprofile.stremio_set(cacheSize=int(gb * 1024 ** 3)):
+            _applied["gb"] = gb
+            print("cache: capped at %g GB" % gb, flush=True)
             return
         if attempt < tries:
             time.sleep(gap)
     print("cache: could not cap at %g GB after %d attempts (%ds), leaving "
-          "Stremio's own setting alone" % (config.CACHE_GB, tries, tries * gap), flush=True)
+          "Stremio's own setting alone" % (gb, tries, tries * gap), flush=True)
 
-def cache_clear(older_than=None):
+# The cap last handed to Stremio. The disk's room changes as other things fill
+# or free it, so cache_watch() re-applies it whenever it drifts by a gigabyte.
+_applied = {"gb": None}
+
+def hashes_in_use():
+    """Torrents a player or a play job is on right now, lowercased: every job
+    still working, the newest one handed to a player, a browser session's
+    source, and what nowplaying.json says was last played -- the one record
+    that survives a restart mid-film, when the jobs table starts out empty."""
+    out = set(jobs.hashes_in_use())
+    for src in (browser_session._bx.get("src"), nowplaying._now.get("hash"),
+                nowplaying._now.get("hifi_src")):
+        m = re.search(r"\b([0-9a-fA-F]{40})\b", src or "")
+        if m:
+            out.add(m.group(1).lower())
+    return out
+
+def cache_clear(older_than=None, keep=None, label=None):
     """Empty Stremio's torrent cache, skipping anything still in use.
 
     Deliberate: Stremio hoards whole films so a resume is instant, which meant
@@ -47,7 +65,12 @@ def cache_clear(older_than=None):
     With older_than (seconds), only torrents nothing has written to for that
     long go: the sweep for films whose end was never seen. It goes by writes,
     not by reads, so a film still being watched off a player this server
-    cannot see keeps its torrent as long as Stremio is still fetching it."""
+    cannot see keeps its torrent as long as Stremio is still fetching it.
+
+    With keep (a set of lowercased hashes), the disk is out of room: only
+    those survive, and an open engine on anything else is released and
+    deleted even mid-film -- the episode before this one, say, which Stremio
+    holds open long after autoplay moved on."""
     try:
         raw = urllib.request.urlopen(config.STREMIO_IN + "/stats.json", timeout=10).read()
         active = set(json.loads(raw or "{}"))
@@ -79,8 +102,11 @@ def cache_clear(older_than=None):
         return
     freed = kept = 0
     for h in dirs:
+        if keep is not None and h.lower() in keep:
+            kept += 1
+            continue
         if h in active:
-            if tvlink.playing_now():
+            if keep is None and tvlink.playing_now():
                 kept += 1
                 continue                  # still streaming: leave it alone
             # Stremio keeps an engine open long after its last reader has
@@ -106,7 +132,8 @@ def cache_clear(older_than=None):
             print("cache: could not delete %s: %s" % (h[:8], e), flush=True)
     if freed:
         print("cache: %s %d torrent(s)%s"
-              % ("swept" if older_than is not None else "cleared", freed,
+              % (label or ("swept" if older_than is not None else
+                           "freed disk:" if keep is not None else "cleared"), freed,
                  ", kept %d still streaming" % kept if kept else ""), flush=True)
 
 def cache_watch():
@@ -130,6 +157,7 @@ def cache_watch():
             if time.time() >= next_sweep:
                 next_sweep = time.time() + 1800
                 cache_clear(older_than=int(config.CACHE_SWEEP_HOURS * 3600))
+            disk_pressure()
             # A browser watching counts as playing too, or the cache gets torn
             # down out from under a film someone is watching in the browser.
             now = tvlink.tv_playback_state() in (2, 3) or browser_session.browser_playing()
@@ -163,6 +191,47 @@ def cache_watch():
             if repr(e) != last_err:
                 last_err = repr(e)
                 print("cache: watch failed:", last_err, flush=True)
+
+def keep_only(info_hash):
+    """A film has just reached its player: every other torrent goes now.
+
+    Mid-film the only torrent worth its disk is the one being watched. Before
+    this, the episode before it, and every candidate tried and dropped on the
+    way here, sat in the cache -- open in Stremio, so even the four-hour sweep
+    left them -- until playback ended, which autoplay never lets happen. Kept
+    as well: anything a newer play is still buffering. A direct (non-torrent)
+    source has no hash, so every torrent goes."""
+    keep = set(jobs.hashes_in_use(playing=False))
+    h = (info_hash or "").lower()
+    if contract.RE_HASH40.match(h):
+        keep.add(h)
+    cache_clear(keep=keep, label="new film playing, cleared")
+    disk.measure(fresh=True)
+
+def disk_pressure():
+    """Out of room mid-film: keep what is in use, delete everything else now.
+
+    Clearing on the playing -> idle edge never fires during a binge, since
+    autoplay never lets playback go idle, so every episode's torrent stayed
+    until the disk filled and the film stopped. When nothing in use is known
+    but something is playing (a restart with no nowplaying hash), the plain
+    clear's rule applies instead: open engines are kept while anything plays."""
+    gb = disk.cache_gb()
+    if _applied["gb"] is not None and abs(gb - _applied["gb"]) >= 1:
+        if netprofile.stremio_set(cacheSize=int(gb * 1024 ** 3)):
+            print("cache: re-capped at %g GB (was %g)" % (gb, _applied["gb"]), flush=True)
+            _applied["gb"] = gb
+    if not disk.over():
+        return
+    keep = hashes_in_use()
+    v = disk.measure() or {}
+    print("cache: %.1f GB held, %.1f GB free, room for %.1f GB -- freeing everything but %d in use"
+          % (v.get("held_gb", 0), v.get("free_gb", 0), v.get("cache_gb", 0), len(keep)), flush=True)
+    if keep or not tvlink.playing_now():
+        cache_clear(keep=keep)
+    else:
+        cache_clear()
+    disk.measure(fresh=True)
 
 def prefetch():
     try:

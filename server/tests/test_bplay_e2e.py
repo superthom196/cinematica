@@ -44,6 +44,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
@@ -52,6 +53,7 @@ import server               # noqa: E402
 import browser_session  # noqa: E402
 import config  # noqa: E402
 import jobs  # noqa: E402
+import torrents  # noqa: E402
 import mediaprobe  # noqa: E402
 import routes  # noqa: E402
 import sendspin  # noqa: E402
@@ -164,6 +166,10 @@ class BplayE2ETest(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.mkdtemp(prefix="cinematica-bplay-e2e-")
+        # a film reaching its player clears every other torrent through docker
+        p = mock.patch.object(torrents, "keep_only", lambda h: None)
+        p.start()
+        self.addCleanup(p.stop)
         os.environ["CINEMATICA_STATE"] = self._tmp
 
         jobs._jobs = {}

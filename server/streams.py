@@ -5,7 +5,7 @@ per-episode stream lookups.
 import time
 from providers import contract, gateway
 
-import config, core, mediaprobe, netprofile, catalogue
+import config, core, disk, mediaprobe, netprofile, catalogue
 
 # Cinematica used to download IMDb's whole daily ratings dataset on startup,
 # because the old fixed catalogue couldn't sort by IMDb rating and didn't
@@ -165,6 +165,12 @@ def score(c, runtime_min=None, relax=False, kind="movie"):
             return -1
     s = 0.0
     c["audio"] = mediaprobe.audio_kind(c)
+    # An AAC release gets an AC3 copy beside the torrent (run_play_job), so it
+    # has to fit on the disk twice. Only a named codec can be judged here; the
+    # rest are checked once probed.
+    if (config.AUDIO_FIX and c["audio"] == "aac" and gb is not None
+            and 2 * gb > disk.cache_gb()):
+        return -1
     if c["audio"] == "ac3":
         s_audio = 260          # decodes cleanly on this panel
     elif c["audio"] == "aac":

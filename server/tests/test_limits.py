@@ -27,6 +27,7 @@ os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402
 import catalogue  # noqa: E402
 import config  # noqa: E402
+import disk  # noqa: E402
 import netprofile  # noqa: E402
 import routes  # noqa: E402
 import streams  # noqa: E402
@@ -62,6 +63,10 @@ class LimitsBase(unittest.TestCase):
             mock.patch.object(config, "MAX_GB_4K", 25.0),
             mock.patch.object(config, "CACHE_GB", 30.0),
             mock.patch.object(netprofile, "net_save", self._saved.append),
+            # a roomy drive, so CACHE_GB and the lids are what decide here;
+            # test_disk.py covers the drive's own say
+            mock.patch.object(disk, "_measure", lambda: (2000 * disk.GB, 1500 * disk.GB, 0)),
+            mock.patch.dict(disk._m, {"at": 0.0, "v": None}),
         ]
         for p in self.patches:
             p.start()
@@ -103,7 +108,8 @@ class Picking(LimitsBase):
         self.assertGreater(streams.score(cand(9.5), runtime_min=180), 0)
 
     def test_file_must_fit_in_the_cache(self):
-        with mock.patch.object(config, "CACHE_GB", 15.0):
+        with mock.patch.object(config, "CACHE_GB", 15.0), \
+             mock.patch.dict(disk._m, {"at": 0.0, "v": None}):
             self.assertEqual(netprofile.max_gb(), 15.0)
             self.assertEqual(streams.score(cand(18), runtime_min=240), -1)
 

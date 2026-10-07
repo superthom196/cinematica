@@ -2,9 +2,9 @@
 probing each candidate to the handoff, including autoplay of the next
 episode.
 """
-import os, threading, time, urllib.request
+import os, re, threading, time, urllib.request
 
-import config, core, nowplaying, mediaprobe, streams, netprofile, catalogue, transcode, sendspin, tvlink, browser_session, watching
+import config, core, disk, nowplaying, mediaprobe, streams, netprofile, catalogue, torrents, transcode, sendspin, tvlink, browser_session, watching
 
 def _remember_next_episode(jobid):
     """Store an autoplay episode's successor on its job while it plays. Off the
@@ -63,6 +63,29 @@ def active_job():
             if j.get("stage") in JOB_ACTIVE and now - j.get("at", 0) < config.JOB_STALE:
                 return k, dict(j)
     return None, None
+
+def hashes_in_use(playing=True):
+    """Lowercased infoHashes of every job still working, plus (with playing)
+    the newest one that reached a player. Older "playing" jobs are left out on
+    purpose: the episode before this one is still in the table as playing, and
+    its torrent is exactly what has to go."""
+    now = time.time()
+    out, newest = set(), None
+    with core._lock:
+        for j in _jobs.values():
+            h = ((j.get("pick") or {}).get("infoHash") or "").lower()
+            if not h:
+                m = re.search(r"/([0-9a-fA-F]{40})(?:/|$)", j.get("url") or "")
+                h = m.group(1).lower() if m else ""
+            if not h:
+                continue
+            if j.get("stage") in JOB_ACTIVE and now - j.get("at", 0) < config.JOB_STALE:
+                out.add(h)
+            elif playing and j.get("stage") == "playing" and (newest is None or j.get("at", 0) > newest[0]):
+                newest = (j.get("at", 0), h)
+    if newest:
+        out.add(newest[1])
+    return out
 
 def play_claim():
     """Claim the TV. Anything older sees superseded() and stands down -- the
@@ -229,6 +252,13 @@ def probe_and_buffer(mid, pick, runtime_min, attempt, total, gen=None):
     _, real_size = fetch_tail(url, mid, "Trying %d/%d: %s" % (attempt, total, label))
     if real_size:
         pick["gb"] = real_size / (1024.0 ** 3)
+        # A pack's listing gives the whole season's size, so score() let it
+        # through as unknown; this is the first real number. A file the disk
+        # cannot hold stops the film the moment the disk fills, and costs a
+        # reboot -- refuse it before a byte more is fetched.
+        if pick["gb"] > netprofile.max_gb():
+            pick["too_big"] = True
+            return False, 0, 0.0
         target = buffer_target(pick, runtime_min)
         req = netprofile.required_mbps(pick.get("gb"), runtime_min)
         need_bps = (req / 8.0) * 1048576 if req else 0
@@ -285,7 +315,11 @@ def prepare_candidate(mid, pick, runtime_min, i, total, gen, tried):
     tried.append("%s %.1fGB @ %.1f Mbps" % (pick.get("tag"), pick.get("gb") or 0,
                                             rate * 8 / 1048576))
     if not ok:
-        job_set(mid, msg="Candidate %d/%d too slow — trying the next…" % (i, total))
+        if pick.get("too_big"):
+            job_set(mid, msg="Candidate %d/%d is %.1f GB, more than this disk can hold — trying the next…"
+                             % (i, total, pick.get("gb") or 0))
+        else:
+            job_set(mid, msg="Candidate %d/%d too slow — trying the next…" % (i, total))
         return None
     # Probe the real stream, never the release name. "Shawshank
     # [2160p x265 10bit FS97 Joy]" carries no audio token at all and is
@@ -363,6 +397,19 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                 # source file, so the TV only ever shows picture -- the AC3
                 # conversion this release would otherwise need never happens.
                 print("hifi: skipping AC3 conversion, TV plays video only", flush=True)
+                needs_fix = False
+            if needs_fix and 2 * (pick.get("gb") or 0) > disk.cache_gb():
+                # The conversion is a whole second copy of the film beside the
+                # torrent, and both must fit. Another candidate may carry AC3
+                # already; only the last one plays unconverted, since a full
+                # disk stops the film outright and bad sound does not.
+                if i < total:
+                    job_set(mid, msg="Candidate %d/%d needs an AC3 copy this disk has no room for — trying the next…"
+                                     % (i, total))
+                    continue
+                print("transcode: %.1f GB %s needs %.1f GB for the AC3 copy, the disk allows %.1f -- playing as-is"
+                      % (pick.get("gb") or 0, acodec, 2 * (pick.get("gb") or 0), disk.cache_gb()), flush=True)
+                job_set(mid, msg="%s audio, and no room on this disk for an AC3 copy — playing as-is" % acodec)
                 needs_fix = False
             pick["audio_actual"] = acodec or "?"
             pick["audio_langs"] = alangs
@@ -457,6 +504,9 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                     except Exception:
                         pass
                 nowplaying._now.update(title=title or "Unknown", tag=pick.get("tag"),
+                            # the torrent a full-disk sweep must spare, even
+                            # after a restart has emptied the jobs table
+                            hash=(pick.get("infoHash") or "").lower() or None,
                             audio=pick.get("audio_actual") or "?",
                             transcoded=bool(pick.get("transcoded")),
                             gb=pick.get("gb"), at=time.time(),
@@ -476,6 +526,9 @@ def run_play_job(mid, picks, runtime_min, title=None, gen=None):
                             rate * 8 / 1048576,
                             ("  (after %d dud%s)" % (i - 1, "" if i == 2 else "s")) if i > 1 else ""))
                          if pok else pmsg)
+            if pok:
+                threading.Thread(target=torrents.keep_only, args=(pick.get("infoHash"),),
+                                 daemon=True).start()
             return
         job_set(mid, stage="error", ok=False,
                 msg="No candidate could stream. Tried: " + "; ".join(tried))

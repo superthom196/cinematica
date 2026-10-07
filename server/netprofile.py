@@ -4,7 +4,7 @@ from the Settings page, and the calibration that measures the link.
 import json, os, random, time, urllib.request
 from providers import contract, gateway
 
-import config, core, streams, catalogue, torrents, tvlink
+import config, core, disk, streams, catalogue, torrents, tvlink
 
 def required_mbps(gb, runtime_min):
     if not gb or not runtime_min:
@@ -34,17 +34,18 @@ def sustainable_mbps(seeders):
 #   cap_mbps -- ceiling on the budget, well-seeded bonus included. Bounds the
 #               bitrate, so the size still scales with the film's length.
 #   cap_gb   -- the largest file ever picked, however long the film.
-# A file must fit in the cache as well, lid or no lid.
+# A file must fit in the cache as well, lid or no lid -- and the cache is sized
+# by the disk it sits on (disk.cache_gb), not just by CACHE_GB.
 def cap_mbps():
     return float(_net.get("cap_mbps") or 0)
 
 def max_gb():
     lid = float(_net.get("cap_gb") or 0)
-    return min(x for x in (config.MAX_GB_4K, config.CACHE_GB, lid) if x > 0)
+    return min([x for x in (config.MAX_GB_4K, lid) if x > 0] + [disk.cache_gb()])
 
 def limits():
     return {"cap_mbps": cap_mbps() or None, "cap_gb": float(_net.get("cap_gb") or 0) or None,
-            "max_gb": max_gb(), "cache_gb": config.CACHE_GB}
+            "max_gb": max_gb(), "cache_gb": disk.cache_gb()}
 
 def set_limits(cap_mbps_v, cap_gb_v):
     """Store both lids and drop every pick made under the old ones: the stream

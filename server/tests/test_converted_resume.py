@@ -27,7 +27,9 @@ sys.path.insert(0, HERE)
 os.environ.setdefault("ENV_FILE", "/nonexistent/.env")
 import server  # noqa: E402,F401
 import config  # noqa: E402
+import disk  # noqa: E402
 import jobs  # noqa: E402
+import torrents  # noqa: E402
 import nowplaying  # noqa: E402
 import routes  # noqa: E402
 import sendspin  # noqa: E402
@@ -99,6 +101,10 @@ class BeginSeeksTheInput(unittest.TestCase):
 class BaseReachesTheTv(unittest.TestCase):
     def setUp(self):
         jobs._jobs.clear()
+        # a film reaching its player clears every other torrent through docker
+        p = mock.patch.object(torrents, "keep_only", lambda h: None)
+        p.start()
+        self.addCleanup(p.stop)
 
     def tearDown(self):
         jobs._jobs.clear()
@@ -122,6 +128,7 @@ class BaseReachesTheTv(unittest.TestCase):
         with mock.patch.object(jobs, "prepare_candidate", return_value=prep), \
                 mock.patch.dict(sendspin._hifi, {"on": False}), \
                 mock.patch.object(config, "AUDIO_FIX", True), \
+                mock.patch.object(disk, "cache_gb", return_value=30.0), \
                 mock.patch.object(transcode, "transcode_stop_all"), \
                 mock.patch.object(transcode, "transcode_begin", fake_begin), \
                 mock.patch.object(transcode, "film_start", return_value=414.2) as fs, \

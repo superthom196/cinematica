@@ -4,7 +4,7 @@ regulator, and the job that picks a source the browser can play.
 import math, os, re, shutil, subprocess, threading, time, urllib.error, urllib.request
 import browser_play
 
-import config, core, mediaprobe, streams, catalogue, transcode, jobs
+import config, core, mediaprobe, streams, catalogue, torrents, transcode, jobs
 
 def browser_playing():
     """Whether a browser session is currently watching something.
@@ -514,6 +514,8 @@ def publish(mid, token, pick, media, gen, title):
                    at=time.time(), dur=media.get("duration"), title=title)
     jobs.job_set(mid, stage="playing", ok=True, pct=100, owner="browser",
             otoken=token, media=media, pick=pick, msg="Ready to play")
+    threading.Thread(target=torrents.keep_only, args=((pick or {}).get("infoHash"),),
+                     daemon=True).start()
 
 def bx_next_episode(mid):
     """The episode after this browser job's, for the page to autoplay, or
