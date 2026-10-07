@@ -105,11 +105,13 @@ class ChannelsTestBase(unittest.TestCase):
         self._orig = {}
         for name in ("available", "channel_latest", "channel_details",
                       "channel_popular", "channel_search", "channel_resolve",
-                      "channel_play", "channel_ops", "cache_tag"):
+                      "channel_play", "channel_ops", "channel_ops_offered", "cache_tag"):
             self._orig[name] = getattr(server.gateway, name)
         server.gateway.available = lambda role: True
         server.gateway.channel_ops = lambda: {contract.OP_CH_VIDEOS, contract.OP_CH_SEARCH,
                                               contract.OP_CH_POPULAR}
+        server.gateway.channel_ops_offered = lambda: {contract.OP_CH_VIDEOS, contract.OP_CH_SEARCH,
+                                                      contract.OP_CH_POPULAR}
         server.gateway.cache_tag = lambda role: "prov@1"
         server.gateway.channel_latest = lambda cid: {"videos": [], "next": None}
         server.gateway.channel_details = lambda cid: _channel(cid, "Channel " + cid)
@@ -375,6 +377,22 @@ class ServerChannelsTest(ChannelsTestBase):
         self.assertEqual(body["next"], "tok2")
         get("/api/channel/videos?id=prov:a&page=tok2")
         self.assertEqual(asked, ["", "tok2"])
+
+    def test_a_provider_not_set_up_to_page_says_so(self):
+        # Offered by the manifest, not answered as configured: no API key.
+        server.gateway.channel_ops = lambda: set()
+        server.gateway.channel_latest = lambda cid: {"videos": [_video("v1", "x", 5)], "next": None}
+        code, body = get("/api/channel/videos?id=prov:a")
+        self.assertIsNone(body["next"])
+        self.assertEqual(body["older"], "setup")
+
+    def test_no_note_when_paging_works_or_was_never_offered(self):
+        code, body = get("/api/channel/videos?id=prov:a")
+        self.assertNotIn("older", body)
+        server.gateway.channel_ops = lambda: set()
+        server.gateway.channel_ops_offered = lambda: set()
+        code, body = get("/api/channel/videos?id=prov:a")
+        self.assertNotIn("older", body)
 
     def test_channel_videos_paging_needs_the_op(self):
         server.gateway.channel_ops = lambda: set()

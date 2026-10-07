@@ -90,13 +90,14 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     var videosLoading by remember(id) { mutableStateOf(true) }
     var videosFailed by remember(id) { mutableStateOf(false) }
     var loadingMore by remember(id) { mutableStateOf(false) }
+    var olderNeedSetup by remember(id) { mutableStateOf(false) }
 
     suspend fun loadFirstPage() {
         if (id == null) return
         videosLoading = true
         videosFailed = false
         vm.channelVideos(id, null)
-            .onSuccess { resp -> videos = resp.videos; nextPage = resp.next }
+            .onSuccess { resp -> videos = resp.videos; nextPage = resp.next; olderNeedSetup = resp.older == "setup" }
             .onFailure { videosFailed = true }
         videosLoading = false
     }
@@ -177,6 +178,15 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
                     )
                     subscribers?.let {
                         Text(formatSubscribers(it), style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted)
+                    }
+                    // In the header, not after the last tile: the grid only scrolls to focused
+                    // tiles, so a footer line would never come into view.
+                    if (olderNeedSetup) {
+                        Text(
+                            "Newest videos only. Add an API key to the channels provider in the web page's Settings to see older ones.",
+                            style = MaterialTheme.typography.bodySmall, color = CinematicaColors.Muted,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
                 HSpace(14.dp)

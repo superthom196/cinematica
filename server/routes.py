@@ -562,7 +562,13 @@ class H(BaseHTTPRequestHandler):
                 nxt = "" if contract.OP_CH_VIDEOS in ops else None
         except contract.ProviderError as ex:
             return self._provider_error(ex)
-        return self._send(200, {"videos": shelf.decorate_videos(cid, videos), "next": nxt})
+        body = {"videos": shelf.decorate_videos(cid, videos), "next": nxt}
+        # The provider could page further but is not set up to (no API
+        # key): say so at the end of the list, or a channel looks like it
+        # has only a handful of videos and nobody knows why.
+        if not paging and nxt is None and contract.OP_CH_VIDEOS in gateway.channel_ops_offered():
+            body["older"] = "setup"
+        return self._send(200, body)
 
     def _get_movies(self, p):
         q = urllib.parse.parse_qs(p.query)

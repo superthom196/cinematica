@@ -522,11 +522,16 @@ data class ChannelVideo(
     val new: Boolean? = null,
 )
 
-/** `next == ""` means "there is more, ask again with an empty page token"; `null` means no more. */
+/**
+ * `next == ""` means "there is more, ask again with an empty page token"; `null` means no more.
+ * `older == "setup"` (first page only): the provider could list older videos but is not set up
+ * to -- no API key -- so the screen says so instead of a channel looking nearly empty.
+ */
 @Serializable
 data class ChannelVideosResp(
     val videos: List<ChannelVideo> = emptyList(),
     val next: String? = null,
+    val older: String? = null,
 )
 
 /** `/api/channel`: one wall item plus the ops this server's channel provider supports. */

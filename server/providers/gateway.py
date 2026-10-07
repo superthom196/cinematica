@@ -509,6 +509,19 @@ def channel_ops():
     return result
 
 
+def channel_ops_offered():
+    """The optional channels ops the provider's manifest offers, whether or
+    not it answers them as configured. Set against channel_ops(), the
+    difference is what more setup (an API key, say) would turn on -- which
+    the clients tell the viewer, rather than a list that just stops."""
+    pid = _resolved(contract.ROLE_CHANNELS)
+    if not pid:
+        return set()
+    rec = registry.get(pid)
+    optional = {contract.OP_CH_VIDEOS, contract.OP_CH_SEARCH, contract.OP_CH_POPULAR}
+    return optional & set(rec.manifest.get("optional_ops") or ()) if rec else set()
+
+
 def test(provider_id):
     """Round-trip provider_id's current config against the real service, for
     an admin "test connection" action. Not role-routed (a provider being

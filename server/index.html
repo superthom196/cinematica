@@ -1227,7 +1227,7 @@ async function openModal(m){
 }
 
 /* ---------- channel modal ---------- */
-let modalChannel=null, channelVideoGen=0, channelNextPage=null, channelVideoList=[];
+let modalChannel=null, channelVideoGen=0, channelNextPage=null, channelVideoList=[], channelOlderSetup=false;
 
 function chCount(n){
   if(n==null) return null;
@@ -1325,6 +1325,15 @@ function renderChannelVideos(videos, append){
     mepisodes.appendChild(row);
   });
   const oldMore=mepisodes.querySelector('.chmore'); if(oldMore) oldMore.remove();
+  // The provider could list older videos but is not set up to (no API key):
+  // say so, or the channel just looks like it has a handful of videos.
+  if(channelNextPage==null && channelOlderSetup){
+    const n=document.createElement('div');
+    n.className='chmore';
+    n.style.cssText='padding:.6rem;color:var(--dim);font-size:.8rem';
+    n.textContent='Newest videos only. Add an API key to the channels provider in Settings to see older ones.';
+    mepisodes.appendChild(n);
+  }
   if(channelNextPage!=null){
     const b=document.createElement('button');
     b.className='chmore'; b.textContent='More videos';
@@ -1337,7 +1346,7 @@ async function loadChannelVideos(append){
   const m=modalChannel; if(!m) return;
   const gen=++channelVideoGen;
   if(!append){
-    channelNextPage=null; channelVideoList=[];
+    channelNextPage=null; channelVideoList=[]; channelOlderSetup=false;
     mepisodes.innerHTML='<div style="padding:.6rem;color:var(--dim);font-size:.8rem">Loading videos…</div>';
   }
   // The first "more" page starts from the top again, over the videos already
@@ -1353,6 +1362,7 @@ async function loadChannelVideos(append){
       const seen=new Set(channelVideoList.map(v=>v.id));
       vids=vids.concat((d.videos||[]).filter(v=>!seen.has(v.id)));
       channelNextPage=(d.next===undefined) ? null : d.next;
+      if(!append) channelOlderSetup=d.older==='setup';
       if(!append || vids.length || channelNextPage==null) break;
     }
     if(!append) mepisodes.innerHTML='';
