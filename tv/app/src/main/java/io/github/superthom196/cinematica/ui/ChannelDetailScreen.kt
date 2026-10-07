@@ -51,6 +51,7 @@ import io.github.superthom196.cinematica.api.Movie
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -101,16 +102,40 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
     }
     LaunchedEffect(id) { loadFirstPage() }
 
-    suspend fun loadMore() {
-        val page = nextPage
-        if (id == null || page == null || loadingMore) return
+    // Bumped after a failed page, a little later, so the effect below asks again: its
+    // other keys have not moved, and without this the list sat at its last length.
+    var retryTick by remember(id) { mutableStateOf(0) }
+
+    // Launched in the screen's own scope, not the effect's. The effect restarts every
+    // time the grid lays out again, and a restart cancelled the request mid-flight;
+    // runCatching took the cancellation for an ordinary failure, nothing changed, and
+    // nothing asked again -- the grid stuck at the first 15.
+    fun loadMore() {
+        if (id == null || nextPage == null || loadingMore) return
         loadingMore = true
-        vm.channelVideos(id, page).onSuccess { resp ->
-            val seen = videos.mapNotNull { it.id }.toSet()
-            videos = videos + resp.videos.filter { it.id == null || it.id !in seen }
-            nextPage = resp.next
+        scope.launch {
+            try {
+                // A page can bring nothing new: the first one starts from the top again,
+                // over the videos already shown. Keep going until the grid actually grows.
+                var fetches = 0
+                while (fetches++ < MAX_EMPTY_PAGES) {
+                    val page = nextPage ?: break
+                    val resp = vm.channelVideos(id, page).getOrNull()
+                    if (resp == null) {
+                        delay(RETRY_MS)
+                        retryTick++
+                        break
+                    }
+                    val seen = videos.mapNotNull { it.id }.toSet()
+                    val fresh = resp.videos.filter { it.id == null || it.id !in seen }
+                    videos = videos + fresh
+                    nextPage = resp.next
+                    if (fresh.isNotEmpty()) break
+                }
+            } finally {
+                loadingMore = false
+            }
         }
-        loadingMore = false
     }
 
     // Focus lands on the newest video once the grid exists; Up from the top row reaches Follow.
@@ -128,7 +153,7 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
         derivedStateOf { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
     }
     // Two rows ahead of the end, so the next page is usually in before the viewer gets there.
-    LaunchedEffect(lastVisible, videos.size, nextPage) {
+    LaunchedEffect(lastVisible, videos.size, nextPage, retryTick) {
         if (nextPage != null && lastVisible >= videos.size - VIDEO_COLUMNS * 2) loadMore()
     }
 
@@ -239,6 +264,9 @@ fun ChannelDetailScreen(vm: AppViewModel, ui: UiState, movie: Movie) {
 }
 
 private const val VIDEO_COLUMNS = 4
+// Pages in a row that may add nothing before loadMore stops and waits for the next scroll.
+private const val MAX_EMPTY_PAGES = 5
+private const val RETRY_MS = 10_000L
 
 /** One video: thumbnail, its title in full as far as three lines allow, then age and length. */
 @Composable

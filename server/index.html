@@ -1340,15 +1340,23 @@ async function loadChannelVideos(append){
     channelNextPage=null; channelVideoList=[];
     mepisodes.innerHTML='<div style="padding:.6rem;color:var(--dim);font-size:.8rem">Loading videos…</div>';
   }
-  let q='?id='+encodeURIComponent(m.id);
-  if(append) q += '&page='+encodeURIComponent(channelNextPage||'');
+  // The first "more" page starts from the top again, over the videos already
+  // shown, and a page can bring nothing new: skip repeats, and keep asking (a
+  // few pages at most) until the list actually grows.
   try{
-    const d=await (await fetch('/api/channel/videos'+q)).json();
-    if(gen!==channelVideoGen || !modalChannel || modalChannel.id!==m.id) return;
-    const vids=d.videos||[];
+    let vids=[];
+    for(let tries=0; tries<5; tries++){
+      let q='?id='+encodeURIComponent(m.id);
+      if(append) q += '&page='+encodeURIComponent(channelNextPage||'');
+      const d=await (await fetch('/api/channel/videos'+q)).json();
+      if(gen!==channelVideoGen || !modalChannel || modalChannel.id!==m.id) return;
+      const seen=new Set(channelVideoList.map(v=>v.id));
+      vids=vids.concat((d.videos||[]).filter(v=>!seen.has(v.id)));
+      channelNextPage=(d.next===undefined) ? null : d.next;
+      if(!append || vids.length || channelNextPage==null) break;
+    }
     if(!append) mepisodes.innerHTML='';
     channelVideoList=channelVideoList.concat(vids);
-    channelNextPage=(d.next===undefined) ? null : d.next;
     renderChannelVideos(vids, append);
     if(!channelVideoList.length) mepisodes.innerHTML='<div style="padding:.6rem;color:var(--dim);font-size:.8rem">No videos yet.</div>';
   }catch(e){
